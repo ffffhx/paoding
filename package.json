@@ -1,0 +1,14 @@
+{
+  "name": "paoding",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "庖丁 — 做菜视频自动拆步骤 + 每步讲透「为什么」的解析引擎 (MVP CLI)",
+  "bin": {
+    "paoding": "bin/paoding.mjs"
+  },
+  "scripts": {
+    "start": "node bin/paoding.mjs",
+    "app": "node app/server.mjs"
+  }
+}

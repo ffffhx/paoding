@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<meta name="theme-color" content="#E4572E" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="庖丁" />
+<meta name="mobile-web-app-capable" content="yes" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<link rel="stylesheet" href="styles.css" />
+<title>庖丁 · 做菜跟做</title>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand"><h1>庖丁</h1><span class="sub">解剖每一道菜的为什么</span></div>
+  </header>
+
+  <div class="parsebar">
+    <div class="row">
+      <input id="url" type="text" inputmode="url" placeholder="粘贴 B站 / YouTube 做菜视频链接" />
+      <button class="btn" id="parseUrl">解析</button>
+    </div>
+    <div class="depth" id="depth">
+      <span class="chip" data-d="beginner">新手向</span>
+      <span class="chip on" data-d="balanced">通俗（默认）</span>
+      <span class="chip" data-d="advanced">进阶原理</span>
+    </div>
+    <div class="hint">也可以 <button id="fileBtn" class="linklike">上传本地视频</button> · 解析约需 1–3 分钟</div>
+    <input id="file" type="file" accept="video/*,audio/*" class="hidden" />
+  </div>
+
+  <div class="tabs">
+    <div class="tab on" data-tab="recipes">菜谱</div>
+    <div class="tab" data-tab="skills">技巧收藏<span id="tabSkillsBadge"></span></div>
+    <div class="tab" data-tab="shopping">购物清单<span id="tabShopBadge"></span></div>
+    <div class="tab" data-tab="settings">设置</div>
+  </div>
+
+  <div class="searchrow" id="searchrow">
+    <input id="search" type="search" placeholder="搜索菜名 / 食材 / 标签" />
+  </div>
+  <div class="filters" id="filters"></div>
+
+  <div id="view-recipes" class="list"></div>
+  <div id="view-skills" class="list hidden"></div>
+  <div id="view-shopping" class="list hidden"></div>
+  <div id="view-settings" class="list hidden"></div>
+</div>
+
+<div id="toast" class="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# 本地密钥/配置，别进仓库
+.env
+
+# whisper 模型文件很大（1~3GB），本地下载，不提交
+models/
+
+# 解析产出
+paoding-out/
+
+# App 里解析出的菜谱=用户数据，不进仓库（App 会自动重建目录）
+app/recipes/
