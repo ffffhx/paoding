@@ -241,17 +241,61 @@ function renderSkills() {
   });
 }
 
-/* ================= 购物清单 ================= */
+/* ================= 购物清单（按品类归类 + 同名合并）================= */
+const SHOP_CATS = [
+  ['🥩 肉蛋水产', /猪|牛|羊|鸡|鸭|鹅|鱼|虾|蟹|肉|排骨|培根|香肠|腊肠|火腿|蛋|贝|鱿|蛤|蛏|海鲜|五花|里脊|通脊|牛腩|鸡胸|鸡腿/],
+  ['🥬 蔬菜菌菇', /菜|葱|姜|蒜|辣椒|青椒|尖椒|瓜|茄|菇|笋|藕|萝卜|土豆|马铃薯|番茄|西红柿|洋葱|韭|芹|菠|生菜|白菜|菌|木耳|香菜|豆芽|苗|莲|玉米|山药|冬瓜|南瓜|豆角|豇豆|秋葵/],
+  ['🍚 主食豆制', /米|面(?!酱)|粉丝|粉条|馒头|花卷|饼|包子|馄饨|饺|年糕|河粉|米线|豆腐|腐竹|豆皮|千张|素鸡|油条/],
+  ['🧂 调料', /盐|糖|酱油|生抽|老抽|蚝油|耗油|醋|油|料酒|味精|鸡精|胡椒|八角|桂皮|花椒|孜然|五香|十三香|13香|芝麻|蜂蜜|淀粉|豆瓣|豆豉|番茄酱|香油|辣椒油|蒜蓉|调料|香料|盐巴|白糖|冰糖|生粉/],
+];
+function shopCat(name) { for (const [c, re] of SHOP_CATS) if (re.test(name)) return c; return '🧺 其他'; }
+// 合并同名食材的多个用量：能识别「数字+单位」的按单位求和，其余原样并列
+function mergeAmounts(amts) {
+  const byUnit = {}, others = [];
+  for (const a of amts.filter(Boolean)) {
+    const m = String(a).match(/^\s*(\d+(?:\.\d+)?)\s*(.*)$/);
+    if (m) { const u = m[2].trim(); byUnit[u] = (byUnit[u] || 0) + parseFloat(m[1]); }
+    else if (!others.includes(a)) others.push(a);
+  }
+  const parts = Object.entries(byUnit).map(([u, v]) => (Math.round(v * 100) / 100) + u);
+  return [...parts, ...others].join(' + ');
+}
 function renderShopping() {
   const box = $('#view-shopping');
   const head = `<div class="searchrow" style="padding:4px 0 12px"><button class="btn ghost sm" id="shopClear">清除已勾选</button><button class="btn ghost sm" id="shopAll">清空</button></div>`;
   if (!shopping.length) { box.innerHTML = '<div class="empty">购物清单是空的。<br>在菜谱详情里点「加入购物清单」，食材就会汇总到这里。</div>'; return; }
-  box.innerHTML = head + shopping.map((it, i) => `
-    <div class="shop-item ${it.checked ? 'checked' : ''}" data-i="${i}">
-      <div class="ck ${it.checked ? 'on' : ''}">${it.checked ? '✓' : ''}</div>
-      <div class="txt">${esc(it.name)}${it.amount ? ` · <span class="amt" style="color:var(--muted)">${esc(it.amount)}</span>` : ''}<div class="sub">${esc(it.from || '')}</div></div>
-    </div>`).join('');
-  box.querySelectorAll('.shop-item').forEach(node => node.onclick = () => { const i = +node.dataset.i; shopping[i].checked = !shopping[i].checked; store.set('shopping', shopping); renderShopping(); });
+  // 同名合并：记录每个名字对应的原始下标（用于勾选/删除），累积用量与来源
+  const groups = {};
+  shopping.forEach((it, i) => {
+    const g = groups[it.name] = groups[it.name] || { name: it.name, cat: shopCat(it.name), amounts: [], froms: new Set(), idxs: [] };
+    if (it.amount) g.amounts.push(it.amount);
+    if (it.from) g.froms.add(it.from);
+    g.idxs.push(i);
+  });
+  const merged = Object.values(groups).map(g => ({
+    name: g.name, cat: g.cat, idxs: g.idxs,
+    amount: mergeAmounts(g.amounts), src: [...g.froms].join('、'),
+    checked: g.idxs.every(i => shopping[i].checked),
+  }));
+  const byCat = {}; merged.forEach(m => (byCat[m.cat] = byCat[m.cat] || []).push(m));
+  const order = ['🥩 肉蛋水产', '🥬 蔬菜菌菇', '🍚 主食豆制', '🧂 调料', '🧺 其他'];
+  let html = head;
+  for (const cat of order) {
+    const items = byCat[cat]; if (!items || !items.length) continue;
+    html += `<div class="sec-title" style="margin:14px 0 6px 0;padding:0">${cat}</div>`;
+    html += items.map(m => `
+      <div class="shop-item ${m.checked ? 'checked' : ''}" data-idxs="${m.idxs.join(',')}">
+        <div class="ck ${m.checked ? 'on' : ''}">${m.checked ? '✓' : ''}</div>
+        <div class="txt">${esc(m.name)}${m.amount ? ` · <span style="color:var(--muted)">${esc(m.amount)}</span>` : ''}<div class="sub">${esc(m.src)}${m.idxs.length > 1 ? ` · 合并自${m.idxs.length}处` : ''}</div></div>
+      </div>`).join('');
+  }
+  box.innerHTML = html;
+  box.querySelectorAll('.shop-item').forEach(node => node.onclick = () => {
+    const idxs = node.dataset.idxs.split(',').map(Number);
+    const target = !idxs.every(i => shopping[i].checked); // 未全勾→全勾；已全勾→全取消
+    idxs.forEach(i => shopping[i].checked = target);
+    store.set('shopping', shopping); renderShopping();
+  });
   $('#shopClear') && ($('#shopClear').onclick = () => { shopping = shopping.filter(x => !x.checked); store.set('shopping', shopping); renderShopping(); updateBadges(); });
   $('#shopAll') && ($('#shopAll').onclick = async () => { if (!(await confirmModal('清空整个购物清单？', '清空'))) return; shopping = []; store.set('shopping', shopping); renderShopping(); updateBadges(); });
 }
