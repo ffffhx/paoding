@@ -10,17 +10,20 @@ import { chatJSON, chatText } from "../src/llm.mjs";
 import { DEPTHS } from "../src/explain.mjs";
 import { assertPublicUrl } from "../src/urlSafety.mjs";
 import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
+import { FileJobStore, createJobQueue, createJobRecord, publicJob, TERMINAL_JOB_STATUSES } from "../src/jobs.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 loadEnvFiles();
 // 数据目录可被环境变量覆盖（测试用隔离目录，避免污染真实数据）
 const RECIPES_DIR = process.env.PAODING_RECIPES_DIR || path.join(HERE, "recipes");
+const JOBS_DIR = path.join(path.dirname(RECIPES_DIR), "jobs");
 // 用户数据（收藏/笔记/评分/购物清单等）跨设备同步用；放项目根、不在 webDir 内，避免被静态服务或打包暴露
 const USERDATA_FILE = process.env.PAODING_USERDATA_FILE || path.join(HERE, "..", "paoding-userdata.json");
 const PORT = process.env.PAODING_PORT ? Number(process.env.PAODING_PORT) : 4177;
 const HOST = process.env.PAODING_HOST || "0.0.0.0"; // 默认局域网可达(手机用)；设 127.0.0.1 可锁本机
 const BASE_PATH = normalizeBasePath(process.env.PAODING_BASE_PATH || "/paoding"); // 兼容 Caddy/Capacitor 挂在 /paoding 子路径
 const MAX_RUNNING = Number(process.env.PAODING_MAX_JOBS || 2); // 同时解析上限，防资源耗尽
+const MAX_QUEUE = Math.max(0, Number(process.env.PAODING_MAX_QUEUE || 10)); // 等待队列上限，超出才返回 429
 const MAX_IMPORT_RECIPES = Number(process.env.PAODING_MAX_IMPORT || 5000); // 单次导入菜谱上限，防脏/超大备份写爆磁盘
 // 可选 API token：设了 PAODING_API_TOKEN 就要求 /api/* 带上正确 token。
 // 非回环地址监听时强制配置 token，除非显式 PAODING_ALLOW_INSECURE=1。
@@ -30,6 +33,7 @@ const CORS_ORIGINS = new Set((process.env.PAODING_CORS_ORIGINS || "")
 const LLM_RATE_LIMIT_PER_MIN = Number(process.env.PAODING_LLM_RATE_LIMIT_PER_MIN || 20);
 const LLM_RATE_LIMIT_WINDOW_MS = Number(process.env.PAODING_LLM_RATE_LIMIT_WINDOW_MS || 60_000);
 fs.mkdirSync(RECIPES_DIR, { recursive: true });
+fs.mkdirSync(JOBS_DIR, { recursive: true });
 
 function normalizeBasePath(value) {
   const p = String(value || "").trim().replace(/\/+$/, "");
@@ -260,21 +264,172 @@ async function estimateNutrition(r) {
   return normalizeNutrition(raw);
 }
 
-// ---------- 解析任务（带进度）----------
-const jobs = new Map(); // id -> {status, progress, recipe, error, listeners:Set}
+// ---------- 解析任务（持久化 + 排队 + 进度）----------
+const jobStore = new FileJobStore(JOBS_DIR, { keep: 50 });
+const jobs = new Map(jobStore.init().map((j) => [j.id, { ...j, listeners: new Set() }]));
+const jobQueue = createJobQueue(MAX_QUEUE);
 const runningCount = () => [...jobs.values()].filter((j) => j.status === "running").length;
-function newJob() {
-  const id = crypto.randomUUID();
-  jobs.set(id, { status: "running", progress: { pct: 0, stage: "start", message: "排队中…" }, listeners: new Set() });
-  return id;
+const nowISO = () => new Date().toISOString();
+
+function persistJob(job, opts) {
+  if (!job) return;
+  job.updated_at = nowISO();
+  jobStore.write(job, opts);
+}
+function createServerJob(type, params, { status = "queued", progress } = {}) {
+  const j = {
+    ...createJobRecord({ id: crypto.randomUUID(), type, params, status, progress, now: nowISO() }),
+    listeners: new Set(),
+  };
+  jobs.set(j.id, j);
+  persistJob(j, { cleanup: false });
+  return j;
 }
 function pushJob(id, ev) {
   const j = jobs.get(id);
   if (!j) return;
   for (const res of j.listeners) res.write(`data: ${JSON.stringify(ev)}\n\n`);
 }
+function setJobProgress(id, progress) {
+  const j = jobs.get(id);
+  if (!j) return;
+  j.progress = progress;
+  persistJob(j, { cleanup: false });
+  pushJob(id, { type: "progress", ...progress });
+}
+function updateQueuePositions() {
+  for (const item of jobQueue.snapshot()) {
+    const j = jobs.get(item.id);
+    if (!j || j.status !== "queued") continue;
+    const progress = { pct: 0, stage: "queued", message: `排队中，第 ${item.position} 位` };
+    j.progress = progress;
+    persistJob(j, { cleanup: false });
+    pushJob(j.id, { type: "progress", ...progress });
+  }
+}
+function startQueuedJob(id, start) {
+  const j = jobs.get(id);
+  if (!j || TERMINAL_JOB_STATUSES.has(j.status)) return;
+  j.status = "running";
+  j.started_at = j.started_at || nowISO();
+  j.progress = { pct: 0, stage: "start", message: "开始解析…" };
+  persistJob(j, { cleanup: false });
+  pushJob(id, { type: "progress", ...j.progress });
+  try { start(); }
+  catch (e) { finishJob(id, { type: "error", error: e.message }); }
+}
+function drainQueue() {
+  while (runningCount() < MAX_RUNNING) {
+    const item = jobQueue.dequeueReady();
+    if (!item) break;
+    startQueuedJob(item.id, item.start);
+  }
+  updateQueuePositions();
+}
+function submitParseJob(type, params, start) {
+  const shouldQueue = jobQueue.length > 0 || runningCount() >= MAX_RUNNING;
+  if (shouldQueue && jobQueue.isFull()) return { ok: false };
+  const j = createServerJob(type, params, {
+    status: shouldQueue ? "queued" : "running",
+    progress: shouldQueue ? { pct: 0, stage: "queued", message: "排队中，第 1 位" } : { pct: 0, stage: "start", message: "开始解析…" },
+  });
+  if (shouldQueue) {
+    const enq = jobQueue.enqueue({ id: j.id, start: () => start(j.id), ready: true });
+    if (!enq.ok) { jobs.delete(j.id); jobStore.remove(j.id); return { ok: false }; }
+    updateQueuePositions();
+  } else {
+    j.started_at = nowISO();
+    persistJob(j, { cleanup: false });
+    start(j.id);
+  }
+  return { ok: true, id: j.id };
+}
+function reserveUploadJob(params) {
+  const shouldQueue = jobQueue.length > 0 || runningCount() >= MAX_RUNNING;
+  if (shouldQueue && jobQueue.isFull()) return { ok: false };
+  const j = createServerJob("file", params, {
+    status: shouldQueue ? "queued" : "running",
+    progress: shouldQueue ? { pct: 0, stage: "queued", message: "排队中，第 1 位" } : { pct: 0, stage: "upload", message: "接收上传中…" },
+  });
+  if (shouldQueue) {
+    const enq = jobQueue.enqueue({ id: j.id, ready: false });
+    if (!enq.ok) { jobs.delete(j.id); jobStore.remove(j.id); return { ok: false }; }
+    updateQueuePositions();
+  } else {
+    j.started_at = nowISO();
+    persistJob(j, { cleanup: false });
+  }
+  return { ok: true, id: j.id, queued: shouldQueue };
+}
+function cancelReservedJob(id) {
+  jobQueue.remove(id);
+  jobs.delete(id);
+  jobStore.remove(id);
+  updateQueuePositions();
+  drainQueue();
+}
+function markUploadReady(id, paramsPatch, start) {
+  const j = jobs.get(id);
+  if (!j) return;
+  j.params = { ...(j.params || {}), ...paramsPatch };
+  persistJob(j, { cleanup: false });
+  if (j.status === "queued") {
+    jobQueue.markReady(id, { start });
+    updateQueuePositions();
+    drainQueue();
+  } else {
+    start();
+  }
+}
+function scheduleTmpCleanup(id, tmp) {
+  const j = jobs.get(id);
+  let ticks = 0;
+  const iv = setInterval(() => {
+    const cur = jobs.get(id) || j;
+    if (!cur || cur.status !== "running" || ++ticks > 1200) {
+      fs.rmSync(tmp, { force: true });
+      clearInterval(iv);
+    }
+  }, 3000);
+}
+function recipeResultId(recipe) {
+  return recipe?.id || slug(recipe?.title || "");
+}
+function finishJob(id, ev) {
+  const j = jobs.get(id);
+  if (!j || TERMINAL_JOB_STATUSES.has(j.status)) return;
+  if (ev.type === "done") {
+    j.status = "done";
+    j.recipe = ev.recipe;
+    j.result_recipe_id = recipeResultId(ev.recipe);
+    j.error = null;
+  } else {
+    j.status = "error";
+    j.error = ev.error;
+  }
+  j.finished_at = nowISO();
+  j.progress = ev.type === "done"
+    ? { pct: 100, stage: "done", message: "完成" }
+    : { pct: j.progress?.pct || 0, stage: "error", message: ev.error };
+  persistJob(j);
+  pushJob(id, ev);
+  for (const res of j.listeners) res.end();
+  j.listeners.clear();
+  setTimeout(() => jobs.delete(id), 5 * 60 * 1000);
+  drainQueue();
+}
+function getJob(id) {
+  const j = jobs.get(id);
+  if (j) return j;
+  const saved = jobStore.read(id);
+  if (!saved) return null;
+  const hydrated = { ...saved, listeners: new Set() };
+  jobs.set(id, hydrated);
+  return hydrated;
+}
 function runJob(id, input, depth, kind = "video", wantVision = false, wantImages = false) {
   const j = jobs.get(id);
+  if (!j) return;
   // 非法/缺省的 depth 归一到配置默认值，避免前端传错值时静默按 balanced 生成。
   // 视觉/截图按次开关：仅当本次请求要且服务端配置了视觉模型时才启用（截图挑帧也靠视觉模型）。
   const cfg = {
@@ -283,7 +438,7 @@ function runJob(id, input, depth, kind = "video", wantVision = false, wantImages
     vision: wantVision ? config.vision : null,
     images: wantImages ? config.vision : null,
   };
-  const onProgress = (p) => { j.progress = p; pushJob(id, { type: "progress", ...p }); };
+  const onProgress = (p) => setJobProgress(id, p);
   // 超时时用它强杀底层卡死的 yt-dlp/ffmpeg/whisper 子进程与 LLM/ASR 请求，而不只是释放槽位。
   const ac = new AbortController();
   const signal = ac.signal;
@@ -308,12 +463,7 @@ function runJob(id, input, depth, kind = "video", wantVision = false, wantImages
     if (settled) return; // 只结算一次
     settled = true;
     clearTimeout(timer);
-    if (ev.type === "done") { j.status = "done"; j.recipe = ev.recipe; }
-    else { j.status = "error"; j.error = ev.error; }
-    pushJob(id, ev);
-    for (const res of j.listeners) res.end();
-    j.listeners.clear();
-    setTimeout(() => jobs.delete(id), 5 * 60 * 1000);
+    finishJob(id, ev);
   };
   timer = setTimeout(() => {
     try { ac.abort(); } catch {} // 强杀在跑的子进程/请求
@@ -366,6 +516,10 @@ export async function handleRequest(req, res) {
   try {
     // ---- 列表 ----
     if (req.method === "GET" && p === "/api/recipes") return sendJSON(res, 200, listRecipes());
+    if (req.method === "GET" && p === "/api/jobs") {
+      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") || 20) || 20));
+      return sendJSON(res, 200, jobStore.recent(limit).map(publicJob));
+    }
 
     // ---- 用户数据同步（收藏/笔记/评分/购物清单跨设备共享）----
     if (req.method === "GET" && p === "/api/userdata") {
@@ -443,10 +597,14 @@ export async function handleRequest(req, res) {
       const body = await readJson(req);
       if (!/^https?:\/\//.test(body.url || "")) return sendJSON(res, 400, { error: "请提供 http(s) 链接" });
       await assertPublicUrl(body.url);
-      if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
-      const id = newJob();
-      runJob(id, body.url, body.depth, "video", !!body.vision, !!body.images);
-      return sendJSON(res, 200, { jobId: id });
+      const queued = submitParseJob("url", {
+        url: body.url,
+        depth: body.depth || null,
+        vision: !!body.vision,
+        images: !!body.images,
+      }, (id) => runJob(id, body.url, body.depth, "video", !!body.vision, !!body.images));
+      if (!queued.ok) return sendJSON(res, 429, { error: "解析任务繁忙，队列已满，请稍后再试" });
+      return sendJSON(res, 200, { jobId: queued.id });
     }
     // ---- 文字解析：粘贴的文字，或图文/文字帖链接（小红书/公众号/下厨房等无音频来源）----
     if (req.method === "POST" && p === "/api/parse-text") {
@@ -455,45 +613,52 @@ export async function handleRequest(req, res) {
       if (/^https?:\/\//.test(url)) await assertPublicUrl(url);
       const input = /^https?:\/\//.test(url) ? url : (body.text || "").trim();
       if (!input || input.length < 10) return sendJSON(res, 400, { error: "请粘贴菜谱文字，或提供文字帖链接" });
-      if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
-      const id = newJob();
-      runJob(id, input, body.depth, "text");
-      return sendJSON(res, 200, { jobId: id });
+      const queued = submitParseJob("text", {
+        input,
+        depth: body.depth || null,
+      }, (id) => runJob(id, input, body.depth, "text"));
+      if (!queued.ok) return sendJSON(res, 429, { error: "解析任务繁忙，队列已满，请稍后再试" });
+      return sendJSON(res, 200, { jobId: queued.id });
     }
     if (req.method === "POST" && p === "/api/parse-file") {
       const filename = decodeURIComponent(req.headers["x-filename"] || "video.mp4");
       const depth = req.headers["x-depth"];
       const wantVision = req.headers["x-vision"] === "1";
       const wantImages = req.headers["x-images"] === "1";
-      if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
       // 先同步占住并发 slot，再读上传体：否则「检查→await readBody→newJob」之间的事件循环让步会让
       // 多个并发上传同时通过 runningCount 检查，绕过 MAX_RUNNING、并发拉起过多 ffmpeg/whisper。
-      const id = newJob();
+      const reserved = reserveUploadJob({ filename, depth: depth || null, vision: wantVision, images: wantImages });
+      if (!reserved.ok) return sendJSON(res, 429, { error: "解析任务繁忙，队列已满，请稍后再试" });
+      const id = reserved.id;
       let buf;
-      try { buf = await readBody(req); } catch (e) { jobs.delete(id); return sendJSON(res, 400, { error: e.message }); }
-      if (!buf.length) { jobs.delete(id); return sendJSON(res, 400, { error: "空文件" }); }
+      try { buf = await readBody(req); } catch (e) { cancelReservedJob(id); return sendJSON(res, 400, { error: e.message }); }
+      if (!buf.length) { cancelReservedJob(id); return sendJSON(res, 400, { error: "空文件" }); }
       const tmp = path.join(os.tmpdir(), `paoding-up-${Date.now()}-${slug(filename)}`);
       await fs.promises.writeFile(tmp, buf); // 异步写，避免大文件同步写阻塞事件循环（卡住其他请求/SSE）
-      runJob(id, tmp, depth, "video", wantVision, wantImages);
-      const j = jobs.get(id);
-      // 任务结束(或超 1 小时兜底)后清理临时文件，避免卡死时泄漏
-      let ticks = 0;
-      const iv = setInterval(() => { if (j.status !== "running" || ++ticks > 1200) { fs.rmSync(tmp, { force: true }); clearInterval(iv); } }, 3000);
+      markUploadReady(id, { tmp }, () => {
+        runJob(id, tmp, depth, "video", wantVision, wantImages);
+        // 任务结束(或超 1 小时兜底)后清理临时文件，避免卡死时泄漏
+        scheduleTmpCleanup(id, tmp);
+      });
       return sendJSON(res, 200, { jobId: id });
     }
 
     // ---- 进度 SSE ----
     if (req.method === "GET" && p.startsWith("/api/progress/")) {
       const id = p.slice("/api/progress/".length);
-      const j = jobs.get(id);
+      const j = getJob(id);
       res.writeHead(200, {
         "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive",
       });
       if (!j) { res.write(`data: ${JSON.stringify({ type: "error", error: "任务不存在或已过期" })}\n\n`); return res.end(); }
       // 先补发当前状态
       res.write(`data: ${JSON.stringify({ type: "progress", ...j.progress })}\n\n`);
-      if (j.status === "done") { res.write(`data: ${JSON.stringify({ type: "done", recipe: j.recipe })}\n\n`); return res.end(); }
-      if (j.status === "error") { res.write(`data: ${JSON.stringify({ type: "error", error: j.error })}\n\n`); return res.end(); }
+      if (j.status === "done") {
+        const recipe = j.recipe || loadRecipe(j.result_recipe_id);
+        res.write(`data: ${JSON.stringify({ type: "done", recipe })}\n\n`);
+        return res.end();
+      }
+      if (j.status === "error" || j.status === "interrupted") { res.write(`data: ${JSON.stringify({ type: "error", error: j.error })}\n\n`); return res.end(); }
       j.listeners.add(res);
       req.on("close", () => j.listeners.delete(res));
       return;

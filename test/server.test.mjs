@@ -11,13 +11,26 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, "..");
 const PORT = 41987;
 const BASE = `http://127.0.0.1:${PORT}`;
-let handleRequest, recipesDir, userFile;
+let handleRequest, dataRoot, recipesDir, jobsDir, userFile;
 
 const J = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 before(async () => {
-  recipesDir = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-t-recipes-"));
-  userFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "paoding-t-ud-")), "ud.json");
+  dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-t-data-"));
+  recipesDir = path.join(dataRoot, "recipes");
+  jobsDir = path.join(dataRoot, "jobs");
+  fs.mkdirSync(recipesDir, { recursive: true });
+  fs.mkdirSync(jobsDir, { recursive: true });
+  userFile = path.join(dataRoot, "ud.json");
+  fs.writeFileSync(path.join(jobsDir, "restart-job.json"), JSON.stringify({
+    id: "restart-job",
+    type: "url",
+    params: { url: "https://example.com/video" },
+    status: "running",
+    progress: { pct: 42, stage: "transcribe", message: "语音转文字…" },
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:01.000Z",
+  }, null, 2));
   // 自带 dummy 大模型配置，使集成测试不依赖本地 .env（被测端点都不真正调用 LLM）。
   Object.assign(process.env, {
     PAODING_PORT: String(PORT),
@@ -30,8 +43,7 @@ before(async () => {
   ({ handleRequest } = await import(`../app/server.mjs?test=${Date.now()}`));
 });
 after(() => {
-  fs.rmSync(recipesDir, { recursive: true, force: true });
-  fs.rmSync(path.dirname(userFile), { recursive: true, force: true });
+  fs.rmSync(dataRoot, { recursive: true, force: true });
 });
 
 class MockReq extends EventEmitter {
@@ -108,6 +120,14 @@ async function request(input, opts = {}) {
 
 test("空库 GET /api/recipes 返回 []", async () => {
   assert.deepEqual(await (await request("/api/recipes")).json(), []);
+});
+
+test("启动时 running 任务标记为 interrupted 并可查询", async () => {
+  const jobs = await (await request("/api/jobs")).json();
+  const j = jobs.find((x) => x.id === "restart-job");
+  assert.ok(j);
+  assert.equal(j.status, "interrupted");
+  assert.match(j.error, /服务重启/);
 });
 
 test("CORS 预检 OPTIONS → 204 + 头", async () => {

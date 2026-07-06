@@ -7,6 +7,7 @@ import { loadConfig } from "../src/config.mjs";
 import { DEPTHS } from "../src/explain.mjs";
 import { assertPublicUrl, isPrivateAddress } from "../src/urlSafety.mjs";
 import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
+import { createJobQueue } from "../src/jobs.mjs";
 
 test("isUrl 只认 http(s)", () => {
   assert.equal(isUrl("https://x.com"), true);
@@ -95,6 +96,19 @@ test("滑动窗口限流按 key 计数并随时间恢复", () => {
   assert.equal(limiter.take("ip2").allowed, true);
   now = 2001;
   assert.equal(limiter.take("ip1").allowed, true);
+});
+
+test("任务队列 FIFO、位置与上限", () => {
+  const q = createJobQueue(2);
+  assert.deepEqual(q.enqueue({ id: "a", start: () => {} }), { ok: true, position: 1 });
+  assert.deepEqual(q.enqueue({ id: "b", start: () => {} }), { ok: true, position: 2 });
+  assert.equal(q.isFull(), true);
+  assert.deepEqual(q.enqueue({ id: "c", start: () => {} }), { ok: false, position: 0 });
+  assert.equal(q.position("b"), 2);
+  assert.equal(q.dequeueReady().id, "a");
+  assert.equal(q.position("b"), 1);
+  assert.equal(q.dequeueReady().id, "b");
+  assert.equal(q.dequeueReady(), null);
 });
 
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */

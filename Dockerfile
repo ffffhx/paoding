@@ -19,7 +19,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY . .
-RUN mkdir -p /data/recipes /data/models
+RUN mkdir -p /data/recipes /data/jobs /data/models
 
 EXPOSE 4177
 CMD ["node", "app/server.mjs"]

@@ -57,6 +57,16 @@ input:focus,textarea:focus{outline:none;border-color:var(--tomato)}
 .badge-count{background:var(--tomato);color:#fff;font-size:11px;border-radius:999px;padding:1px 6px;margin-left:4px;font-weight:700}
 
 .list{padding:14px 16px 90px;display:flex;flex-direction:column;gap:12px}
+.jobs-lite{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.jobs-hd{font-size:13px;color:var(--muted);font-weight:700;letter-spacing:1px}
+.job-row{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px;padding-top:8px;border-top:1px solid var(--line)}
+.job-row:first-of-type{border-top:none;padding-top:0}
+.job-row div{min-width:0;display:flex;gap:8px;align-items:center}
+.job-row b{font-size:12px;color:var(--tomato);flex-shrink:0}
+.job-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.job-row em{font-style:normal;color:var(--muted);flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.job-row.done b{color:var(--herb)}
+.job-row.error b,.job-row.interrupted b{color:var(--tomato-d)}
 .rcard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
 .rcard h3{margin:0 0 6px;font-size:19px}
 .rcard .meta{color:var(--muted);font-size:13px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}

@@ -24,6 +24,7 @@ const API = {
   startUrl: (url, depth, vision, images) => F('/api/parse-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth, vision: !!vision, images: !!images }) }).then(j),
   startFile: (file, depth, vision, images) => F('/api/parse-file', { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth, 'X-Vision': vision ? '1' : '0', 'X-Images': images ? '1' : '0' }, body: file }).then(j),
   startText: (text, depth) => F('/api/parse-text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, depth }) }).then(j),
+  jobs: () => F('/api/jobs?limit=8').then(r => r.json()).catch(() => []),
   ask: (recipeId, stepIndex, question) => F('/api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, question }) }).then(j),
   substitute: (recipeId, ingredient) => F('/api/substitute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, ingredient }) }).then(j),
   term: (term) => F('/api/term', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ term }) }).then(j),
@@ -60,6 +61,7 @@ async function j(r) { const d = await r.json().catch(() => ({})); if (!r.ok) thr
 
 /* ---------- 状态 ---------- */
 let recipes = [];
+let recentJobs = [];
 let favRecipes = store.get('favRecipes', []);
 let favSteps = store.get('favSteps', []);
 let shopping = store.get('shopping', []);
@@ -274,9 +276,10 @@ function renderFilters() {
 function renderRecipes() {
   const box = $('#view-recipes');
   const items = recipes.filter(matchFilter);
-  if (!recipes.length) { box.innerHTML = '<div class="empty">还没有菜谱。<br>粘贴一个做菜视频链接，或上传本地视频开始解析。</div>'; return; }
-  if (!items.length) { box.innerHTML = '<div class="empty">没有匹配的菜谱。</div>'; return; }
   box.innerHTML = '';
+  renderRecentJobs(box);
+  if (!recipes.length) { box.insertAdjacentHTML('beforeend', '<div class="empty">还没有菜谱。<br>粘贴一个做菜视频链接，或上传本地视频开始解析。</div>'); return; }
+  if (!items.length) { box.insertAdjacentHTML('beforeend', '<div class="empty">没有匹配的菜谱。</div>'); return; }
   items.forEach(r => {
     const m = rmeta(r.id), faved = favRecipes.includes(r.id);
     // 封面：取最后一个有截图的步骤（通常是接近成品的状态图）
@@ -302,6 +305,21 @@ function renderRecipes() {
   });
 }
 function toggleRecipe(id) { favRecipes = favRecipes.includes(id) ? favRecipes.filter(x => x !== id) : [...favRecipes, id]; store.set('favRecipes', favRecipes); }
+function renderRecentJobs(box) {
+  const list = (recentJobs || []).filter(Boolean).slice(0, 5);
+  if (!list.length) return;
+  const label = (j) => {
+    const map = { queued: '排队中', running: '解析中', done: '已完成', error: '失败', interrupted: '已中断' };
+    return map[j.status] || j.status || '未知';
+  };
+  const type = (j) => ({ url: '链接', text: '文字', file: '文件' }[j.type] || '任务');
+  const title = (j) => j.params?.filename || j.params?.url || (j.params?.input ? '粘贴文字' : type(j));
+  const rows = list.map(j => `<div class="job-row ${esc(j.status || '')}">
+    <div><b>${esc(type(j))}</b><span>${esc(title(j))}</span></div>
+    <em>${esc(j.progress?.message || j.error || label(j))}</em>
+  </div>`).join('');
+  box.insertAdjacentHTML('beforeend', `<div class="jobs-lite"><div class="jobs-hd">最近任务</div>${rows}</div>`);
+}
 
 /* ================= 技巧收藏 ================= */
 function renderSkills() {
@@ -1078,10 +1096,10 @@ async function doParse(starter) {
       // 避免长解析(1~3分钟)中一次网络抖动就误报「连接中断」。
       es.onerror = () => { if (es.readyState === EventSource.CLOSED || ++errs >= 6) { es.close(); reject(new Error('连接中断')); } };
     }).then(async (recipe) => {
-      recipes = await API.list(); renderAll(); cleanup(); toast('解析完成：' + (recipe.title || ''));
+      await refresh(); cleanup(); toast('解析完成：' + (recipe.title || ''));
       const found = recipes.find(x => x.title === recipe.title); if (found) openDetail(found);
     });
-  } catch (e) { cleanup(); toast('解析失败：' + e.message); }
+  } catch (e) { cleanup(); refresh(); toast('解析失败：' + e.message); }
 }
 function stageLabel(stage, message) {
   const map = { acquire: '下载 & 抽取音频', transcribe: '语音转文字', vision: '看画面读字幕', structure: '整理成步骤', explain: '逐步生成「为什么」', images: '截取步骤/食材画面', done: '完成' };
@@ -1102,7 +1120,12 @@ function updateBadges() {
 }
 function renderAll() { renderFilters(); renderRecipes(); renderSkills(); renderShopping(); updateBadges(); }
 function syncDepthChips() { document.querySelectorAll('#depth .chip').forEach(x => x.classList.toggle('on', x.dataset.d === depth)); }
-async function refresh() { try { recipes = await API.list(); } catch { recipes = store.get('cacheRecipes', []); } store.set('cacheRecipes', recipes); renderAll(); }
+async function refresh() {
+  try { recipes = await API.list(); } catch { recipes = store.get('cacheRecipes', []); }
+  try { const jobs = await API.jobs(); recentJobs = Array.isArray(jobs) ? jobs : []; } catch { recentJobs = []; }
+  store.set('cacheRecipes', recipes);
+  renderAll();
+}
 
 function initTabs() {
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {

@@ -56,7 +56,7 @@ _Turn any cooking video into step-by-step instructions that explain the **why** 
 
 | | |
 |---|---|
-| 🎬 **智能解析** | 粘链接（B站/抖音/YouTube）或传视频，**实时进度**、可后台化；手机可从别的 App 分享链接直接解析 |
+| 🎬 **智能解析** | 粘链接（B站/抖音/YouTube）或传视频，**实时进度 + 排队**、可后台化；手机可从别的 App 分享链接直接解析 |
 | 🔎 **读画面字幕** | 可选视觉 OCR（qwen2.5-VL）：抽帧读屏上字幕/画面，**兜住没口播、只有字幕的视频** |
 | 📸 **画面配图** | 从原视频截出**每步的状态图**（“鸡蛋煎到什么样”一眼看到）和**食材/小料特写**（视觉定位+裁剪）；时间戳定位、视觉模型挑帧复核，找不到就不硬配 |
 | 📝 **文字也能解析** | 除视频外：**粘贴小红书图文/公众号/任意文字帖**，或贴链接时自动兜底抓网页文字 |
@@ -147,7 +147,7 @@ curl -L -o models/ggml-large-v3-turbo.bin \
 docker compose up --build
 ```
 
-默认会把菜谱写到 `./recipes/`，把用户数据写到 Docker volume。若本机已跑 Ollama，`.env` 里的 `PAODING_LLM_BASE_URL` 可用默认的 `http://host.docker.internal:11434/v1`。
+默认会把菜谱写到 `./recipes/`，解析任务元数据写到同级 `./jobs/`，用户数据写到 Docker volume。若本机已跑 Ollama，`.env` 里的 `PAODING_LLM_BASE_URL` 可用默认的 `http://host.docker.internal:11434/v1`。
 
 也可以让 compose 顺手起一个 Ollama：
 
@@ -164,6 +164,8 @@ docker compose --profile ollama up --build paoding
 默认监听局域网地址时会强制开启 API token；在 `.env` 设置 `PAODING_API_TOKEN`，再到 App「设置 → API Token」填同一个值。只在本机浏览器使用可设 `PAODING_HOST=127.0.0.1` 跳过强制鉴权。CORS 默认只允许同源与 Capacitor，跨域自托管前端可用 `PAODING_CORS_ORIGINS=https://你的域名` 放行。
 
 > B站等平台反爬（HTTP 412）：`.env` 里设 `PAODING_COOKIES_FROM_BROWSER=chrome`，借用浏览器已登录的 cookie 即可。
+
+解析服务默认同时跑 2 个任务，最多排队 10 个；可用 `PAODING_MAX_JOBS` 和 `PAODING_MAX_QUEUE` 调整。任务状态会写入 `jobs/`，服务重启后正在执行的任务会标为「已中断」，首页「最近任务」可看到并重新发起。
 
 安全边界：服务端会在抓网页、下载视频前拒绝本机、私网与链路本地地址，避免把后端当成内网探测器。`yt-dlp` 仍可能跟随平台侧重定向；首跳会被庖丁拦截，公网部署时仍建议放在受控网络与鉴权之后使用。
 
