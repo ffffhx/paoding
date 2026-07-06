@@ -71,7 +71,7 @@ _Turn any cooking video into step-by-step instructions that explain the **why** 
 | 🧺 **食材 & 购物** | 份量缩放（按 `qty/unit` 精确重算）、购物清单**同名合并 + 按超市货架分区**，本周计划展示每日营养合计与周日均，支持多菜同做时间线 |
 | ✏️ **可编辑** | AI 出错能直接改：标题/用量/步骤/讲解随手修正，食材/步骤可增删和上移下移，标签可直接编辑，保存即同步 |
 | 🏠 **多用户** | `PAODING_API_TOKENS` 支持家庭多用户：菜谱共享，收藏/笔记/评分/购物清单/本周计划/最近任务按 token 隔离 |
-| ☁️ **同步 & 备份** | 收藏/笔记/评分/购物清单**跨设备共享**（手机↔电脑）；一键导出备份 / 导入恢复 |
+| ☁️ **同步 & 备份** | 收藏/笔记/评分/购物清单**跨设备共享**（手机↔电脑）；一键导出备份 / 导入恢复，服务端自动定期备份 |
 | 🔄 **生态互通** | 导入单个 **schema.org Recipe JSON-LD**；复制 Markdown、下载 **Cooklang `.cook`** 与 **schema.org JSON-LD** |
 | ⭐ **收藏 & 记录** | 收藏整菜 + 收藏单步技巧、笔记、做过打卡 + 评分，菜谱库支持搜索、标签/食材/快捷筛选和按最近/评分/时长/名称排序 |
 | 🌙 **顺手** | 暗色模式、字号、朗读语速、装到主屏（PWA）、离线看已解析菜谱、双指缩放 |
@@ -177,6 +177,14 @@ docker compose --profile ollama up --build paoding
 
 安全边界：服务端会在抓网页、下载视频前拒绝本机、私网与链路本地地址，避免把后端当成内网探测器。`yt-dlp` 仍可能跟随平台侧重定向；首跳会被庖丁拦截，公网部署时仍建议放在受控网络与鉴权之后使用。
 
+### 自动备份
+
+服务端会在 `recipes/` 同级创建 `backups/`，按间隔写入 `paoding-backup-<ISO日期>.json`。备份内容包含全部菜谱 `recipes`，以及默认用户和多用户模式下的全部 userdata 文件 `user_files`。
+
+- `PAODING_BACKUP_INTERVAL_H=24`：默认每 24 小时备份一次；设为 `0` 关闭自动备份。
+- `PAODING_BACKUP_KEEP=7`：默认保留最近 7 份，旧备份自动轮转删除。
+- 启动时若最近一次备份已超过间隔，会立即补一份；`GET /api/backups` 可查看备份列表。
+
 ### 安卓 APK
 
 Capacitor APK 不再写死任何个人后端地址；首次打开会加载本地设置页，填自己的后端地址和 API Token 后再使用。仓库也不再提供指向作者私人后端的 `paoding-debug.apk`，需要 APK 时请在本机执行 `npx cap sync android` 后自行打包。
@@ -211,10 +219,11 @@ docs/           产品需求与技术方案
 ## 测试
 
 ```bash
-node --test        # 或 npm test
+npm test
+# 等价于：node --test test/*.test.mjs
 ```
 
-纯 Node 内置测试器、零第三方依赖：`test/backend`（解析纯函数）、`test/server`（起隔离实例测接口）、`test/frontend`（vm 沙箱跑真实 `app.js` 测纯逻辑）。GitHub Actions 每次 push / PR 自动跑（`.github/workflows/test.yml`）。
+纯 Node 内置测试器、零第三方依赖：覆盖解析纯函数、服务端接口、前端 `app.js` 纯逻辑、schema.org 导入、技法聚合、自动备份纯函数与管线集成测试。管线测试使用 `test/fixtures/bin/` 里的 fake `yt-dlp` / `ffmpeg` / `whisper-cli`，并用 OpenAI 兼容的 fetch stub 覆盖 LLM JSON 重试。GitHub Actions 每次 push / PR 自动跑（`.github/workflows/test.yml`）。
 
 ## Roadmap
 
@@ -234,6 +243,9 @@ node --test        # 或 npm test
 - [x] 结构化营养估算落库、缓存失效、JSON-LD 导出
 - [x] schema.org Recipe JSON-LD 导入（进出双向互通）
 - [x] 跨视频「技法库」v1（离线词表聚合、步骤 why 摘录、跳回菜谱步骤）
+- [x] 管线集成测试基建（fake yt-dlp / ffmpeg / whisper-cli + LLM JSON 重试）
+- [x] 菜谱列表索引缓存（新增/删除/mtime 变化自动刷新）
+- [x] 自动备份与轮转（启动补备份、保留最近 N 份、备份列表 API）
 - [ ] 更多真实视频调 prompt，扩充技法词表与命中质量
 
 ## 致谢
