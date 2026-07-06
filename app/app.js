@@ -31,8 +31,13 @@ const API = {
   troubleshoot: (recipeId, stepIndex, problem) => F('/api/troubleshoot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, problem }) }).then(j),
   nutrition: (recipeId) => F('/api/nutrition', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
   overview: (recipeId) => F('/api/overview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
-  userdataGet: () => F('/api/userdata').then(r => r.json()).catch(() => ({})),
-  userdataPut: (data) => F('/api/userdata', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).catch(() => { }),
+  userdataGet: () => F('/api/userdata').then(r => r.json()).catch(() => ({ rev: 0 })),
+  userdataPut: async (data) => {
+    const r = await F('/api/userdata', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(d.error || ('HTTP ' + r.status)); e.status = r.status; e.data = d; throw e; }
+    return d;
+  },
   importAll: (data) => F('/api/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(j),
 };
 async function exportData() {
@@ -62,6 +67,7 @@ async function j(r) { const d = await r.json().catch(() => ({})); if (!r.ok) thr
 /* ---------- 状态 ---------- */
 let recipes = [];
 let recentJobs = [];
+let userdataRev = 0;
 let favRecipes = store.get('favRecipes', []);
 let favSteps = store.get('favSteps', []);
 let shopping = store.get('shopping', []);
@@ -81,12 +87,86 @@ const stepKey = (id, i) => id + '#' + i;
 const _storeSet = store.set.bind(store);
 const SYNC_KEYS = new Set(['favRecipes', 'favSteps', 'shopping', 'meta', 'mealPlan']);
 let syncT = null;
-function syncUp() { clearTimeout(syncT); syncT = setTimeout(() => API.userdataPut({ favRecipes, favSteps, shopping, meta, mealPlan }), 800); }
+function revOf(d) { const n = Number(d && d.rev); return Number.isInteger(n) && n >= 0 ? n : 0; }
+function localUserData() { return { rev: userdataRev, favRecipes, favSteps, shopping, meta, mealPlan }; }
+function uniqList(a, b, keyFn = (x) => JSON.stringify(x)) {
+  const out = [], seen = new Set();
+  for (const x of [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]) {
+    const k = keyFn(x);
+    if (seen.has(k)) continue;
+    seen.add(k); out.push(x);
+  }
+  return out;
+}
+function mergeShopping(remote, local) {
+  const map = new Map();
+  const key = (x) => [x?.name || '', x?.amount || '', x?.from || ''].join('|');
+  for (const it of [...(Array.isArray(remote) ? remote : []), ...(Array.isArray(local) ? local : [])]) {
+    const k = key(it);
+    const prev = map.get(k);
+    map.set(k, prev ? { ...prev, ...it, checked: !!prev.checked || !!it.checked } : { ...it });
+  }
+  return [...map.values()];
+}
+function mergeMeta(remote, local) {
+  const out = { ...(remote && typeof remote === 'object' && !Array.isArray(remote) ? remote : {}) };
+  const loc = local && typeof local === 'object' && !Array.isArray(local) ? local : {};
+  for (const [id, l] of Object.entries(loc)) {
+    const r = out[id] && typeof out[id] === 'object' ? out[id] : {};
+    const next = { ...r, ...(l && typeof l === 'object' ? l : {}) };
+    next.ingChecked = uniqList(r.ingChecked, l?.ingChecked, String);
+    if (r.cooked || l?.cooked) next.cooked = true;
+    if (r.cooked_at && l?.cooked_at) next.cooked_at = String(r.cooked_at) > String(l.cooked_at) ? r.cooked_at : l.cooked_at;
+    out[id] = next;
+  }
+  return out;
+}
+function mergeMealPlan(remote, local) {
+  const out = { ...(remote && typeof remote === 'object' && !Array.isArray(remote) ? remote : {}) };
+  const loc = local && typeof local === 'object' && !Array.isArray(local) ? local : {};
+  for (const [day, ids] of Object.entries(loc)) out[day] = uniqList(out[day], ids, String);
+  return out;
+}
+function mergeUserDataConflict(remote, local) {
+  return {
+    rev: revOf(remote),
+    favRecipes: uniqList(remote?.favRecipes, local?.favRecipes, String),
+    favSteps: uniqList(remote?.favSteps, local?.favSteps, (x) => x?.key || JSON.stringify(x)),
+    shopping: mergeShopping(remote?.shopping, local?.shopping),
+    meta: mergeMeta(remote?.meta, local?.meta),
+    mealPlan: mergeMealPlan(remote?.mealPlan, local?.mealPlan),
+  };
+}
+function applyUserData(d) {
+  userdataRev = revOf(d);
+  favRecipes = Array.isArray(d.favRecipes) ? d.favRecipes : [];
+  favSteps = Array.isArray(d.favSteps) ? d.favSteps : [];
+  shopping = Array.isArray(d.shopping) ? d.shopping : [];
+  meta = d.meta && typeof d.meta === 'object' && !Array.isArray(d.meta) ? d.meta : {};
+  mealPlan = d.mealPlan && typeof d.mealPlan === 'object' && !Array.isArray(d.mealPlan) ? d.mealPlan : {};
+  _storeSet('favRecipes', favRecipes); _storeSet('favSteps', favSteps); _storeSet('shopping', shopping); _storeSet('meta', meta); _storeSet('mealPlan', mealPlan);
+}
+async function syncUserDataNow(retry = true) {
+  try {
+    const res = await API.userdataPut(localUserData());
+    userdataRev = revOf(res.userdata || res);
+  } catch (e) {
+    if (e.status === 409 && retry && e.data?.userdata) {
+      const merged = mergeUserDataConflict(e.data.userdata, localUserData());
+      applyUserData(merged);
+      await syncUserDataNow(false);
+    } else {
+      console.warn('用户数据同步失败：', e.message);
+    }
+  }
+}
+function syncUp() { clearTimeout(syncT); syncT = setTimeout(() => syncUserDataNow(true), 800); }
 store.set = (k, v) => { _storeSet(k, v); if (SYNC_KEYS.has(k)) syncUp(); };
 async function loadUserData() {
   let d = null;
   try { d = await API.userdataGet(); } catch { }
   d = d || {};
+  userdataRev = revOf(d);
   const nonEmpty = (v) => Array.isArray(v) ? v.length > 0 : !!(v && typeof v === 'object' && Object.keys(v).length > 0);
   let needPush = false;
   // 每个键：后端有非空数据才采用；后端空/缺而本地有数据时保留本地并回推。

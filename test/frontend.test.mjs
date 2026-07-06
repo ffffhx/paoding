@@ -97,3 +97,30 @@ test("sourceSegmentUrl 按平台生成原视频时间戳链接", () => {
   assert.equal(app.sourceSegmentUrl("https://www.bilibili.com/video/BV1xx", null), "");
   assert.equal(app.sourceSegmentUrl("", [1, 2]), "");
 });
+
+test("mergeUserDataConflict 按字段合并跨设备数据", () => {
+  const merged = app.mergeUserDataConflict({
+    rev: 3,
+    favRecipes: ["a"],
+    favSteps: [{ key: "a#1", title: "A" }],
+    shopping: [{ name: "盐", amount: "1勺", from: "A", checked: false }],
+    meta: { a: { notes: "旧", ingChecked: [1], cooked: true, cooked_at: "2026-01-01T00:00:00.000Z" } },
+    mealPlan: { "2026-01-01": ["a"] },
+  }, {
+    favRecipes: ["b", "a"],
+    favSteps: [{ key: "b#1", title: "B" }, { key: "a#1", title: "A2" }],
+    shopping: [{ name: "盐", amount: "1勺", from: "A", checked: true }, { name: "糖", amount: "2勺", from: "B" }],
+    meta: { a: { notes: "新", ingChecked: [2], cooked_at: "2026-01-02T00:00:00.000Z" } },
+    mealPlan: { "2026-01-01": ["b", "a"] },
+  });
+  assert.equal(merged.rev, 3);
+  assert.deepEqual(Array.from(merged.favRecipes), ["a", "b"]);
+  assert.deepEqual(Array.from(merged.favSteps).map((x) => x.key), ["a#1", "b#1"]);
+  assert.equal(merged.shopping.find((x) => x.name === "盐").checked, true);
+  assert.ok(merged.shopping.some((x) => x.name === "糖"));
+  assert.deepEqual(Array.from(merged.meta.a.ingChecked), [1, 2]);
+  assert.equal(merged.meta.a.notes, "新");
+  assert.equal(merged.meta.a.cooked, true);
+  assert.equal(merged.meta.a.cooked_at, "2026-01-02T00:00:00.000Z");
+  assert.deepEqual(Array.from(merged.mealPlan["2026-01-01"]), ["a", "b"]);
+});

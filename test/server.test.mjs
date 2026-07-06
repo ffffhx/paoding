@@ -153,10 +153,16 @@ test("CORS 允许同源，拒绝未配置的跨域来源", async () => {
 });
 
 test("userdata 空→PUT→回读", async () => {
-  assert.deepEqual(await (await request("/api/userdata")).json(), {});
-  const put = await request("/api/userdata", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ favRecipes: ["x"] }) });
+  assert.deepEqual(await (await request("/api/userdata")).json(), { rev: 0 });
+  const put = await request("/api/userdata", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rev: 0, favRecipes: ["x"] }) });
   assert.equal(put.status, 200);
-  assert.deepEqual(await (await request("/api/userdata")).json(), { favRecipes: ["x"] });
+  assert.equal((await put.json()).rev, 1);
+  assert.deepEqual(await (await request("/api/userdata")).json(), { rev: 1, favRecipes: ["x"] });
+  const stale = await request("/api/userdata", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rev: 0, favRecipes: ["y"] }) });
+  assert.equal(stale.status, 409);
+  const conflict = await stale.json();
+  assert.equal(conflict.userdata.rev, 1);
+  assert.deepEqual(conflict.userdata.favRecipes, ["x"]);
 });
 
 test("import 写入→列表可见→分享页→删除", async () => {

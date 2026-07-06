@@ -252,6 +252,23 @@ async function readJson(req) {
   try { return JSON.parse(text); }
   catch { throw Object.assign(new Error("请求体不是合法 JSON"), { statusCode: 400 }); }
 }
+function normalizeRev(v) {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 ? n : 0;
+}
+function normalizeUserData(data) {
+  const obj = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
+  obj.rev = normalizeRev(obj.rev);
+  return obj;
+}
+function readUserData() {
+  try { return normalizeUserData(JSON.parse(fs.readFileSync(USERDATA_FILE, "utf8"))); }
+  catch { return { rev: 0 }; }
+}
+function writeUserData(data) {
+  fs.mkdirSync(path.dirname(USERDATA_FILE), { recursive: true });
+  fs.writeFileSync(USERDATA_FILE, JSON.stringify(normalizeUserData(data), null, 2));
+}
 function normalizeNutrition(raw) {
   const src = raw?.nutrition || raw || {};
   const per = src.per_serving || src;
@@ -569,14 +586,18 @@ export async function handleRequest(req, res) {
 
     // ---- 用户数据同步（收藏/笔记/评分/购物清单跨设备共享）----
     if (req.method === "GET" && p === "/api/userdata") {
-      try { return sendJSON(res, 200, JSON.parse(fs.readFileSync(USERDATA_FILE, "utf8"))); }
-      catch { return sendJSON(res, 200, {}); }
+      return sendJSON(res, 200, readUserData());
     }
     if (req.method === "PUT" && p === "/api/userdata") {
       const body = (await readBody(req)).toString("utf8") || "{}";
-      try { JSON.parse(body); } catch { return sendJSON(res, 400, { error: "无效 JSON" }); }
-      fs.writeFileSync(USERDATA_FILE, body);
-      return sendJSON(res, 200, { ok: true });
+      let incoming;
+      try { incoming = JSON.parse(body); } catch { return sendJSON(res, 400, { error: "无效 JSON" }); }
+      const cur = readUserData();
+      const clientRev = normalizeRev(incoming?.rev);
+      if (clientRev !== cur.rev) return sendJSON(res, 409, { error: "用户数据已被其他设备更新", userdata: cur });
+      const next = normalizeUserData({ ...incoming, rev: cur.rev + 1 });
+      writeUserData(next);
+      return sendJSON(res, 200, { ok: true, rev: next.rev, userdata: next });
     }
 
     // ---- 备份恢复：把导出的 {recipes,userdata} 写回（换设备/搬后端/防丢数据）----
@@ -592,7 +613,7 @@ export async function handleRequest(req, res) {
         const id = slug(r.id || r.title); const rr = { ...r }; delete rr.id;
         fs.writeFileSync(path.join(RECIPES_DIR, `${id}.json`), JSON.stringify(rr, null, 2)); n++;
       }
-      if (data.userdata && typeof data.userdata === "object" && !Array.isArray(data.userdata)) fs.writeFileSync(USERDATA_FILE, JSON.stringify(data.userdata));
+      if (data.userdata && typeof data.userdata === "object" && !Array.isArray(data.userdata)) writeUserData(data.userdata);
       return sendJSON(res, 200, { ok: true, count: n, skipped });
     }
 
