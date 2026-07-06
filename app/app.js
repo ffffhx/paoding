@@ -186,9 +186,11 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 /* ================= 首页 ================= */
 function matchFilter(r) {
-  if (filter.tag === '__fav') return favRecipes.includes(r.id);
-  if (filter.tag === '__cooked') return rmeta(r.id).cooked;
-  if (filter.tag && !(r.tags || []).includes(filter.tag) && r.difficulty !== filter.tag && r.cuisine !== filter.tag) return false;
+  // 标签筛选
+  if (filter.tag === '__fav') { if (!favRecipes.includes(r.id)) return false; }
+  else if (filter.tag === '__cooked') { if (!rmeta(r.id).cooked) return false; }
+  else if (filter.tag && !(r.tags || []).includes(filter.tag) && r.difficulty !== filter.tag && r.cuisine !== filter.tag) return false;
+  // 搜索词对所有筛选都生效（含「★收藏」「✓做过」下），此前这两个分支提前 return 导致搜索失效
   if (filter.q) { const hay = (r.title + ' ' + (r.tags || []).join(' ') + ' ' + (r.ingredients || []).map(i => i.name).join(' ')); if (!hay.includes(filter.q)) return false; }
   return true;
 }
@@ -894,10 +896,16 @@ function stageLabel(stage, message) {
 }
 
 /* ================= PWA / 初始化 ================= */
+// 与购物清单页一致：按名字合并后、未全部勾选的组数（列表显示合并项，角标也该数合并组）
+function shoppingUnchecked() {
+  const byName = {};
+  shopping.forEach(it => { (byName[it.name] = byName[it.name] || []).push(it); });
+  return Object.values(byName).filter(items => !items.every(it => it.checked)).length;
+}
 function updateBadges() {
   const set = (sel, n) => { const b = $(sel); if (b) b.innerHTML = n ? `<span class="badge-count">${n}</span>` : ''; };
   set('#tabSkillsBadge', favSteps.length);
-  set('#tabShopBadge', shopping.filter(x => !x.checked).length);
+  set('#tabShopBadge', shoppingUnchecked());
 }
 function renderAll() { renderFilters(); renderRecipes(); renderSkills(); renderShopping(); updateBadges(); }
 function syncDepthChips() { document.querySelectorAll('#depth .chip').forEach(x => x.classList.toggle('on', x.dataset.d === depth)); }
