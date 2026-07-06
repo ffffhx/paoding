@@ -26,3 +26,6 @@ android/capacitor.settings.gradle
 # 构建出的 APK（体积大，不进仓库）
 paoding-debug.apk
 *.apk
+
+# 用户数据（收藏/笔记/评分/购物清单）本地文件，不进仓库
+paoding-userdata.json

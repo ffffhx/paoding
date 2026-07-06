@@ -10,6 +10,8 @@ import { chatText } from "../src/llm.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RECIPES_DIR = path.join(HERE, "recipes");
+// 用户数据（收藏/笔记/评分/购物清单等）跨设备同步用；放项目根、不在 webDir 内，避免被静态服务或打包暴露
+const USERDATA_FILE = path.join(HERE, "..", "paoding-userdata.json");
 const PORT = process.env.PAODING_PORT ? Number(process.env.PAODING_PORT) : 4177;
 const HOST = process.env.PAODING_HOST || "0.0.0.0"; // 默认局域网可达(手机用)；设 127.0.0.1 可锁本机
 const MAX_RUNNING = Number(process.env.PAODING_MAX_JOBS || 2); // 同时解析上限，防资源耗尽
@@ -133,6 +135,18 @@ const server = http.createServer(async (req, res) => {
   try {
     // ---- 列表 ----
     if (req.method === "GET" && p === "/api/recipes") return sendJSON(res, 200, listRecipes());
+
+    // ---- 用户数据同步（收藏/笔记/评分/购物清单跨设备共享）----
+    if (req.method === "GET" && p === "/api/userdata") {
+      try { return sendJSON(res, 200, JSON.parse(fs.readFileSync(USERDATA_FILE, "utf8"))); }
+      catch { return sendJSON(res, 200, {}); }
+    }
+    if (req.method === "PUT" && p === "/api/userdata") {
+      const body = (await readBody(req)).toString("utf8") || "{}";
+      try { JSON.parse(body); } catch { return sendJSON(res, 400, { error: "无效 JSON" }); }
+      fs.writeFileSync(USERDATA_FILE, body);
+      return sendJSON(res, 200, { ok: true });
+    }
 
     // ---- 删除 ----
     if (req.method === "DELETE" && p.startsWith("/api/recipes/")) {

@@ -25,6 +25,8 @@ const API = {
   troubleshoot: (recipeId, stepIndex, problem) => fetch(api('/api/troubleshoot'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, problem }) }).then(j),
   nutrition: (recipeId) => fetch(api('/api/nutrition'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
   overview: (recipeId) => fetch(api('/api/overview'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
+  userdataGet: () => fetch(api('/api/userdata')).then(r => r.json()).catch(() => ({})),
+  userdataPut: (data) => fetch(api('/api/userdata'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).catch(() => { }),
 };
 async function j(r) { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); return d; }
 
@@ -40,6 +42,27 @@ let filter = { q: '', tag: '' };
 const rmeta = (id) => (meta[id] = meta[id] || {});
 function saveMeta() { store.set('meta', meta); }
 const stepKey = (id, i) => id + '#' + i;
+
+/* ---------- 跨设备同步 ----------
+   收藏/技巧/购物清单/笔记评分等原本只存在各设备的 localStorage，手机和电脑不通。
+   这里拦截对这些键的写入 → 防抖后回传后端；启动时先从后端拉一份，实现多端共享。 */
+const _storeSet = store.set.bind(store);
+const SYNC_KEYS = new Set(['favRecipes', 'favSteps', 'shopping', 'meta']);
+let syncT = null;
+function syncUp() { clearTimeout(syncT); syncT = setTimeout(() => API.userdataPut({ favRecipes, favSteps, shopping, meta }), 800); }
+store.set = (k, v) => { _storeSet(k, v); if (SYNC_KEYS.has(k)) syncUp(); };
+async function loadUserData() {
+  let d = null;
+  try { d = await API.userdataGet(); } catch { }
+  if (d && (d.favRecipes || d.favSteps || d.shopping || d.meta)) {
+    if (Array.isArray(d.favRecipes)) { favRecipes = d.favRecipes; _storeSet('favRecipes', favRecipes); }
+    if (Array.isArray(d.favSteps)) { favSteps = d.favSteps; _storeSet('favSteps', favSteps); }
+    if (Array.isArray(d.shopping)) { shopping = d.shopping; _storeSet('shopping', shopping); }
+    if (d.meta && typeof d.meta === 'object') { meta = d.meta; _storeSet('meta', meta); }
+  } else {
+    syncUp(); // 后端还没有数据 → 用本设备现有数据播种
+  }
+}
 
 /* ---------- 工具 ---------- */
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -579,7 +602,7 @@ function init() {
     const shared = (sp.get('url') || sp.get('text') || sp.get('title') || '').match(/https?:\/\/[^\s]+/);
     if (shared) { $('#url').value = shared[0]; history.replaceState(null, '', location.pathname); setTimeout(() => $('#parseUrl').click(), 400); }
   } catch { }
-  refresh();
+  loadUserData().finally(refresh); // 先同步远端用户数据，再拉菜谱并渲染
   // PWA + 自动更新：检测到新版本就自动刷新（跟做/弹窗中途不打断，等忙完或下次打开）
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').then((reg) => {
