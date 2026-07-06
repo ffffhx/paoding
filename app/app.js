@@ -80,15 +80,23 @@ store.set = (k, v) => { _storeSet(k, v); if (SYNC_KEYS.has(k)) syncUp(); };
 async function loadUserData() {
   let d = null;
   try { d = await API.userdataGet(); } catch { }
-  if (d && (d.favRecipes || d.favSteps || d.shopping || d.meta || d.mealPlan)) {
-    if (Array.isArray(d.favRecipes)) { favRecipes = d.favRecipes; _storeSet('favRecipes', favRecipes); }
-    if (Array.isArray(d.favSteps)) { favSteps = d.favSteps; _storeSet('favSteps', favSteps); }
-    if (Array.isArray(d.shopping)) { shopping = d.shopping; _storeSet('shopping', shopping); }
-    if (d.meta && typeof d.meta === 'object') { meta = d.meta; _storeSet('meta', meta); }
-    if (d.mealPlan && typeof d.mealPlan === 'object') { mealPlan = d.mealPlan; _storeSet('mealPlan', mealPlan); }
-  } else {
-    syncUp(); // 后端还没有数据 → 用本设备现有数据播种
-  }
+  d = d || {};
+  const nonEmpty = (v) => Array.isArray(v) ? v.length > 0 : !!(v && typeof v === 'object' && Object.keys(v).length > 0);
+  let needPush = false;
+  // 每个键：后端有非空数据才采用；后端空/缺而本地有数据时保留本地并回推。
+  // 否则某台设备首启播种的空 {favRecipes:[],meta:{}…} 会命中旧的 truthy 判断([]/{} 都是 truthy)，
+  // 把另一台离线攒的收藏/购物清单/排菜静默清空。
+  const merge = (remote, local) => {
+    if (nonEmpty(remote)) return remote;
+    if (nonEmpty(local)) needPush = true;
+    return local;
+  };
+  favRecipes = merge(d.favRecipes, favRecipes); _storeSet('favRecipes', favRecipes);
+  favSteps = merge(d.favSteps, favSteps); _storeSet('favSteps', favSteps);
+  shopping = merge(d.shopping, shopping); _storeSet('shopping', shopping);
+  meta = merge(d.meta, meta); _storeSet('meta', meta);
+  mealPlan = merge(d.mealPlan, mealPlan); _storeSet('mealPlan', mealPlan);
+  if (needPush) syncUp(); // 把后端缺的本地数据推上去，避免下次又被空值覆盖
 }
 
 /* ---------- 工具 ---------- */
