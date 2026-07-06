@@ -9,6 +9,15 @@ concurrency:
   group: paoding-local-deploy
   cancel-in-progress: true
 
+env:
+  DEPLOY_DIR: /Users/bytedance/Code/paoding
+  APP_LAUNCHD_SERVICE: com.paoding.server
+  TUNNEL_LAUNCHD_SERVICE: com.paoding.tunnel
+  LOCAL_HEALTH_URL: http://127.0.0.1:4177/api/recipes
+  PUBLIC_HEALTH_URL: https://124-221-36-36.anyip.dev:8443/paoding/api/recipes
+  SERVER_LOG: /tmp/paoding-server.log
+  TUNNEL_LOG: /tmp/paoding-tunnel.log
+
 jobs:
   deploy:
     runs-on: [self-hosted, macOS, paoding]
@@ -16,40 +25,40 @@ jobs:
       - name: Pull latest code into live checkout
         run: |
           set -euo pipefail
-          cd /Users/bytedance/Code/paoding
+          cd "$DEPLOY_DIR"
           git fetch origin main
           git pull --ff-only origin main
 
       - name: Test
         run: |
           set -euo pipefail
-          cd /Users/bytedance/Code/paoding
+          cd "$DEPLOY_DIR"
           npm test
 
       - name: Restart local app service
         run: |
           set -euo pipefail
           uid="$(id -u)"
-          launchctl kickstart -k "gui/$uid/com.paoding.server"
+          launchctl kickstart -k "gui/$uid/$APP_LAUNCHD_SERVICE"
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:4177/api/recipes >/dev/null; then
+            if curl -fsS "$LOCAL_HEALTH_URL" >/dev/null; then
               exit 0
             fi
             sleep 1
           done
-          tail -80 /tmp/paoding-server.log || true
+          tail -80 "$SERVER_LOG" || true
           exit 1
 
       - name: Restart cloud tunnel and verify public URL
         run: |
           set -euo pipefail
           uid="$(id -u)"
-          launchctl kickstart -k "gui/$uid/com.paoding.tunnel"
+          launchctl kickstart -k "gui/$uid/$TUNNEL_LAUNCHD_SERVICE"
           for i in $(seq 1 30); do
-            if curl -kfsS https://124-221-36-36.anyip.dev:8443/paoding/api/recipes >/dev/null; then
+            if curl -kfsS "$PUBLIC_HEALTH_URL" >/dev/null; then
               exit 0
             fi
             sleep 1
           done
-          tail -80 /tmp/paoding-tunnel.log || true
+          tail -80 "$TUNNEL_LOG" || true
           exit 1

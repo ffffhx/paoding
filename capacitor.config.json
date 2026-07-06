@@ -4,8 +4,7 @@
   "webDir": "app",
   "server": {
     "androidScheme": "https",
-    "cleartext": true,
-    "url": "https://124-221-36-36.anyip.dev:8443/paoding/"
+    "cleartext": true
   },
   "android": {
     "allowMixedContent": true

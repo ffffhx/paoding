@@ -1,0 +1,14 @@
+.git
+.env
+node_modules
+android/.gradle
+android/build
+android/app/build
+android/app/src/main/assets/public
+app/recipes
+paoding-out
+recipes
+models
+*.apk
+paoding-userdata.json
+npm-debug.log
