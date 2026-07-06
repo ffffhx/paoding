@@ -27,7 +27,7 @@ try {
   process.exit(1);
 }
 
-const slug = (s) => (s || "recipe").replace(/[\/\\:*?"<>|]/g, "").replace(/\s+/g, "-").slice(0, 40);
+const slug = (s) => (s || "recipe").replace(/[\/\\:*?"<>|]/g, "").replace(/\s+/g, "-").slice(0, 40) || "recipe";
 
 function listRecipes() {
   return fs
@@ -46,11 +46,14 @@ function listRecipes() {
     .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
 }
 function loadRecipe(id) {
+  if (!id || typeof id !== "string") return null; // 缺 recipeId 时返回 null，避免 path.basename(undefined) 抛错→500
   const p = path.join(RECIPES_DIR, `${path.basename(id)}.json`);
   if (!fs.existsSync(p)) return null;
-  const r = JSON.parse(fs.readFileSync(p, "utf8"));
-  r.id = id;
-  return r;
+  try {
+    const r = JSON.parse(fs.readFileSync(p, "utf8")); // 损坏文件也容错（与 listRecipes 一致）
+    r.id = id;
+    return r;
+  } catch { return null; }
 }
 
 function sendJSON(res, code, obj) {
@@ -222,11 +225,14 @@ const server = http.createServer(async (req, res) => {
       const filename = decodeURIComponent(req.headers["x-filename"] || "video.mp4");
       const depth = req.headers["x-depth"];
       if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
-      const buf = await readBody(req);
-      if (!buf.length) return sendJSON(res, 400, { error: "空文件" });
+      // 先同步占住并发 slot，再读上传体：否则「检查→await readBody→newJob」之间的事件循环让步会让
+      // 多个并发上传同时通过 runningCount 检查，绕过 MAX_RUNNING、并发拉起过多 ffmpeg/whisper。
+      const id = newJob();
+      let buf;
+      try { buf = await readBody(req); } catch (e) { jobs.delete(id); return sendJSON(res, 400, { error: e.message }); }
+      if (!buf.length) { jobs.delete(id); return sendJSON(res, 400, { error: "空文件" }); }
       const tmp = path.join(os.tmpdir(), `paoding-up-${Date.now()}-${slug(filename)}`);
       fs.writeFileSync(tmp, buf);
-      const id = newJob();
       runJob(id, tmp, depth);
       const j = jobs.get(id);
       // 任务结束(或超 1 小时兜底)后清理临时文件，避免卡死时泄漏
