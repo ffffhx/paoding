@@ -875,13 +875,19 @@ async function doParse(starter) {
     const { jobId } = await starter();
     await new Promise((resolve, reject) => {
       const es = new EventSource(api('/api/progress/' + jobId));
+      let errs = 0;
       es.onmessage = (ev) => {
+        errs = 0; // 收到任何消息就重置错误计数
         const d = JSON.parse(ev.data);
         if (d.type === 'progress') setP(d.pct || 0, stageLabel(d.stage, d.message));
         else if (d.type === 'done') { es.close(); resolve(d.recipe); }
         else if (d.type === 'error') { es.close(); reject(new Error(d.error)); }
       };
-      es.onerror = () => { es.close(); reject(new Error('连接中断')); };
+      // 瞬时断网时 EventSource 会自动重连、服务端会补发当前进度；只有确实关闭或连续多次
+      // 失败(约 18s)才判失败，避免长解析(1~3 分钟)中一次网络抖动就误报「连接中断」。
+      es.onerror = () => {
+        if (es.readyState === EventSource.CLOSED || ++errs >= 6) { es.close(); reject(new Error('连接中断')); }
+      };
     }).then(async (recipe) => {
       recipes = await API.list(); renderAll(); cleanup(); toast('解析完成：' + (recipe.title || ''));
       const found = recipes.find(x => x.title === recipe.title); if (found) openDetail(found);
