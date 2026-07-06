@@ -918,15 +918,24 @@ async function refresh() { try { recipes = await API.list(); } catch { recipes =
 function initTabs() {
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     curTab = t.dataset.tab;
-    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
+    document.querySelectorAll('.tab').forEach(x => { const on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', on ? 'true' : 'false'); });
     ['recipes', 'plan', 'skills', 'shopping', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== curTab));
     const showSearch = curTab === 'recipes';
     $('#searchrow').classList.toggle('hidden', !showSearch); $('#filters').classList.toggle('hidden', !showSearch);
     if (curTab === 'skills') renderSkills(); if (curTab === 'shopping') renderShopping(); if (curTab === 'settings') renderSettings(); if (curTab === 'plan') renderPlan();
   });
+  // 加载时同步一次 aria-selected，读屏用户一进来就知道当前在哪个标签
+  document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x.classList.contains('on') ? 'true' : 'false'));
 }
 function init() {
   applyTheme(); syncDepthChips();
+  // 无障碍：让 role=button/tab 的非原生控件(标签栏/深度选择等 div/span)支持键盘 Enter/Space 触发，
+  // 而不只是鼠标/触屏点击——键盘与读屏用户也能操作主导航。
+  document.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[role="button"],[role="tab"]')) {
+      e.preventDefault(); e.target.click();
+    }
+  });
   initTabs();
   $('#depth').onclick = (e) => { const c = e.target.closest('.chip'); if (!c) return; depth = c.dataset.d; syncDepthChips(); };
   $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast('请粘贴 http(s) 视频链接'); return; } doParse(() => API.startUrl(u, depth)); $('#url').value = ''; };
