@@ -51,6 +51,9 @@ test("settingsLanguageRowHtml 切 en 后关键 UI 字符串是英文", () => {
   assert.ok(html.includes("Language"));
   assert.ok(html.includes("Switch the interface language"));
   assert.ok(html.includes("Chinese"));
+  assert.equal(app.t("settings.theme.label"), "Dark mode");
+  assert.equal(app.t("settings.backend.placeholder"), "e.g. http://192.168.1.5:4177");
+  assert.equal(app.t("settings.importRecipe.submit"), "Import recipe");
   app.setLanguage("zh");
 });
 

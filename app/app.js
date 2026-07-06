@@ -1115,34 +1115,34 @@ function renderSettings() {
   const box = $('#view-settings');
   const sw = (on) => `<div class="switch ${on ? 'on' : ''}"></div>`;
   box.innerHTML = `
-    <div class="setrow"><div><div class="lbl">暗色模式</div><div class="desc">厨房夜间/护眼</div></div>${sw(settings.theme === 'dark')}<span class="hidden" data-k="theme"></span></div>
-    <div class="setrow"><div><div class="lbl">朗读步骤（TTS）</div><div class="desc">跟做时可语音念出当前步骤</div></div>${sw(settings.tts)}<span class="hidden" data-k="tts"></span></div>
+    <div class="setrow"><div><div class="lbl">${esc(tr('settings.theme.label'))}</div><div class="desc">${esc(tr('settings.theme.desc'))}</div></div>${sw(settings.theme === 'dark')}<span class="hidden" data-k="theme"></span></div>
+    <div class="setrow"><div><div class="lbl">${esc(tr('settings.tts.label'))}</div><div class="desc">${esc(tr('settings.tts.desc'))}</div></div>${sw(settings.tts)}<span class="hidden" data-k="tts"></span></div>
     ${settingsLanguageRowHtml()}
-    <div class="setrow"><div style="flex:1"><div class="lbl">字号</div><div class="desc">当前 ${Math.round(settings.fontScale * 100)}%</div></div>
+    <div class="setrow"><div style="flex:1"><div class="lbl">${esc(tr('settings.font.label'))}</div><div class="desc">${esc(tr('settings.font.current', { percent: Math.round(settings.fontScale * 100) }))}</div></div>
       <button class="iconbtn" data-fs="-">A－</button><button class="iconbtn" data-fs="+">A＋</button></div>
-    <div class="setrow"><div style="flex:1"><div class="lbl">朗读语速</div><div class="desc">${settings.ttsRate.toFixed(1)}×</div></div>
+    <div class="setrow"><div style="flex:1"><div class="lbl">${esc(tr('settings.ttsRate.label'))}</div><div class="desc">${esc(tr('settings.ttsRate.current', { rate: settings.ttsRate.toFixed(1) }))}</div></div>
       <button class="iconbtn" data-tr="-">－</button><button class="iconbtn" data-tr="+">＋</button></div>
-    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">默认讲解深度</div></div>
+    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">${esc(tr('settings.depth.default'))}</div></div>
       <div class="depth" id="setDepth" style="margin-top:8px">
-        <span class="chip ${settings.depth === 'beginner' ? 'on' : ''}" data-d="beginner">新手向</span>
-        <span class="chip ${settings.depth === 'balanced' ? 'on' : ''}" data-d="balanced">通俗</span>
-        <span class="chip ${settings.depth === 'advanced' ? 'on' : ''}" data-d="advanced">进阶原理</span></div></div>
-    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">后端地址</div><div class="desc">手机端填电脑的「局域网地址」（启动服务器时会打印）；本机留空即可</div></div>
-      <input type="text" id="apiBase" placeholder="如 http://192.168.1.5:4177" value="${esc(settings.apiBase)}" style="margin-top:8px"></div>
-    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">API Token</div><div class="desc">后端设了 PAODING_API_TOKEN 才需填（公网/隧道暴露时建议开启）；本机局域网可留空</div></div>
-      <input type="password" id="apiToken" placeholder="与服务端 PAODING_API_TOKEN 一致" value="${esc(settings.apiToken)}" style="margin-top:8px"></div>
-    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">数据备份</div><div class="desc">把全部菜谱与收藏导出成一个文件；换设备或搬后端时可导入恢复</div></div>
+        <span class="chip ${settings.depth === 'beginner' ? 'on' : ''}" data-d="beginner">${esc(tr('home.depth.beginner'))}</span>
+        <span class="chip ${settings.depth === 'balanced' ? 'on' : ''}" data-d="balanced">${esc(tr('settings.depth.balanced'))}</span>
+        <span class="chip ${settings.depth === 'advanced' ? 'on' : ''}" data-d="advanced">${esc(tr('home.depth.advanced'))}</span></div></div>
+    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">${esc(tr('settings.backend.label'))}</div><div class="desc">${esc(tr('settings.backend.desc'))}</div></div>
+      <input type="text" id="apiBase" placeholder="${esc(tr('settings.backend.placeholder'))}" value="${esc(settings.apiBase)}" style="margin-top:8px"></div>
+    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">${esc(tr('settings.token.label'))}</div><div class="desc">${esc(tr('settings.token.desc'))}</div></div>
+      <input type="password" id="apiToken" placeholder="${esc(tr('settings.token.placeholder'))}" value="${esc(settings.apiToken)}" style="margin-top:8px"></div>
+    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">${esc(tr('settings.backup.label'))}</div><div class="desc">${esc(tr('settings.backup.desc'))}</div></div>
       <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn ghost sm" id="btnExport">⬇ 导出备份</button>
-        <button class="btn ghost sm" id="btnImport">⬆ 导入恢复</button>
+        <button class="btn ghost sm" id="btnExport">${esc(tr('settings.backup.export'))}</button>
+        <button class="btn ghost sm" id="btnImport">${esc(tr('settings.backup.import'))}</button>
         <input type="file" id="importFile" accept="application/json,.json" class="hidden"></div></div>
-    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">导入外部菜谱</div><div class="desc">支持单个 schema.org Recipe JSON-LD；Cooklang 导入暂未支持</div></div>
-      <textarea id="recipeImportText" placeholder="粘贴 JSON-LD" style="margin-top:8px;min-height:96px"></textarea>
+    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">${esc(tr('settings.importRecipe.label'))}</div><div class="desc">${esc(tr('settings.importRecipe.desc'))}</div></div>
+      <textarea id="recipeImportText" placeholder="${esc(tr('settings.importRecipe.placeholder'))}" style="margin-top:8px;min-height:96px"></textarea>
       <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn ghost sm" id="btnImportRecipeText">导入菜谱</button>
-        <button class="btn ghost sm" id="btnImportRecipeFile">选择 JSON</button>
+        <button class="btn ghost sm" id="btnImportRecipeText">${esc(tr('settings.importRecipe.submit'))}</button>
+        <button class="btn ghost sm" id="btnImportRecipeFile">${esc(tr('settings.importRecipe.file'))}</button>
         <input type="file" id="recipeImportFile" accept="application/json,.json" class="hidden"></div></div>
-    <div style="text-align:center;color:var(--muted);font-size:12px;margin-top:14px">庖丁 · 解剖每一道菜的为什么</div>`;
+    <div style="text-align:center;color:var(--muted);font-size:12px;margin-top:14px">${esc(tr('settings.footer'))}</div>`;
 
   box.querySelectorAll('[data-k]').forEach(x => { x.previousElementSibling.onclick = () => { const k = x.dataset.k; settings[k] = k === 'theme' ? (settings.theme === 'dark' ? 'light' : 'dark') : !settings[k]; saveSettings(); applyTheme(); renderSettings(); }; });
   box.querySelectorAll('[data-fs]').forEach(b => b.onclick = () => { settings.fontScale = Math.min(1.5, Math.max(0.85, settings.fontScale + (b.dataset.fs === '+' ? 0.1 : -0.1))); saveSettings(); applyTheme(); renderSettings(); });
@@ -1165,11 +1165,11 @@ function needsBackendSetup() {
 }
 function showBackendSetupIfNeeded() {
   if (!needsBackendSetup()) return false;
-  const ov = openModal(`<h3 style="text-align:left">连接后端</h3>
-    <p style="color:var(--muted);text-align:left;margin-bottom:12px">填写自己的庖丁服务地址和 API Token。</p>
-    <input type="text" id="setupApiBase" inputmode="url" placeholder="如 http://192.168.1.5:4177" style="margin-bottom:8px">
-    <input type="password" id="setupApiToken" placeholder="PAODING_API_TOKEN">
-    <div class="mrow"><button class="btn ghost" id="setupLater">稍后</button><button class="btn" id="setupSave">连接</button></div>`, 'left');
+  const ov = openModal(`<h3 style="text-align:left">${esc(tr('settings.backendSetup.title'))}</h3>
+    <p style="color:var(--muted);text-align:left;margin-bottom:12px">${esc(tr('settings.backendSetup.desc'))}</p>
+    <input type="text" id="setupApiBase" inputmode="url" placeholder="${esc(tr('settings.backend.placeholder'))}" style="margin-bottom:8px">
+    <input type="password" id="setupApiToken" placeholder="${esc(tr('settings.token.label'))}">
+    <div class="mrow"><button class="btn ghost" id="setupLater">${esc(tr('settings.backendSetup.later'))}</button><button class="btn" id="setupSave">${esc(tr('settings.backendSetup.connect'))}</button></div>`, 'left');
   ov.querySelector('#setupLater').onclick = () => ov.remove();
   ov.querySelector('#setupSave').onclick = () => {
     const base = ov.querySelector('#setupApiBase').value.trim().replace(/\/$/, '');
