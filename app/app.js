@@ -784,14 +784,26 @@ function renderRecentJobs(box) {
 function whyExcerpt(w) {
   return [w?.reason, w?.if_not, w?.cue].filter(Boolean).join(' ');
 }
+function techCountText(count, full = false) {
+  return tr(full ? 'tech.countFull' : 'tech.countShort', { count });
+}
+function techRecipeStepText(recipe, step) {
+  return tr('tech.recipeStep', { recipe, step });
+}
+function techSamplesText(occurrences = []) {
+  return occurrences.slice(0, 3).map(o => o.recipeTitle).filter(Boolean).join(settings.lang === 'en' ? ', ' : '、');
+}
+function techSummaryNoteText(cached) {
+  return tr('tech.summary.note', { state: tr(cached ? 'tech.summary.cached' : 'tech.summary.generated') });
+}
 function renderTechniques() {
   const box = $('#view-techniques');
-  if (!techniques.length) { box.innerHTML = '<div class="empty">还没有识别到技法。<br>解析或导入更多带步骤的菜谱后，这里会自动聚合。</div>'; return; }
+  if (!techniques.length) { box.innerHTML = `<div class="empty">${esc(tr('tech.empty.title'))}<br>${esc(tr('tech.empty.help'))}</div>`; return; }
   box.innerHTML = techniques.map(t => {
-    const samples = (t.occurrences || []).slice(0, 3).map(o => o.recipeTitle).filter(Boolean).join('、');
+    const samples = techSamplesText(t.occurrences || []);
     return `<div class="tech-card" data-tech="${esc(t.technique)}">
       <div><h3>${esc(t.technique)}</h3><div class="meta">${esc(samples)}${(t.occurrences || []).length > 3 ? '…' : ''}</div></div>
-      <span>${t.count} 次</span>
+      <span>${esc(techCountText(t.count))}</span>
     </div>`;
   }).join('');
   box.querySelectorAll('.tech-card').forEach(card => {
@@ -806,21 +818,21 @@ function openRecipeAtStep(recipeId, stepIndex) {
 }
 function openTechnique(t) {
   const p = el(`<div class="page">
-    <div class="topbar"><button class="back">‹ 返回</button></div>
-    <div class="detail-hd"><h2>${esc(t.technique)}</h2><div class="meta">${t.count} 次出现</div></div>
+    <div class="topbar"><button class="back">${esc(tr('detail.back'))}</button></div>
+    <div class="detail-hd"><h2>${esc(t.technique)}</h2><div class="meta">${esc(techCountText(t.count, true))}</div></div>
     <div style="padding:4px 16px 80px">
       <div class="tech-ai">
-        <button class="btn ghost" data-tech-summary>AI 归纳要点</button>
+        <button class="btn ghost" data-tech-summary>${esc(tr('tech.summary.button'))}</button>
         <div class="tech-summary-result hidden"></div>
       </div>
       ${(t.occurrences || []).map(o => {
         const why = whyExcerpt(o.why);
         return `<div class="tech-occ">
-          <div class="src">${esc(o.recipeTitle)} · 第${esc(o.stepIndex)}步</div>
-          <h4>${esc(o.stepTitle || '未命名步骤')}</h4>
+          <div class="src">${esc(techRecipeStepText(o.recipeTitle, o.stepIndex))}</div>
+          <h4>${esc(o.stepTitle || tr('tech.untitledStep'))}</h4>
           ${o.action ? `<div class="a">${esc(o.action)}</div>` : ''}
-          ${why ? `<p><span class="lbl">为什么</span> ${esc(why)}</p>` : '<p>这一步还没有原理讲解。</p>'}
-          <button class="btn ghost sm" data-rid="${esc(o.recipeId)}" data-step="${esc(o.stepIndex)}">跳到步骤</button>
+          ${why ? `<p><span class="lbl">${esc(tr('why.reason'))}</span> ${esc(why)}</p>` : `<p>${esc(tr('tech.noWhy'))}</p>`}
+          <button class="btn ghost sm" data-rid="${esc(o.recipeId)}" data-step="${esc(o.stepIndex)}">${esc(tr('tech.jumpToStep'))}</button>
         </div>`;
       }).join('')}
     </div></div>`);
@@ -830,17 +842,17 @@ function openTechnique(t) {
   summaryBtn.onclick = async () => {
     const oldText = summaryBtn.textContent;
     summaryBtn.disabled = true;
-    summaryBtn.textContent = '归纳中…';
+    summaryBtn.textContent = tr('tech.summary.loading');
     summaryBox.classList.remove('hidden');
-    summaryBox.innerHTML = '<div class="muted">归纳中…</div>';
+    summaryBox.innerHTML = `<div class="muted">${esc(tr('tech.summary.loading'))}</div>`;
     try {
       const data = await API.techniqueSummary(t.technique);
       const s = data.summary || {};
       summaryBox.innerHTML = `
-        <div><b>什么时候用</b><p>${esc(s.when || '')}</p></div>
-        <div><b>关键判断</b><p>${esc(s.keys || '')}</p></div>
-        <div><b>常见翻车点</b><p>${esc(s.pitfalls || '')}</p></div>
-        <div class="meta">AI 归纳，仅供参考 · ${data.cached ? '已读取缓存' : '已生成归纳'}</div>`;
+        <div><b>${esc(tr('tech.summary.when'))}</b><p>${esc(s.when || '')}</p></div>
+        <div><b>${esc(tr('tech.summary.keys'))}</b><p>${esc(s.keys || '')}</p></div>
+        <div><b>${esc(tr('tech.summary.pitfalls'))}</b><p>${esc(s.pitfalls || '')}</p></div>
+        <div class="meta">${esc(techSummaryNoteText(data.cached))}</div>`;
     } catch (e) {
       summaryBox.classList.add('hidden');
       toast('技法归纳失败：' + e.message);
@@ -856,16 +868,16 @@ function openTechnique(t) {
 /* ================= 技巧收藏 ================= */
 function renderSkills() {
   const box = $('#view-skills');
-  if (!favSteps.length) { box.innerHTML = '<div class="empty">技巧收藏夹是空的。<br>在跟做模式里点某一步的 ⭐️，把技巧和它的原理收藏到这里。</div>'; return; }
+  if (!favSteps.length) { box.innerHTML = `<div class="empty">${esc(tr('skills.empty.title'))}<br>${esc(tr('skills.empty.help'))}</div>`; return; }
   box.innerHTML = '';
   favSteps.slice().reverse().forEach(s => {
     const w = s.why || {};
     const c = el(`<div class="skill">
-      <div class="src">${esc(s.recipeTitle)} · 第${s.index}步</div>
+      <div class="src">${esc(techRecipeStepText(s.recipeTitle, s.index))}</div>
       <h4><span>${esc(s.title || '')}</span><button class="star on">★</button></h4>
       <div style="font-size:14px;color:var(--muted);line-height:1.55">${esc(s.action || '')}</div>
-      ${w.reason ? `<p><span class="lbl">为什么</span> ${esc(w.reason)}</p>` : ''}
-      ${w.if_not ? `<p><span class="lbl">不这么做</span> ${esc(w.if_not)}</p>` : ''}</div>`);
+      ${w.reason ? `<p><span class="lbl">${esc(tr('why.reason'))}</span> ${esc(w.reason)}</p>` : ''}
+      ${w.if_not ? `<p><span class="lbl">${esc(tr('why.ifNot'))}</span> ${esc(w.if_not)}</p>` : ''}</div>`);
     c.querySelector('.star').onclick = () => { favSteps = favSteps.filter(x => x.key !== s.key); store.set('favSteps', favSteps); renderSkills(); updateBadges(); toast('已移出收藏'); };
     box.appendChild(c);
   });

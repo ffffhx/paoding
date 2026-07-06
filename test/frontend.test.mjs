@@ -271,6 +271,17 @@ test("跟做模式辅助片段切 en 后输出英文 UI 文案", () => {
   app.setLanguage("zh");
 });
 
+test("技法页辅助文案切 en 后输出英文 UI 文案", () => {
+  app.setLanguage("en");
+  assert.equal(app.techCountText(3), "3 uses");
+  assert.equal(app.techCountText(3, true), "3 occurrences");
+  assert.equal(app.techRecipeStepText("Mapo tofu", 2), "Mapo tofu · Step 2");
+  assert.equal(app.techSamplesText([{ recipeTitle: "A" }, { recipeTitle: "B" }]), "A, B");
+  assert.equal(app.techSummaryNoteText(true), "AI summary, for reference only · loaded from cache");
+  assert.equal(app.t("skills.empty.title"), "Your saved tips are empty.");
+  app.setLanguage("zh");
+});
+
 test("summarizeMealNutrition 按每道菜份量系数汇总并统计缺失", () => {
   const summary = app.summarizeMealNutrition([
     { id: "a", nutrition: { per_serving: { calories_kcal: 100, protein_g: 8, fat_g: 3, carbs_g: 12, sodium_mg: 200 } } },
