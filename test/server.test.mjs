@@ -155,6 +155,52 @@ test("启动时 running 任务标记为 interrupted 并可查询", async () => {
   assert.match(j.error, /服务重启/);
 });
 
+test("GET /api/backups 返回备份文件列表", async () => {
+  const backupsDir = path.join(dataRoot, "backups");
+  fs.mkdirSync(backupsDir, { recursive: true });
+  const name = "paoding-backup-2026-07-07T00:00:00.000Z.json";
+  fs.writeFileSync(path.join(backupsDir, name), JSON.stringify({ ok: true }));
+  const list = await (await request("/api/backups")).json();
+  const item = list.find((x) => x.name === name);
+  assert.ok(item);
+  assert.equal(item.created_at, "2026-07-07T00:00:00.000Z");
+  assert.ok(item.size > 0);
+});
+
+test("启动时自动补备份并包含菜谱和全部用户文件", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-backup-"));
+  try {
+    const port = 41994;
+    const recipes2 = path.join(root, "recipes");
+    const userFile2 = path.join(root, "ud.json");
+    fs.mkdirSync(recipes2, { recursive: true });
+    fs.writeFileSync(path.join(recipes2, "自动备份菜.json"), JSON.stringify({ title: "自动备份菜" }, null, 2));
+    fs.writeFileSync(userFile2, JSON.stringify({ rev: 1, favRecipes: ["自动备份菜"] }, null, 2));
+    fs.writeFileSync(path.join(root, "ud-alice.json"), JSON.stringify({ rev: 2, notes: { x: "y" } }, null, 2));
+
+    await importServerWithEnv({
+      PAODING_PORT: String(port),
+      PAODING_HOST: "127.0.0.1",
+      PAODING_RECIPES_DIR: recipes2,
+      PAODING_USERDATA_FILE: userFile2,
+      PAODING_API_TOKEN: "",
+      PAODING_API_TOKENS: "",
+      PAODING_BACKUP_INTERVAL_H: "24",
+      PAODING_BACKUP_KEEP: "7",
+      PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL || "http://localhost:11434/v1",
+      PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY || "test",
+    });
+
+    const files = fs.readdirSync(path.join(root, "backups")).filter((f) => f.startsWith("paoding-backup-"));
+    assert.equal(files.length, 1);
+    const backup = JSON.parse(fs.readFileSync(path.join(root, "backups", files[0]), "utf8"));
+    assert.equal(backup.recipes.find((r) => r.id === "自动备份菜")?.title, "自动备份菜");
+    assert.deepEqual(backup.user_files.map((f) => f.name), ["ud-alice.json", "ud.json"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("CORS 预检 OPTIONS → 204 + 头", async () => {
   const r = await request("/api/recipes", { method: "OPTIONS", headers: { Origin: "capacitor://localhost" } });
   assert.equal(r.status, 204);

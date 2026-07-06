@@ -13,12 +13,14 @@ import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 import { FileJobStore, createJobQueue, createJobRecord, publicJob, TERMINAL_JOB_STATUSES } from "../src/jobs.mjs";
 import { mapSchemaRecipeToPaoding } from "../src/importRecipe.mjs";
 import { extractTechniques } from "../src/techniques.mjs";
+import { backupFilename, packBackup, parseBackupTime, planBackupRotation, shouldRunBackup } from "../src/backups.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 loadEnvFiles();
 // 数据目录可被环境变量覆盖（测试用隔离目录，避免污染真实数据）
 const RECIPES_DIR = process.env.PAODING_RECIPES_DIR || path.join(HERE, "recipes");
 const JOBS_DIR = path.join(path.dirname(RECIPES_DIR), "jobs");
+const BACKUPS_DIR = path.join(path.dirname(RECIPES_DIR), "backups");
 // 用户数据（收藏/笔记/评分/购物清单等）跨设备同步用；放项目根、不在 webDir 内，避免被静态服务或打包暴露
 const USERDATA_FILE = process.env.PAODING_USERDATA_FILE || path.join(HERE, "..", "paoding-userdata.json");
 const PORT = process.env.PAODING_PORT ? Number(process.env.PAODING_PORT) : 4177;
@@ -27,6 +29,10 @@ const BASE_PATH = normalizeBasePath(process.env.PAODING_BASE_PATH || "/paoding")
 const MAX_RUNNING = Number(process.env.PAODING_MAX_JOBS || 2); // 同时解析上限，防资源耗尽
 const MAX_QUEUE = Math.max(0, Number(process.env.PAODING_MAX_QUEUE || 10)); // 等待队列上限，超出才返回 429
 const MAX_IMPORT_RECIPES = Number(process.env.PAODING_MAX_IMPORT || 5000); // 单次导入菜谱上限，防脏/超大备份写爆磁盘
+const BACKUP_INTERVAL_H = Number.isFinite(Number(process.env.PAODING_BACKUP_INTERVAL_H))
+  ? Number(process.env.PAODING_BACKUP_INTERVAL_H)
+  : 24;
+const BACKUP_KEEP = Math.max(1, Math.floor(Number(process.env.PAODING_BACKUP_KEEP) || 7));
 // 可选 API token：设了 PAODING_API_TOKEN 就要求 /api/* 带上正确 token。
 // 非回环地址监听时强制配置 token，除非显式 PAODING_ALLOW_INSECURE=1。
 const API_TOKEN = process.env.PAODING_API_TOKEN || "";
@@ -39,6 +45,7 @@ const LLM_RATE_LIMIT_PER_MIN = Number(process.env.PAODING_LLM_RATE_LIMIT_PER_MIN
 const LLM_RATE_LIMIT_WINDOW_MS = Number(process.env.PAODING_LLM_RATE_LIMIT_WINDOW_MS || 60_000);
 fs.mkdirSync(RECIPES_DIR, { recursive: true });
 fs.mkdirSync(JOBS_DIR, { recursive: true });
+fs.mkdirSync(BACKUPS_DIR, { recursive: true });
 
 function normalizeBasePath(value) {
   const p = String(value || "").trim().replace(/\/+$/, "");
@@ -205,6 +212,79 @@ function uniqueRecipeId(seed) {
   for (let i = 2; fs.existsSync(recipePath(id)); i++) id = `${base}-${i}`;
   return id;
 }
+
+function userDataFileNames() {
+  const dir = path.dirname(USERDATA_FILE);
+  const ext = path.extname(USERDATA_FILE) || ".json";
+  const base = path.basename(USERDATA_FILE, ext);
+  const names = new Set();
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (f === `${base}${ext}` || (f.startsWith(`${base}-`) && f.endsWith(ext))) names.add(f);
+    }
+  } catch {}
+  return [...names].sort();
+}
+function collectUserFiles() {
+  const dir = path.dirname(USERDATA_FILE);
+  return userDataFileNames().map((name) => {
+    const fp = path.join(dir, name);
+    const raw = fs.readFileSync(fp, "utf8");
+    try {
+      return { name, data: JSON.parse(raw) };
+    } catch {
+      return { name, raw, error: "invalid_json" };
+    }
+  });
+}
+function listBackups() {
+  return fs
+    .readdirSync(BACKUPS_DIR)
+    .map((name) => {
+      const time = parseBackupTime(name);
+      if (time === null) return null;
+      const st = fs.statSync(path.join(BACKUPS_DIR, name));
+      return { name, created_at: new Date(time).toISOString(), size: st.size };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.name.localeCompare(a.name));
+}
+function latestBackupMs() {
+  const times = listBackups().map((b) => Date.parse(b.created_at)).filter(Number.isFinite);
+  return times.length ? Math.max(...times) : null;
+}
+function rotateBackups() {
+  for (const name of planBackupRotation(fs.readdirSync(BACKUPS_DIR), BACKUP_KEEP)) {
+    fs.rmSync(path.join(BACKUPS_DIR, name), { force: true });
+  }
+}
+function createBackup(now = new Date()) {
+  const createdAt = now.toISOString();
+  const file = backupFilename(now);
+  const payload = packBackup({
+    createdAt,
+    recipes: listRecipes(),
+    userFiles: collectUserFiles(),
+  });
+  const fp = path.join(BACKUPS_DIR, file);
+  fs.writeFileSync(fp, JSON.stringify(payload, null, 2));
+  rotateBackups();
+  return { name: file, created_at: createdAt, size: fs.statSync(fp).size };
+}
+function startBackupScheduler() {
+  if (BACKUP_INTERVAL_H <= 0) return;
+  try {
+    if (shouldRunBackup({ latestBackupMs: latestBackupMs(), intervalHours: BACKUP_INTERVAL_H })) createBackup();
+  } catch (e) {
+    console.warn(`  · 自动备份失败（跳过）：${e.message}`);
+  }
+  const timer = setInterval(() => {
+    try { createBackup(); }
+    catch (e) { console.warn(`  · 自动备份失败（跳过）：${e.message}`); }
+  }, BACKUP_INTERVAL_H * 60 * 60 * 1000);
+  timer.unref?.();
+}
+startBackupScheduler();
 
 function sendJSON(res, code, obj) {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
@@ -809,6 +889,7 @@ export async function handleRequest(req, res) {
   try {
     // ---- 列表 ----
     if (req.method === "GET" && p === "/api/recipes") return sendJSON(res, 200, listRecipes());
+    if (req.method === "GET" && p === "/api/backups") return sendJSON(res, 200, listBackups());
     if (req.method === "GET" && p === "/api/techniques") return sendJSON(res, 200, aggregateTechniques());
     if (req.method === "GET" && p === "/api/jobs") {
       const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") || 20) || 20));
