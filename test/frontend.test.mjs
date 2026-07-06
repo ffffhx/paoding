@@ -262,6 +262,15 @@ test("nutritionHtml 切 en 后输出英文营养标签", () => {
   app.setLanguage("zh");
 });
 
+test("跟做模式辅助片段切 en 后输出英文 UI 文案", () => {
+  app.setLanguage("en");
+  assert.ok(app.paramsHtml({ heat: "medium", time: "3分钟", cue: "golden" }).includes("Heat"));
+  assert.ok(app.paramsHtml({ heat: "medium", time: "3分钟", cue: "golden" }).includes("Time"));
+  assert.ok(app.timerHtml({ time: "3分钟20秒" }).includes("Start timer (3m20s)"));
+  assert.ok(app.usedIngsHtml({ ingredients: [{ name: "egg", amount: "2" }] }, { action: "beat egg" }).includes("Used in this step"));
+  app.setLanguage("zh");
+});
+
 test("summarizeMealNutrition 按每道菜份量系数汇总并统计缺失", () => {
   const summary = app.summarizeMealNutrition([
     { id: "a", nutrition: { per_serving: { calories_kcal: 100, protein_g: 8, fat_g: 3, carbs_g: 12, sodium_mg: 200 } } },

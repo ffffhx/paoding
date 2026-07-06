@@ -626,7 +626,7 @@ function speak(text) {
   if (!settings.tts || !('speechSynthesis' in window)) return;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  if (ttsVoice) u.voice = ttsVoice; u.lang = 'zh-CN'; u.rate = settings.ttsRate || 1;
+  if (ttsVoice && settings.lang !== 'en') u.voice = ttsVoice; u.lang = settings.lang === 'en' ? 'en-US' : 'zh-CN'; u.rate = settings.ttsRate || 1;
   speechSynthesis.speak(u);
 }
 function stopSpeak() { if ('speechSynthesis' in window) speechSynthesis.cancel(); }
@@ -1373,10 +1373,10 @@ function finishCook(r) {
   if (!m.cooked) { m.cooked = true; m.cooked_at = new Date().toISOString(); }
   saveMeta(); renderRecipes();
   const stars = [1, 2, 3, 4, 5].map(n => `<span class="rs ${m.rating >= n ? 'on' : ''}" data-r="${n}">★</span>`).join('');
-  const ov = openModal(`<h3>🍜 做好啦，开动！</h3>
-    <p style="color:var(--muted)">已记为「做过」。给这道菜打个分？</p>
+  const ov = openModal(`<h3>${esc(tr('cook.finish.title'))}</h3>
+    <p style="color:var(--muted)">${esc(tr('cook.finish.desc'))}</p>
     <div class="rating" style="justify-content:center;font-size:30px;margin:8px 0 2px">${stars}</div>
-    <div class="mrow"><button class="btn ghost" id="finishSkip">先不打分</button></div>`, 'finish');
+    <div class="mrow"><button class="btn ghost" id="finishSkip">${esc(tr('cook.finish.skip'))}</button></div>`, 'finish');
   ov.querySelectorAll('.rs').forEach(rs => rs.onclick = () => {
     m.rating = +rs.dataset.r; saveMeta(); renderRecipes();
     ov.querySelectorAll('.rs').forEach(x => x.classList.toggle('on', +x.dataset.r <= m.rating));
@@ -1604,7 +1604,7 @@ function shareRecipeUrl(recipeId, { apiBase = settings.apiBase, origin = locatio
 /* ================= 跟做模式 ================= */
 let wakeLock = null, recog = null, voiceWant = false;
 async function openCook(r) {
-  const steps = r.steps || []; if (!steps.length) { toast('这道菜没有步骤'); return; }
+  const steps = r.steps || []; if (!steps.length) { toast(tr('cook.noSteps')); return; }
   let cur = (store.get('progress', {})[r.id]) || 0; if (cur >= steps.length) cur = 0;
   let asks = {}; const stopTimer = () => { }; // 计时改为全局 HUD，跨步骤保留，翻页不清
   const box = el('<div id="cook"></div>'); document.body.appendChild(box);
@@ -1613,64 +1613,64 @@ async function openCook(r) {
   const saveProg = (i) => { const p = store.get('progress', {}); p[r.id] = i; store.set('progress', p); };
   function render() {
     const s = steps[cur], w = s.why || {}, key = stepKey(r.id, s.index), faved = favSteps.some(x => x.key === key);
-    const warn = s.confidence === 'low' ? '<span class="warn">⚠️ 原视频信息有限，以下为推测</span>' : s.confidence === 'medium' ? '<span class="warn">⚠️ 置信度中</span>' : '';
+    const warn = s.confidence === 'low' ? `<span class="warn">${esc(tr('cook.confidence.low'))}</span>` : s.confidence === 'medium' ? `<span class="warn">${esc(tr('cook.confidence.medium'))}</span>` : '';
     const segUrl = sourceSegmentUrl(r.source, s.source_time);
     box.innerHTML = `
-      <div class="cook-top"><button class="x">✕ 退出</button>
+      <div class="cook-top"><button class="x">${esc(tr('cook.exit'))}</button>
         <span style="color:var(--muted);font-size:14px">${cur + 1} / ${steps.length}</span>
         <div class="cook-tools">
-          <button class="iconbtn" id="ttsBtn" title="朗读">🔊</button>
-          ${SR ? `<button class="iconbtn ${recog ? 'on' : ''}" id="voiceBtn" title="语音控制">🎙</button>` : ''}
-          <button class="fav-step ${faved ? 'on' : ''}" title="收藏这一步">${faved ? '★' : '☆'}</button>
+          <button class="iconbtn" id="ttsBtn" title="${esc(tr('cook.read'))}">🔊</button>
+          ${SR ? `<button class="iconbtn ${recog ? 'on' : ''}" id="voiceBtn" title="${esc(tr('cook.voiceControl'))}">🎙</button>` : ''}
+          <button class="fav-step ${faved ? 'on' : ''}" title="${esc(tr('cook.favoriteStep'))}">${faved ? '★' : '☆'}</button>
         </div></div>
       <div class="progress">${steps.map((_, i) => `<span class="dot ${i < cur ? 'done' : i === cur ? 'cur' : ''}"></span>`).join('')}</div>
       <div class="cook-body">
-        <div class="stepno">第 ${s.index} 步${riskBadge(s.risk_level)}</div>
+        <div class="stepno">${esc(tr('cook.stepNo', { n: s.index }))}${riskBadge(s.risk_level)}</div>
         <h2>${esc(s.title || '')}</h2>
         <div class="action">${richText(s.action || '')}</div>
-        ${s.image ? `<img class="stepimg" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="本步画面" loading="lazy" onerror="this.remove()">` : ''}
-        ${segUrl ? `<a class="step-video-link cook-src" href="${esc(segUrl)}" target="_blank" rel="noopener">▶ 看原视频这一段</a>` : ''}
+        ${s.image ? `<img class="stepimg" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="${esc(tr('cook.stepImageAlt'))}" loading="lazy" onerror="this.remove()">` : ''}
+        ${segUrl ? `<a class="step-video-link cook-src" href="${esc(segUrl)}" target="_blank" rel="noopener">${esc(tr('detail.watchSegment'))}</a>` : ''}
         ${paramsHtml(s.params)}${usedIngsHtml(r, s)}${timerHtml(s.params)}
-        ${(w.reason || w.if_not || w.cue) ? `<div class="why"><div class="why-hd"><span>🤔 为什么这么做</span>${warn}</div>
-          ${w.reason ? `<p><span class="lbl">原理　　</span>${richText(w.reason)}</p>` : ''}
-          ${w.if_not ? `<p><span class="lbl">不这么做</span>${esc(w.if_not)}</p>` : ''}
-          ${w.cue ? `<p><span class="lbl g">判断到位</span>${esc(w.cue)}</p>` : ''}</div>` : ''}
-        <div class="ask"><button class="btn ghost sm" id="askBtn">💬 对这步问一句</button> <button class="btn ghost sm" id="sosBtn">🆘 翻车补救</button><div id="qa"></div></div>
+        ${(w.reason || w.if_not || w.cue) ? `<div class="why"><div class="why-hd"><span>${esc(tr('cook.whyTitle'))}</span>${warn}</div>
+          ${w.reason ? `<p><span class="lbl">${esc(tr('cook.principle'))}</span>${richText(w.reason)}</p>` : ''}
+          ${w.if_not ? `<p><span class="lbl">${esc(tr('why.ifNot'))}</span>${esc(w.if_not)}</p>` : ''}
+          ${w.cue ? `<p><span class="lbl g">${esc(tr('why.cue'))}</span>${esc(w.cue)}</p>` : ''}</div>` : ''}
+        <div class="ask"><button class="btn ghost sm" id="askBtn">${esc(tr('cook.ask'))}</button> <button class="btn ghost sm" id="sosBtn">${esc(tr('cook.sos'))}</button><div id="qa"></div></div>
       </div>
       <div class="cook-nav">
-        <button class="btn prev" ${cur === 0 ? 'disabled' : ''}>‹ 上一步</button>
-        <button class="btn next">${cur === steps.length - 1 ? '✓ 完成' : '下一步 ›'}</button></div>`;
+        <button class="btn prev" ${cur === 0 ? 'disabled' : ''}>${esc(tr('cook.prev'))}</button>
+        <button class="btn next">${esc(cur === steps.length - 1 ? tr('cook.finish') : tr('cook.next'))}</button></div>`;
     box.querySelector('.x').onclick = exit;
     box.querySelector('.fav-step').onclick = () => toggleStep(r, s);
     box.querySelector('.prev').onclick = () => { if (cur > 0) { stopTimer(); stopSpeak(); cur--; saveProg(cur); render(); } };
     box.querySelector('.next').onclick = next;
-    box.querySelector('#ttsBtn').onclick = () => speak(`第${s.index}步，${s.title}。${s.action}。${w.reason ? '原理：' + w.reason : ''}`);
+    box.querySelector('#ttsBtn').onclick = () => speak(tr('cook.speech.stepFull', { index: s.index, title: s.title || '', action: s.action || '', reason: w.reason ? tr('cook.speech.reason', { reason: w.reason }) : '' }));
     box.querySelector('#askBtn').onclick = () => askStep(r, s);
     box.querySelector('#sosBtn').onclick = () => sosStep(r, s);
-    const tb = box.querySelector('#timerBtn'); if (tb) tb.onclick = () => Timers.add(s.title || ('第' + s.index + '步'), parseSeconds(s.params && s.params.time));
+    const tb = box.querySelector('#timerBtn'); if (tb) tb.onclick = () => Timers.add(s.title || tr('cook.stepNo', { n: s.index }), parseSeconds(s.params && s.params.time));
     if (SR) box.querySelector('#voiceBtn').onclick = toggleVoice;
     box.querySelectorAll('.term').forEach(t => t.onclick = () => showTerm(t.dataset.term));
     wireZoom(box);
     renderQA(s);
-    if (settings.tts) speak(`第${s.index}步，${s.title}`);
+    if (settings.tts) speak(tr('cook.speech.stepTitle', { index: s.index, title: s.title || '' }));
   }
   function renderQA(s) {
     const box2 = box.querySelector('#qa'); const list = asks[s.index] || [];
-    box2.innerHTML = list.map(qa => `<div class="qa"><div class="q">问：${esc(qa.q)}</div><div class="a">${esc(qa.a)}</div></div>`).join('');
+    box2.innerHTML = list.map(qa => `<div class="qa"><div class="q">${esc(tr('cook.qa.question', { question: qa.q }))}</div><div class="a">${esc(qa.a)}</div></div>`).join('');
   }
   async function askStep(r, s) {
-    const q = await promptModal('对「' + s.title + '」这步问一句', '比如：可以不放糖吗？火太大了怎么补救？'); if (!q) return;
-    (asks[s.index] = asks[s.index] || []).push({ q, a: '思考中…' }); renderQA(s);
+    const q = await promptModal(tr('cook.ask.title', { title: s.title || '' }), tr('cook.ask.placeholder')); if (!q) return;
+    (asks[s.index] = asks[s.index] || []).push({ q, a: tr('cook.ask.thinking') }); renderQA(s);
     try { const { answer } = await API.ask(r.id, s.index, q); asks[s.index][asks[s.index].length - 1].a = answer; }
-    catch (e) { asks[s.index][asks[s.index].length - 1].a = '没问出来：' + e.message; }
+    catch (e) { asks[s.index][asks[s.index].length - 1].a = tr('cook.ask.failed', { message: e.message }); }
     renderQA(s);
   }
   function next() { stopSpeak(); if (cur === steps.length - 1) { exit(); finishCook(r); return; } cur++; saveProg(cur); render(); }
   async function sosStep(r, s) {
-    const problem = await promptModal('🆘 哪里翻车了？', '描述现象，如：粘锅了 / 太咸 / 没熟 / 糊了', '求救'); if (!problem) return;
-    (asks[s.index] = asks[s.index] || []).push({ q: '🆘 ' + problem, a: '想办法…' }); renderQA(s);
+    const problem = await promptModal(tr('cook.sos.title'), tr('cook.sos.placeholder'), tr('cook.sos.ok')); if (!problem) return;
+    (asks[s.index] = asks[s.index] || []).push({ q: '🆘 ' + problem, a: tr('cook.sos.thinking') }); renderQA(s);
     try { const { answer } = await API.troubleshoot(r.id, s.index, problem); asks[s.index][asks[s.index].length - 1].a = answer; }
-    catch (e) { asks[s.index][asks[s.index].length - 1].a = '没能给出建议：' + e.message; }
+    catch (e) { asks[s.index][asks[s.index].length - 1].a = tr('cook.sos.failed', { message: e.message }); }
     renderQA(s);
   }
   function toggleStep(r, s) {
@@ -1709,15 +1709,19 @@ async function openCook(r) {
 function usedIngsHtml(r, s) {
   const used = (r.ingredients || []).filter(i => i.name && String(s.action || '').includes(i.name));
   if (!used.length) return '';
-  return `<div class="used-ings">🧺 本步用到：${used.map(i =>
+  return `<div class="used-ings">${esc(tr('cook.usedIngredients'))}${used.map(i =>
     `<span class="uing">${esc(i.name)}${i.amount && !['视频未明确', '适量'].includes(i.amount) ? ' <b>' + esc(i.amount) + '</b>' : ''}</span>`).join('')}</div>`;
 }
 function paramsHtml(p) {
   if (!p) return '';
-  const items = [p.heat && ['火候', p.heat], p.temp && ['油温', p.temp], p.time && ['时间', p.time], p.cue && ['到位', p.cue]].filter(Boolean);
-  return items.length ? `<div class="params">${items.map(([k, v]) => `<span class="param"><b>${k}</b> ${esc(v)}</span>`).join('')}</div>` : '';
+  const items = [p.heat && [tr('cook.param.heat'), p.heat], p.temp && [tr('cook.param.temp'), p.temp], p.time && [tr('cook.param.time'), p.time], p.cue && [tr('cook.param.cue'), p.cue]].filter(Boolean);
+  return items.length ? `<div class="params">${items.map(([k, v]) => `<span class="param"><b>${esc(k)}</b> ${esc(v)}</span>`).join('')}</div>` : '';
 }
-function timerHtml(p) { const s = parseSeconds(p && p.time); return s ? `<div class="timer"><button class="btn sm" id="timerBtn">⏱ 开始计时（${Math.floor(s / 60) ? Math.floor(s / 60) + '分' : ''}${s % 60 ? (s % 60) + '秒' : ''}）</button></div>` : ''; }
+function timerDurationText(seconds) {
+  const min = Math.floor(seconds / 60), sec = seconds % 60;
+  return `${min ? tr('cook.timer.minute', { n: min }) : ''}${sec ? tr('cook.timer.second', { n: sec }) : ''}`;
+}
+function timerHtml(p) { const s = parseSeconds(p && p.time); return s ? `<div class="timer"><button class="btn sm" id="timerBtn">${esc(tr('cook.timer.start', { duration: timerDurationText(s) }))}</button></div>` : ''; }
 // 复用同一个 AudioContext：浏览器对 AudioContext 数量有上限(~6)且不及时回收，每次响铃 new 一个响几次后就抛异常静默失败。
 let _actx = null;
 function beep() {
@@ -1728,21 +1732,22 @@ function beep() {
     for (let i = 0; i < 3; i++) { const o = a.createOscillator(), g = a.createGain(); o.connect(g); g.connect(a.destination); o.frequency.value = 880; g.gain.value = .15; o.start(a.currentTime + i * .4); o.stop(a.currentTime + i * .4 + .2); }
   } catch { }
 }
-function showVoiceHint() { const h = el('<div class="voice-hint">🎙 说「下一步 / 上一步 / 朗读」</div>'); document.body.appendChild(h); setTimeout(() => h.remove(), 3000); }
+function showVoiceHint() { const h = el(`<div class="voice-hint">${esc(tr('cook.voiceHint'))}</div>`); document.body.appendChild(h); setTimeout(() => h.remove(), 3000); }
 async function showTerm(term) {
-  const ov = openModal(`<h3>${esc(term)}</h3><p style="color:var(--muted)">查询中…</p>`);
-  try { const { answer } = await API.term(term); ov.querySelector('.modal').innerHTML = `<h3>${esc(term)}</h3><p style="text-align:left">${esc(answer)}</p><div class="mrow"><button class="btn" id="ok">明白了</button></div>`; ov.querySelector('#ok').onclick = () => ov.remove(); }
+  const ov = openModal(`<h3>${esc(term)}</h3><p style="color:var(--muted)">${esc(tr('term.loading'))}</p>`);
+  try { const { answer } = await API.term(term); ov.querySelector('.modal').innerHTML = `<h3>${esc(term)}</h3><p style="text-align:left">${esc(answer)}</p><div class="mrow"><button class="btn" id="ok">${esc(tr('term.ok'))}</button></div>`; ov.querySelector('#ok').onclick = () => ov.remove(); }
   catch (e) { ov.remove(); toast('查询失败：' + e.message); }
 }
 
 /* ================= 解析（带进度）================= */
 function openModal(inner, cls = '') { const ov = el(`<div class="overlay"><div class="modal ${cls}">${inner}</div></div>`); document.body.appendChild(ov); return ov; }
 // 应用内输入框（替代原生 prompt，装成 App 后更稳、更好看）。返回 Promise<string|null>
-function promptModal(title, placeholder = '', okText = '发送') {
+function promptModal(title, placeholder = '', okText = null) {
   return new Promise((resolve) => {
+    const okLabel = okText || tr('common.send');
     const ov = openModal(`<h3 style="text-align:left">${esc(title)}</h3>
       <textarea id="pmInput" placeholder="${esc(placeholder)}" style="min-height:88px;margin:8px 0 0"></textarea>
-      <div class="mrow"><button class="btn ghost" id="pmCancel">取消</button><button class="btn" id="pmOk">${esc(okText)}</button></div>`, 'left');
+      <div class="mrow"><button class="btn ghost" id="pmCancel">${esc(tr('common.cancel'))}</button><button class="btn" id="pmOk">${esc(okLabel)}</button></div>`, 'left');
     const input = ov.querySelector('#pmInput');
     const done = (v) => { ov.remove(); resolve(v); };
     ov.querySelector('#pmCancel').onclick = () => done(null);
@@ -1755,10 +1760,11 @@ function promptModal(title, placeholder = '', okText = '发送') {
   });
 }
 // 应用内确认框（替代原生 confirm，用于删除/清空等破坏性操作）。返回 Promise<boolean>
-function confirmModal(title, okText = '确定') {
+function confirmModal(title, okText = null) {
   return new Promise((resolve) => {
+    const okLabel = okText || tr('common.ok');
     const ov = openModal(`<h3 style="text-align:left">${esc(title)}</h3>
-      <div class="mrow"><button class="btn ghost" id="cmCancel">取消</button><button class="btn" id="cmOk" style="background:var(--tomato-d)">${esc(okText)}</button></div>`, 'left');
+      <div class="mrow"><button class="btn ghost" id="cmCancel">${esc(tr('common.cancel'))}</button><button class="btn" id="cmOk" style="background:var(--tomato-d)">${esc(okLabel)}</button></div>`, 'left');
     const done = (v) => { ov.remove(); resolve(v); };
     ov.querySelector('#cmCancel').onclick = () => done(false);
     ov.querySelector('#cmOk').onclick = () => done(true);
