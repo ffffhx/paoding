@@ -12,6 +12,7 @@ import { assertPublicUrl } from "../src/urlSafety.mjs";
 import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 import { FileJobStore, createJobQueue, createJobRecord, publicJob, TERMINAL_JOB_STATUSES } from "../src/jobs.mjs";
 import { mapSchemaRecipeToPaoding } from "../src/importRecipe.mjs";
+import { extractTechniques } from "../src/techniques.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 loadEnvFiles();
@@ -332,6 +333,28 @@ async function estimateNutrition(r) {
 步骤概要：${(r.steps || []).map((s) => `${s.index || ""}.${s.title || ""}${s.action || ""}`).join(" ")}`,
   });
   return normalizeNutrition(raw);
+}
+function aggregateTechniques() {
+  const groups = new Map();
+  for (const r of listRecipes()) {
+    const byIndex = new Map((r.steps || []).map((s, i) => [Number(s.index) || i + 1, s]));
+    for (const hit of extractTechniques(r)) {
+      const s = byIndex.get(hit.stepIndex) || {};
+      const item = {
+        recipeId: hit.recipeId,
+        recipeTitle: r.title || "",
+        stepIndex: hit.stepIndex,
+        stepTitle: s.title || "",
+        action: s.action || "",
+        why: s.why || {},
+      };
+      if (!groups.has(hit.technique)) groups.set(hit.technique, []);
+      groups.get(hit.technique).push(item);
+    }
+  }
+  return [...groups.entries()]
+    .map(([technique, occurrences]) => ({ technique, count: occurrences.length, occurrences }))
+    .sort((a, b) => b.count - a.count || a.technique.localeCompare(b.technique, "zh-CN"));
 }
 
 // ---------- 解析任务（持久化 + 排队 + 进度）----------
@@ -686,6 +709,7 @@ export async function handleRequest(req, res) {
   try {
     // ---- 列表 ----
     if (req.method === "GET" && p === "/api/recipes") return sendJSON(res, 200, listRecipes());
+    if (req.method === "GET" && p === "/api/techniques") return sendJSON(res, 200, aggregateTechniques());
     if (req.method === "GET" && p === "/api/jobs") {
       const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") || 20) || 20));
       return sendJSON(res, 200, jobStore.recent(limit).map(publicJob));

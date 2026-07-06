@@ -180,6 +180,16 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--tomato)}
 .skill h4{margin:4px 0 8px;font-size:17px;display:flex;justify-content:space-between}
 .skill p{margin:6px 0 0;font-size:14px;line-height:1.6;color:var(--muted)}
 .skill .lbl{color:var(--tomato);font-weight:600}
+.tech-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer}
+.tech-card h3{margin:0 0 4px;font-size:18px}
+.tech-card .meta{color:var(--muted);font-size:12px;line-height:1.45}
+.tech-card>span{color:var(--tomato);font-weight:700;font-size:13px;white-space:nowrap}
+.tech-occ{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 15px;margin-bottom:10px}
+.tech-occ .src{color:var(--muted);font-size:12px}
+.tech-occ h4{margin:4px 0 6px;font-size:16px}
+.tech-occ .a,.tech-occ p{color:var(--muted);font-size:14px;line-height:1.6;margin:6px 0 10px}
+.tech-occ .lbl{color:var(--tomato);font-weight:700}
+.focus-step{border-color:var(--tomato);box-shadow:0 0 0 3px rgba(228,87,46,.18)}
 
 .planday{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px}
 .planhd{display:flex;align-items:center;gap:8px}
@@ -252,7 +262,7 @@ html[data-theme="dark"] .hl{color:var(--amber)}
   .filters{padding:8px 30px 2px;flex-wrap:wrap;overflow:visible}
 
   /* 菜谱 / 技巧：自适应多列卡片网格（桌面感的主要来源） */
-  #view-recipes.list, #view-skills.list{
+  #view-recipes.list, #view-skills.list, #view-techniques.list{
     display:grid;gap:16px;padding:22px 28px 90px;align-content:start;
     grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));
   }
@@ -277,7 +287,7 @@ html[data-theme="dark"] .hl{color:var(--amber)}
   /* 鼠标交互：hover 反馈（触屏端用 :active，不冲突） */
   .rcard{transition:border-color .15s, box-shadow .15s, transform .15s}
   .rcard:hover{border-color:var(--tomato);box-shadow:0 10px 30px rgba(42,39,36,.12);transform:translateY(-2px)}
-  .skill:hover{border-color:var(--tomato)}
+  .skill:hover,.tech-card:hover{border-color:var(--tomato)}
   .btn{transition:background .15s, filter .15s}
   .btn:hover{filter:brightness(1.05)}
   .btn.ghost:hover,.btn.sm:hover{filter:none;background:var(--line)}
@@ -300,7 +310,7 @@ html[data-theme="dark"] .hl{color:var(--amber)}
 /* 更宽的屏幕再放一列 */
 @media (min-width: 1200px){
   #app{max-width:1200px}
-  #view-recipes.list, #view-skills.list{grid-template-columns:repeat(auto-fill, minmax(340px, 1fr))}
+  #view-recipes.list, #view-skills.list, #view-techniques.list{grid-template-columns:repeat(auto-fill, minmax(340px, 1fr))}
 }
 
 /* ===== 解析截图：步骤状态图 / 食材图 / 封面 / 灯箱 ===== */

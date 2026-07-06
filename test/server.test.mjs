@@ -206,6 +206,26 @@ test("import-recipe 导入 schema.org JSON-LD 且不生成 why", async () => {
   assert.equal((await request("/api/recipes/" + encodeURIComponent(data.id), { method: "DELETE" })).status, 200);
 });
 
+test("techniques 聚合全部菜谱步骤和 why", async () => {
+  const id = "技法测试菜";
+  fs.writeFileSync(path.join(recipesDir, `${id}.json`), JSON.stringify({
+    title: id,
+    steps: [
+      { index: 1, title: "焯水", action: "排骨冷水下锅焯水。", why: { reason: "去腥并带走血沫。" } },
+      { index: 2, title: "收尾", action: "大火收汁后勾芡。" },
+    ],
+  }));
+  const data = await (await request("/api/techniques")).json();
+  const blanch = data.find(x => x.technique === "焯水");
+  assert.ok(blanch);
+  assert.equal(blanch.count, 1);
+  assert.equal(blanch.occurrences[0].recipeTitle, id);
+  assert.equal(blanch.occurrences[0].why.reason, "去腥并带走血沫。");
+  assert.ok(data.some(x => x.technique === "收汁"));
+  assert.ok(data.some(x => x.technique === "勾芡"));
+  fs.rmSync(path.join(recipesDir, `${id}.json`), { force: true });
+});
+
 test("parse-url 非法链接 → 400", async () => {
   assert.equal((await request("/api/parse-url", J({ url: "notaurl" }))).status, 400);
 });

@@ -20,6 +20,7 @@ const authHeaders = () => settings.apiToken ? { 'X-Paoding-Token': settings.apiT
 const F = (p, opts = {}) => fetch(api(p), { ...opts, headers: { ...(opts.headers || {}), ...authHeaders() } });
 const API = {
   list: () => F('/api/recipes').then(r => r.json()),
+  techniques: () => F('/api/techniques').then(r => r.json()),
   del: (id) => F('/api/recipes/' + encodeURIComponent(id), { method: 'DELETE' }),
   startUrl: (url, depth, vision, images) => F('/api/parse-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth, vision: !!vision, images: !!images }) }).then(j),
   startFile: (file, depth, vision, images) => F('/api/parse-file', { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth, 'X-Vision': vision ? '1' : '0', 'X-Images': images ? '1' : '0' }, body: file }).then(j),
@@ -87,6 +88,7 @@ async function j(r) { const d = await r.json().catch(() => ({})); if (!r.ok) thr
 
 /* ---------- 状态 ---------- */
 let recipes = [];
+let techniques = [];
 let recentJobs = [];
 let userdataRev = 0;
 let favRecipes = store.get('favRecipes', []);
@@ -541,6 +543,51 @@ function renderRecentJobs(box) {
   box.insertAdjacentHTML('beforeend', `<div class="jobs-lite"><div class="jobs-hd">最近任务</div>${rows}</div>`);
 }
 
+/* ================= 技法库 ================= */
+function whyExcerpt(w) {
+  return [w?.reason, w?.if_not, w?.cue].filter(Boolean).join(' ');
+}
+function renderTechniques() {
+  const box = $('#view-techniques');
+  if (!techniques.length) { box.innerHTML = '<div class="empty">还没有识别到技法。<br>解析或导入更多带步骤的菜谱后，这里会自动聚合。</div>'; return; }
+  box.innerHTML = techniques.map(t => {
+    const samples = (t.occurrences || []).slice(0, 3).map(o => o.recipeTitle).filter(Boolean).join('、');
+    return `<div class="tech-card" data-tech="${esc(t.technique)}">
+      <div><h3>${esc(t.technique)}</h3><div class="meta">${esc(samples)}${(t.occurrences || []).length > 3 ? '…' : ''}</div></div>
+      <span>${t.count} 次</span>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.tech-card').forEach(card => {
+    const t = techniques.find(x => x.technique === card.dataset.tech);
+    if (t) card.onclick = () => openTechnique(t);
+  });
+}
+function openRecipeAtStep(recipeId, stepIndex) {
+  const r = recipes.find(x => x.id === recipeId);
+  if (!r) { toast('菜谱不存在或尚未加载'); return; }
+  openDetail(r, stepIndex);
+}
+function openTechnique(t) {
+  const p = el(`<div class="page">
+    <div class="topbar"><button class="back">‹ 返回</button></div>
+    <div class="detail-hd"><h2>${esc(t.technique)}</h2><div class="meta">${t.count} 次出现</div></div>
+    <div style="padding:4px 16px 80px">
+      ${(t.occurrences || []).map(o => {
+        const why = whyExcerpt(o.why);
+        return `<div class="tech-occ">
+          <div class="src">${esc(o.recipeTitle)} · 第${esc(o.stepIndex)}步</div>
+          <h4>${esc(o.stepTitle || '未命名步骤')}</h4>
+          ${o.action ? `<div class="a">${esc(o.action)}</div>` : ''}
+          ${why ? `<p><span class="lbl">为什么</span> ${esc(why)}</p>` : '<p>这一步还没有原理讲解。</p>'}
+          <button class="btn ghost sm" data-rid="${esc(o.recipeId)}" data-step="${esc(o.stepIndex)}">跳到步骤</button>
+        </div>`;
+      }).join('')}
+    </div></div>`);
+  p.querySelector('.back').onclick = () => p.remove();
+  p.querySelectorAll('[data-rid]').forEach(b => b.onclick = () => openRecipeAtStep(b.dataset.rid, Number(b.dataset.step)));
+  $('#app').appendChild(p);
+}
+
 /* ================= 技巧收藏 ================= */
 function renderSkills() {
   const box = $('#view-skills');
@@ -803,7 +850,7 @@ function showBackendSetupIfNeeded() {
 }
 
 /* ================= 详情页 ================= */
-function openDetail(r) {
+function openDetail(r, focusStepIndex = null) {
   const m = rmeta(r.id);
   const base = baseServings(r);
   let factor = m.servingsFactor || 1;
@@ -874,7 +921,7 @@ function openDetail(r) {
   const stepsBox = p.querySelector('#steps');
   (r.steps || []).forEach(s => {
     const segUrl = sourceSegmentUrl(r.source, s.source_time);
-    stepsBox.appendChild(el(`<div class="stepmini">
+    stepsBox.appendChild(el(`<div class="stepmini" data-step-index="${esc(s.index)}">
       ${s.image ? `<img class="mthumb" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="" loading="lazy" onerror="this.remove()">` : ''}
       <div class="t"><span class="n">${s.index}</span>${esc(s.title || '')}${riskBadge(s.risk_level)}</div>
       <div class="a">${esc(s.action || '')}</div>
@@ -948,6 +995,10 @@ function openDetail(r) {
   if (base) p.querySelectorAll('.st').forEach(b => b.onclick = () => { factor = Math.max(0.5, factor + (b.dataset.s === '+' ? 0.5 : -0.5)); m.servingsFactor = factor; saveMeta(); p.querySelector('#svVal').textContent = Math.round(base * factor * 10) / 10; renderIng(); renderNutrition(); });
 
   $('#app').appendChild(p);
+  if (focusStepIndex != null) setTimeout(() => {
+    const node = Array.from(p.querySelectorAll('[data-step-index]')).find(x => x.dataset.stepIndex === String(focusStepIndex));
+    if (node) { node.classList.add('focus-step'); node.scrollIntoView({ block: 'center' }); }
+  }, 30);
 }
 function riskBadge(r) { return r === 'high' ? ' <span class="badge risk-high">🔴 新手雷区</span>' : r === 'medium' ? ' <span class="badge risk-medium">🟡 需留意</span>' : ''; }
 // 跟做走到最后一步 → 闭环：自动记「做过」，顺手引导打分（做完正是最该沉淀的节点）。
@@ -1396,10 +1447,11 @@ function updateBadges() {
   set('#tabSkillsBadge', favSteps.length);
   set('#tabShopBadge', shoppingUnchecked());
 }
-function renderAll() { renderFilters(); renderRecipes(); renderSkills(); renderShopping(); updateBadges(); }
+function renderAll() { renderFilters(); renderRecipes(); renderTechniques(); renderSkills(); renderShopping(); updateBadges(); }
 function syncDepthChips() { document.querySelectorAll('#depth .chip').forEach(x => x.classList.toggle('on', x.dataset.d === depth)); }
 async function refresh() {
   try { recipes = await API.list(); } catch { recipes = store.get('cacheRecipes', []); }
+  try { const data = await API.techniques(); techniques = Array.isArray(data) ? data : []; } catch { techniques = []; }
   try { const jobs = await API.jobs(); recentJobs = Array.isArray(jobs) ? jobs : []; } catch { recentJobs = []; }
   store.set('cacheRecipes', recipes);
   renderAll();
@@ -1409,10 +1461,10 @@ function initTabs() {
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     curTab = t.dataset.tab;
     document.querySelectorAll('.tab').forEach(x => { const on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', on ? 'true' : 'false'); });
-    ['recipes', 'plan', 'skills', 'shopping', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== curTab));
+    ['recipes', 'plan', 'techniques', 'skills', 'shopping', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== curTab));
     const showSearch = curTab === 'recipes';
     $('#searchrow').classList.toggle('hidden', !showSearch); $('#recipeTools').classList.toggle('hidden', !showSearch); $('#filters').classList.toggle('hidden', !showSearch);
-    if (curTab === 'skills') renderSkills(); if (curTab === 'shopping') renderShopping(); if (curTab === 'settings') renderSettings(); if (curTab === 'plan') renderPlan();
+    if (curTab === 'techniques') renderTechniques(); if (curTab === 'skills') renderSkills(); if (curTab === 'shopping') renderShopping(); if (curTab === 'settings') renderSettings(); if (curTab === 'plan') renderPlan();
   });
   // 加载时同步一次 aria-selected，读屏用户一进来就知道当前在哪个标签
   document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x.classList.contains('on') ? 'true' : 'false'));
