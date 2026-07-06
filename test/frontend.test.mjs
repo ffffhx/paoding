@@ -155,6 +155,23 @@ test("recipeToSchemaOrg 合法 Recipe JSON-LD", () => {
   assert.equal(j.nutrition.calories, "180 kcal");
 });
 
+test("stepWhyPrintHtml 生成打印用 why 文本并转义", () => {
+  const html = app.stepWhyPrintHtml({
+    why: {
+      reason: "让淀粉糊化",
+      if_not: "容易夹生",
+      cue: "边缘金黄<script>",
+    },
+  });
+  assert.ok(html.includes("print-why"));
+  assert.ok(html.includes("为什么"));
+  assert.ok(html.includes("不这么做"));
+  assert.ok(html.includes("判断到位"));
+  assert.ok(html.includes("让淀粉糊化"));
+  assert.ok(html.includes("&lt;script&gt;"));
+  assert.equal(app.stepWhyPrintHtml({}), "");
+});
+
 test("nutritionHtml 按份量系数缩放显示", () => {
   const html = app.nutritionHtml({ nutrition: { per_serving: { calories_kcal: 100, protein_g: 8, fat_g: 3, carbs_g: 12, sodium_mg: 200 }, disclaimer: "估算" } }, 1.5);
   assert.ok(html.includes("150 kcal"));

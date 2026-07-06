@@ -339,3 +339,38 @@ html[data-theme="dark"] .hl{color:var(--amber)}
 .lightbox{position:fixed;inset:0;z-index:120;background:rgba(20,17,15,.88);display:flex;align-items:center;justify-content:center;cursor:zoom-out;animation:fadein .15s}
 .lightbox img{max-width:96vw;max-height:92vh;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
 @keyframes fadein{from{opacity:0}to{opacity:1}}
+
+.print-head,.print-why{display:none}
+
+@media print{
+  @page{margin:14mm}
+  html,body,#app{background:#fff!important;color:#111!important;max-width:none!important;margin:0!important;padding:0!important}
+  #app>header,#app>.parsebar,#app>.tabs,#searchrow,#recipeTools,#filters,
+  #view-recipes,#view-plan,#view-techniques,#view-skills,#view-shopping,#view-settings,
+  .toast,#timerhud,#cook,.overlay,.lightbox{display:none!important}
+  .page{position:static!important;inset:auto!important;display:block!important;max-width:none!important;margin:0!important;overflow:visible!important;border:0!important;box-shadow:none!important;animation:none!important;background:#fff!important;color:#111!important}
+  .page .topbar,.page .scaler,.page .import-note,.page .cta,.page .notes,.page .rating,
+  #aiBox,#nutritionBox,.step-video-link,.btn,.iconbtn,.star,.act,.ck,.no-print{display:none!important}
+  .print-head{display:block!important;border-bottom:1px solid #d8d8d8;margin-bottom:8mm;padding-bottom:5mm}
+  .print-head h1{font-family:Georgia,"Songti SC",serif;font-size:24pt;line-height:1.2;margin:0 0 3mm;color:#111}
+  .print-head p{font-size:10pt;color:#555;margin:0;word-break:break-all}
+  .detail-hd{padding:0 0 4mm!important}
+  .detail-hd h2{display:none!important}
+  .detail-hd .meta{display:flex!important;gap:4mm!important;color:#444!important;font-size:10pt!important}
+  .detail-hd .tags{display:flex!important;gap:2mm!important;margin-top:3mm!important}
+  .tag,.badge{border:1px solid #ddd!important;background:#fff!important;color:#333!important;border-radius:0!important;padding:1mm 2mm!important}
+  .sec-title{display:block!important;margin:7mm 0 3mm!important;color:#222!important;font-size:12pt!important;letter-spacing:0!important}
+  .ing{margin:0!important;border:1px solid #d8d8d8!important;border-radius:0!important;background:#fff!important;overflow:visible!important}
+  .ing .irow{display:flex!important;align-items:flex-start!important;gap:4mm!important;padding:3mm 0!important;border-bottom:1px solid #eee!important;font-size:10.5pt!important;break-inside:avoid}
+  .ing .irow:last-child{border-bottom:none!important}
+  .ing .name{color:#111!important;flex:1!important}
+  .ing .amt{color:#333!important;text-decoration:none!important;opacity:1!important}
+  .stepmini{margin:0 0 5mm!important;border:1px solid #d8d8d8!important;border-radius:0!important;background:#fff!important;box-shadow:none!important;padding:4mm!important;break-inside:avoid}
+  .stepmini .t{font-size:13pt!important;line-height:1.35!important;color:#111!important}
+  .stepmini .n{background:#111!important;color:#fff!important;width:7mm!important;height:7mm!important;font-size:10pt!important;margin-right:3mm!important}
+  .stepmini .a{margin:2mm 0 0 10mm!important;color:#111!important;font-size:11pt!important;line-height:1.55!important}
+  .print-why{display:block!important;margin:3mm 0 0 10mm!important;border-left:3px solid #d8d8d8!important;padding-left:3mm!important;font-size:10.5pt!important;line-height:1.45!important;color:#333!important}
+  .print-why p{margin:1.5mm 0!important}
+  .print-why b{color:#111!important}
+  .rcover,.ingthumb,.mthumb,#cook .stepimg{max-width:70mm!important;max-height:45mm!important;width:auto!important;height:auto!important;object-fit:contain!important;border-radius:0!important;float:none!important;margin:2mm 0!important}
+}

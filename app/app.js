@@ -1076,12 +1076,14 @@ function openDetail(r, focusStepIndex = null) {
     <div class="topbar">
       <button class="back">‹ 返回</button>
       <div style="display:flex;gap:4px">
+        <button class="iconbtn" id="dPrint" title="打印">🖨</button>
         <button class="iconbtn" id="dEdit" title="编辑">✏️</button>
         <button class="iconbtn" id="dShare" title="分享">↗</button>
         <button class="iconbtn" id="dDel" title="删除">🗑</button>
         <button class="star ${favRecipes.includes(r.id) ? 'on' : ''}" id="dfav">${favRecipes.includes(r.id) ? '★' : '☆'}</button>
       </div>
     </div>
+    <div class="print-head"><h1>${esc(r.title || '未命名')}</h1>${r.source ? `<p>来源：${esc(r.source)}</p>` : ''}</div>
     <div class="detail-hd"><h2>${esc(r.title || '未命名')}</h2>
       <div class="meta">
         ${r.difficulty ? `<span class="tag diff-${esc(r.difficulty)}">${esc(DIFF[r.difficulty] || r.difficulty)}</span>` : ''}
@@ -1092,7 +1094,7 @@ function openDetail(r, focusStepIndex = null) {
       ${(r.tags || []).length ? `<div class="tags" style="margin-top:8px">${r.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
     </div>
     ${base ? `<div class="scaler"><span>份量</span><button class="st" data-s="-">－</button><b id="svVal">${base * factor}</b><button class="st" data-s="+">＋</button><span>人份</span></div>` : ''}
-    <div style="display:flex;gap:8px;padding:8px 16px 0;flex-wrap:wrap">
+    <div class="no-print" style="display:flex;gap:8px;padding:8px 16px 0;flex-wrap:wrap">
       <button class="btn ghost sm" id="btnOverview">💡 为什么这样设计</button>
       <button class="btn ghost sm" id="btnNutri">🥗 营养估算</button>
       <button class="btn ghost sm" id="btnTags">🏷 标签</button>
@@ -1105,10 +1107,10 @@ function openDetail(r, focusStepIndex = null) {
     <div class="ing" id="ingBox"></div>
     <div class="sec-title">步骤总览</div>
     <div id="steps"></div>
-    <div class="sec-title">我的笔记</div>
+    <div class="sec-title no-print">我的笔记</div>
     <div class="notes"><textarea id="notes" placeholder="记点心得，比如「盐减半更合口」…">${esc(m.notes || '')}</textarea></div>
-    <div class="sec-title">做过 & 评分</div>
-    <div style="display:flex;align-items:center;gap:14px;margin:0 16px 4px">
+    <div class="sec-title no-print">做过 & 评分</div>
+    <div class="no-print" style="display:flex;align-items:center;gap:14px;margin:0 16px 4px">
       <button class="btn ${m.cooked ? '' : 'ghost'} sm" id="cookedBtn">${m.cooked ? '✓ 已做过' : '标记做过'}</button>
       <div class="rating" id="rating">${[1, 2, 3, 4, 5].map(n => `<span class="rs ${m.rating >= n ? 'on' : ''}" data-r="${n}">★</span>`).join('')}</div>
     </div>
@@ -1143,6 +1145,7 @@ function openDetail(r, focusStepIndex = null) {
       ${s.image ? `<img class="mthumb" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="" loading="lazy" onerror="this.remove()">` : ''}
       <div class="t"><span class="n">${s.index}</span>${esc(s.title || '')}${riskBadge(s.risk_level)}</div>
       <div class="a">${esc(s.action || '')}</div>
+      ${stepWhyPrintHtml(s)}
       ${segUrl ? `<a class="step-video-link" href="${esc(segUrl)}" target="_blank" rel="noopener">▶ 看原视频这一段</a>` : ''}</div>`));
   });
   wireZoom(stepsBox);
@@ -1152,6 +1155,7 @@ function openDetail(r, focusStepIndex = null) {
   p.querySelector('#btnBack2').onclick = close;
   p.querySelector('#dfav').onclick = (e) => { toggleRecipe(r.id); const on = favRecipes.includes(r.id); e.target.className = 'star ' + (on ? 'on' : ''); e.target.textContent = on ? '★' : '☆'; renderRecipes(); renderFilters(); };
   p.querySelector('#dDel').onclick = async () => { if (!(await confirmModal('删除这道菜？此操作不可撤销。', '删除'))) return; try { await API.del(r.id); } catch { } close(); refresh(); toast('已删除'); };
+  p.querySelector('#dPrint').onclick = () => window.print();
   p.querySelector('#dEdit').onclick = () => { close(); openEdit(r); };
   p.querySelector('#dShare').onclick = () => shareRecipe(r, factor);
   p.querySelector('#addShop').onclick = () => addToShopping(r, factor);
@@ -1225,6 +1229,16 @@ function openDetail(r, focusStepIndex = null) {
   }, 30);
 }
 function riskBadge(r) { return r === 'high' ? ' <span class="badge risk-high">🔴 新手雷区</span>' : r === 'medium' ? ' <span class="badge risk-medium">🟡 需留意</span>' : ''; }
+function stepWhyPrintHtml(s) {
+  const w = s?.why || {};
+  const rows = [
+    ['为什么', w.reason],
+    ['不这么做', w.if_not],
+    ['判断到位', w.cue],
+  ].filter(([, value]) => String(value || '').trim());
+  if (!rows.length) return '';
+  return `<div class="print-why">${rows.map(([label, value]) => `<p><b>${label}：</b>${esc(value)}</p>`).join('')}</div>`;
+}
 // 跟做走到最后一步 → 闭环：自动记「做过」，顺手引导打分（做完正是最该沉淀的节点）。
 function finishCook(r) {
   const m = rmeta(r.id);
