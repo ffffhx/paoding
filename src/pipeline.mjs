@@ -15,31 +15,31 @@ const slug = (s) =>
 
 // 完整管线：视频 → 音频 → 转写 → 结构化 → 逐步讲解 → 落盘。
 // onProgress({stage, pct, message})：stage 是阶段名，pct 是 0~100 的总体进度。
-export async function processVideo(input, config, { keepTranscript = false, onProgress = () => {} } = {}) {
+export async function processVideo(input, config, { keepTranscript = false, onProgress = () => {}, signal } = {}) {
   const step = (n, msg) => console.log(`\x1b[36m[${n}/5]\x1b[0m ${msg}`);
   const emit = (stage, pct, message) => onProgress({ stage, pct: Math.round(pct), message });
 
   step(1, "获取视频并抽取音频…");
   emit("acquire", 2, "准备中…");
   const { audioPath, meta, cleanup } = await acquire(input, config.ytdlp, (p) =>
-    emit("acquire", p.pct * 0.3, p.message),
+    emit("acquire", p.pct * 0.3, p.message), signal,
   );
 
   try {
     step(2, "语音转文字（ASR）…");
     emit("transcribe", 30, "语音转文字…");
     const transcript = await transcribe(config.asr, audioPath, (p) =>
-      emit("transcribe", 30 + p.pct * 0.35, p.message),
+      emit("transcribe", 30 + p.pct * 0.35, p.message), signal,
     );
 
     step(3, "整理成结构化菜谱…");
     emit("structure", 68, "整理成步骤…");
-    const recipe = await structureRecipe(config.llm, { transcript, meta });
+    const recipe = await structureRecipe(config.llm, { transcript, meta, signal });
     emit("structure", 82, "步骤已生成");
 
     step(4, `逐步生成「为什么」讲解（深度：${config.depth}）…`);
     emit("explain", 85, "逐步生成「为什么」…");
-    await explainSteps(config.llm, recipe, config.depth);
+    await explainSteps(config.llm, recipe, config.depth, signal);
     emit("explain", 98, "讲解已生成");
 
     step(5, "写出结果…");
@@ -61,7 +61,7 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
 
 // 文字管线：文字帖 URL（抓网页文字）或直接粘贴的文字 → 结构化 → 讲解 → 落盘。
 // 用于小红书图文/公众号/下厨房等没有音频的来源，跳过下载与转写。
-export async function processText(input, config, { onProgress = () => {} } = {}) {
+export async function processText(input, config, { onProgress = () => {}, signal } = {}) {
   const emit = (stage, pct, message) => onProgress({ stage, pct: Math.round(pct), message });
   const isUrl = /^https?:\/\//i.test(input);
   let title = "", text = "";
@@ -78,11 +78,11 @@ export async function processText(input, config, { onProgress = () => {} } = {})
   }
 
   emit("structure", 40, "整理成步骤…");
-  const recipe = await structureRecipe(config.llm, { transcript: text, meta: { title, description: text.slice(0, 2000) } });
+  const recipe = await structureRecipe(config.llm, { transcript: text, meta: { title, description: text.slice(0, 2000) }, signal });
   emit("structure", 60, "步骤已生成");
 
   emit("explain", 65, "逐步生成「为什么」…");
-  await explainSteps(config.llm, recipe, config.depth);
+  await explainSteps(config.llm, recipe, config.depth, signal);
   emit("explain", 96, "讲解已生成");
 
   recipe.source = isUrl ? input : "（粘贴文字）";

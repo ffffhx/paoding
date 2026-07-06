@@ -1,6 +1,6 @@
 // OpenAI 兼容的 chat/completions 客户端 —— 只用内置 fetch，无第三方依赖。
 
-export async function chatJSON(llm, { system, user, temperature = 0.3 }) {
+export async function chatJSON(llm, { system, user, temperature = 0.3, signal }) {
   const body = {
     model: llm.model,
     temperature,
@@ -18,6 +18,7 @@ export async function chatJSON(llm, { system, user, temperature = 0.3 }) {
       Authorization: `Bearer ${llm.apiKey}`,
     },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!res.ok) {
@@ -31,7 +32,7 @@ export async function chatJSON(llm, { system, user, temperature = 0.3 }) {
 }
 
 // 自由文本对话（追问、食材替代等），不强制 JSON。
-export async function chatText(llm, { system, user, temperature = 0.5 }) {
+export async function chatText(llm, { system, user, temperature = 0.5, signal }) {
   const res = await fetch(`${llm.baseUrl}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${llm.apiKey}` },
@@ -43,6 +44,7 @@ export async function chatText(llm, { system, user, temperature = 0.5 }) {
         { role: "user", content: user },
       ],
     }),
+    signal,
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");

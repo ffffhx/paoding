@@ -89,15 +89,18 @@ function runJob(id, input, depth, kind = "video") {
   // 非法/缺省的 depth 归一到配置默认值，避免前端传错值时静默按 balanced 生成。
   const cfg = { ...config, depth: DEPTHS.includes(depth) ? depth : config.depth };
   const onProgress = (p) => { j.progress = p; pushJob(id, { type: "progress", ...p }); };
+  // 超时时用它强杀底层卡死的 yt-dlp/ffmpeg/whisper 子进程与 LLM/ASR 请求，而不只是释放槽位。
+  const ac = new AbortController();
+  const signal = ac.signal;
   let run;
   if (kind === "text") {
-    run = processText(input, cfg, { onProgress });
+    run = processText(input, cfg, { onProgress, signal });
   } else {
     // 视频路径；URL 视频抓不到（如小红书无抽取器）时自动改按文字帖尝试
-    run = processVideo(input, cfg, { onProgress }).catch((e) => {
-      if (/^https?:\/\//i.test(input)) {
+    run = processVideo(input, cfg, { onProgress, signal }).catch((e) => {
+      if (!signal.aborted && /^https?:\/\//i.test(input)) {
         onProgress({ stage: "acquire", pct: 4, message: "视频抓取失败，改按文字帖尝试…" });
-        return processText(input, cfg, { onProgress });
+        return processText(input, cfg, { onProgress, signal });
       }
       throw e;
     });
@@ -117,10 +120,10 @@ function runJob(id, input, depth, kind = "video") {
     j.listeners.clear();
     setTimeout(() => jobs.delete(id), 5 * 60 * 1000);
   };
-  timer = setTimeout(
-    () => finish({ type: "error", error: `解析超时（超过 ${Math.round(TIMEOUT_MS / 60000)} 分钟无结果），已释放，请重试` }),
-    TIMEOUT_MS,
-  );
+  timer = setTimeout(() => {
+    try { ac.abort(); } catch {} // 强杀在跑的子进程/请求
+    finish({ type: "error", error: `解析超时（超过 ${Math.round(TIMEOUT_MS / 60000)} 分钟无结果），已释放，请重试` });
+  }, TIMEOUT_MS);
 
   run
     .then(({ recipe }) => finish({ type: "done", recipe }))
