@@ -231,11 +231,35 @@ test("stepWhyPrintHtml 生成打印用 why 文本并转义", () => {
   assert.equal(app.stepWhyPrintHtml({}), "");
 });
 
+test("详情页 why/风险/单位速查切 en 后输出英文标签", () => {
+  app.setLanguage("en");
+  const html = app.stepWhyPrintHtml({
+    why: { reason: "Gel starch", if_not: "Raw center", cue: "Golden<script>" },
+  });
+  assert.ok(html.includes("Why"));
+  assert.ok(html.includes("If skipped"));
+  assert.ok(html.includes("Doneness cue"));
+  assert.ok(html.includes("&lt;script&gt;"));
+  assert.ok(app.riskBadge("high").includes("Beginner pitfall"));
+  assert.ok(app.unitTipButtonHtml("15毫升").includes("Unit reference"));
+  app.setLanguage("zh");
+});
+
 test("nutritionHtml 按份量系数缩放显示", () => {
   const html = app.nutritionHtml({ nutrition: { per_serving: { calories_kcal: 100, protein_g: 8, fat_g: 3, carbs_g: 12, sodium_mg: 200 }, disclaimer: "估算" } }, 1.5);
   assert.ok(html.includes("150 kcal"));
   assert.ok(html.includes("12 g"));
   assert.ok(html.includes("AI 估算"));
+});
+
+test("nutritionHtml 切 en 后输出英文营养标签", () => {
+  app.setLanguage("en");
+  const html = app.nutritionHtml({ nutrition: { per_serving: { calories_kcal: 100, protein_g: 8, fat_g: 3, carbs_g: 12, sodium_mg: 200 } } }, 1);
+  assert.ok(html.includes("Nutrition per serving"));
+  assert.ok(html.includes("AI estimate"));
+  assert.ok(html.includes("Calories"));
+  assert.ok(html.includes("Protein"));
+  app.setLanguage("zh");
 });
 
 test("summarizeMealNutrition 按每道菜份量系数汇总并统计缺失", () => {

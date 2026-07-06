@@ -450,14 +450,14 @@ function unitLookupText(text) {
   return unitReferencesFor(text).map(ref => `${ref.unit}：${ref.lines.join('；')}`).join('\n');
 }
 function unitTipButtonHtml(query) {
-  return unitReferencesFor(query).length ? `<button class="unit-tip" title="单位速查" data-unit-tip="${esc(query)}">≈</button>` : '';
+  return unitReferencesFor(query).length ? `<button class="unit-tip" title="${esc(tr('detail.unitLookup'))}" data-unit-tip="${esc(query)}">≈</button>` : '';
 }
 function unitReferencePopHtml(query) {
   const refs = unitReferencesFor(query);
   if (!refs.length) return '';
   return `<div class="unit-pop" role="note">
-    <button class="unit-pop-x" title="关闭">×</button>
-    <h4>单位速查</h4>
+    <button class="unit-pop-x" title="${esc(tr('common.close'))}">×</button>
+    <h4>${esc(tr('detail.unitLookup'))}</h4>
     ${refs.map(ref => `<p><b>${esc(ref.unit)}</b>${ref.lines.map(line => `<span>${esc(line)}</span>`).join('')}</p>`).join('')}
   </div>`;
 }
@@ -499,7 +499,7 @@ function nutritionSummaryHtml(summary, { prefix = '', averageBy = 1 } = {}) {
   const div = normalizeFactor(averageBy);
   const parts = NUTRITION_FIELDS.map(([k, label, unit]) => {
     const v = Math.round((summary.totals[k] || 0) / div * 10) / 10;
-    return `${label} ${v}${unit}`;
+    return `${trOr('nutrition.' + k, label)} ${v}${unit}`;
   });
   const missing = summary.missing ? ` · ${summary.missing} 道菜未估算` : '';
   return `<div class="plan-nutri">${prefix ? `<b>${esc(prefix)}</b> ` : ''}${parts.join(' · ')}${missing}</div>`;
@@ -508,16 +508,16 @@ function nutritionHtml(r, factor) {
   const n = r && r.nutrition;
   const p = n && n.per_serving;
   if (!p) return '';
-  const item = (k, v, unit) => `<div class="nitem"><span>${k}</span><b>${v == null ? '—' : esc(v) + unit}</b></div>`;
+  const item = (k, v, unit) => `<div class="nitem"><span>${esc(k)}</span><b>${v == null ? '—' : esc(v) + unit}</b></div>`;
   const f = factor || 1;
   return `<div class="nutrition-card">
-    <div class="nutrition-title">每份营养 <span>AI 估算，仅供参考</span></div>
+    <div class="nutrition-title">${esc(tr('nutrition.title'))} <span>${esc(tr('nutrition.estimateNote'))}</span></div>
     <div class="nutrition-grid">
-      ${item('热量', scaledNutritionValue(p.calories_kcal, f), ' kcal')}
-      ${item('蛋白质', scaledNutritionValue(p.protein_g, f), ' g')}
-      ${item('脂肪', scaledNutritionValue(p.fat_g, f), ' g')}
-      ${item('碳水', scaledNutritionValue(p.carbs_g, f), ' g')}
-      ${item('钠', scaledNutritionValue(p.sodium_mg, f), ' mg')}
+      ${item(tr('nutrition.calories_kcal'), scaledNutritionValue(p.calories_kcal, f), ' kcal')}
+      ${item(tr('nutrition.protein_g'), scaledNutritionValue(p.protein_g, f), ' g')}
+      ${item(tr('nutrition.fat_g'), scaledNutritionValue(p.fat_g, f), ' g')}
+      ${item(tr('nutrition.carbs_g'), scaledNutritionValue(p.carbs_g, f), ' g')}
+      ${item(tr('nutrition.sodium_mg'), scaledNutritionValue(p.sodium_mg, f), ' mg')}
     </div>
     ${n.disclaimer ? `<div class="nutrition-note">${esc(n.disclaimer)}</div>` : ''}</div>`;
 }
@@ -1188,61 +1188,61 @@ function openDetail(r, focusStepIndex = null) {
   const importedNeedsWhy = !!r.imported && !hasRecipeWhy(r);
   const p = el(`<div class="page">
     <div class="topbar">
-      <button class="back">‹ 返回</button>
+      <button class="back">${esc(tr('detail.back'))}</button>
       <div style="display:flex;gap:4px">
-        <button class="iconbtn" id="dPrint" title="打印">🖨</button>
-        <button class="iconbtn" id="dEdit" title="编辑">✏️</button>
-        <button class="iconbtn" id="dShare" title="分享">↗</button>
-        <button class="iconbtn" id="dDel" title="删除">🗑</button>
+        <button class="iconbtn" id="dPrint" title="${esc(tr('detail.print'))}">🖨</button>
+        <button class="iconbtn" id="dEdit" title="${esc(tr('detail.edit'))}">✏️</button>
+        <button class="iconbtn" id="dShare" title="${esc(tr('detail.share'))}">↗</button>
+        <button class="iconbtn" id="dDel" title="${esc(tr('detail.delete'))}">🗑</button>
         <button class="star ${favRecipes.includes(r.id) ? 'on' : ''}" id="dfav">${favRecipes.includes(r.id) ? '★' : '☆'}</button>
       </div>
     </div>
-    <div class="print-head"><h1>${esc(r.title || '未命名')}</h1>${r.source ? `<p>来源：${esc(r.source)}</p>` : ''}</div>
-    <div class="detail-hd"><h2>${esc(r.title || '未命名')}</h2>
+    <div class="print-head"><h1>${esc(r.title || tr('recipe.untitled'))}</h1>${r.source ? `<p>${esc(tr('detail.source', { source: r.source }))}</p>` : ''}</div>
+    <div class="detail-hd"><h2>${esc(r.title || tr('recipe.untitled'))}</h2>
       <div class="meta">
-        ${r.difficulty ? `<span class="tag diff-${esc(r.difficulty)}">${esc(DIFF[r.difficulty] || r.difficulty)}</span>` : ''}
+        ${r.difficulty ? `<span class="tag diff-${esc(r.difficulty)}">${esc(difficultyLabel(r.difficulty))}</span>` : ''}
         ${r.cuisine ? `<span>${esc(r.cuisine)}</span>` : ''}
-        ${r.total_time_min ? `<span>⏱ 约${esc(r.total_time_min)}分钟</span>` : ''}
-        <span>📋 ${(r.steps || []).length}步</span>
-        ${/^https?:\/\//.test(r.source || '') ? `<a class="src-link" href="${esc(r.source)}" target="_blank" rel="noopener">▶ 看原视频</a>` : ''}</div>
+        ${r.total_time_min ? `<span>${esc(tr('recipe.time.approxMin', { min: r.total_time_min }))}</span>` : ''}
+        <span>${esc(tr('recipe.steps', { count: (r.steps || []).length }))}</span>
+        ${/^https?:\/\//.test(r.source || '') ? `<a class="src-link" href="${esc(r.source)}" target="_blank" rel="noopener">${esc(tr('detail.watchOriginal'))}</a>` : ''}</div>
       ${(r.tags || []).length ? `<div class="tags" style="margin-top:8px">${r.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
     </div>
-    ${base ? `<div class="scaler"><span>份量</span><button class="st" data-s="-">－</button><b id="svVal">${base * factor}</b><button class="st" data-s="+">＋</button><span>人份</span></div>` : ''}
+    ${base ? `<div class="scaler"><span>${esc(tr('detail.servings'))}</span><button class="st" data-s="-">－</button><b id="svVal">${base * factor}</b><button class="st" data-s="+">＋</button><span>${esc(tr('detail.servingsUnit'))}</span></div>` : ''}
     <div class="no-print" style="display:flex;gap:8px;padding:8px 16px 0;flex-wrap:wrap">
-      <button class="btn ghost sm" id="btnOverview">💡 为什么这样设计</button>
-      <button class="btn ghost sm" id="btnNutri">🥗 营养估算</button>
-      <button class="btn ghost sm" id="btnTags">🏷 标签</button>
-      <button class="btn ghost sm" id="btnExport2">⬇ 导出</button>
+      <button class="btn ghost sm" id="btnOverview">${esc(tr('detail.overview'))}</button>
+      <button class="btn ghost sm" id="btnNutri">${esc(tr('detail.nutrition'))}</button>
+      <button class="btn ghost sm" id="btnTags">${esc(tr('detail.tags'))}</button>
+      <button class="btn ghost sm" id="btnExport2">${esc(tr('detail.export'))}</button>
     </div>
-    ${r.imported ? `<div class="import-note"><span>${importedNeedsWhy ? '外部导入，无原理讲解' : '外部导入，原理讲解已补齐'}</span>${importedNeedsWhy ? '<button class="btn ghost sm" id="btnImportExplain">AI 补讲解</button>' : ''}</div>` : ''}
+    ${r.imported ? `<div class="import-note"><span>${esc(tr(importedNeedsWhy ? 'detail.imported.noWhy' : 'detail.imported.withWhy'))}</span>${importedNeedsWhy ? `<button class="btn ghost sm" id="btnImportExplain">${esc(tr('detail.imported.explain'))}</button>` : ''}</div>` : ''}
     <div id="aiBox" style="margin:8px 16px 0"></div>
     <div id="nutritionBox"></div>
-    <div class="sec-title">食材 <span class="act" id="addShop">＋ 加入购物清单</span></div>
+    <div class="sec-title">${esc(tr('detail.ingredients'))} <span class="act" id="addShop">${esc(tr('detail.addShopping'))}</span></div>
     <div class="ing" id="ingBox"></div>
-    <div class="sec-title">步骤总览</div>
+    <div class="sec-title">${esc(tr('detail.stepsOverview'))}</div>
     <div id="steps"></div>
-    <div class="sec-title no-print">我的笔记</div>
-    <div class="notes"><textarea id="notes" placeholder="记点心得，比如「盐减半更合口」…">${esc(m.notes || '')}</textarea></div>
-    <div class="sec-title no-print">做过 & 评分</div>
+    <div class="sec-title no-print">${esc(tr('detail.notes'))}</div>
+    <div class="notes"><textarea id="notes" placeholder="${esc(tr('detail.notes.placeholder'))}">${esc(m.notes || '')}</textarea></div>
+    <div class="sec-title no-print">${esc(tr('detail.cookedRating'))}</div>
     <div class="no-print" style="display:flex;align-items:center;gap:14px;margin:0 16px 4px">
-      <button class="btn ${m.cooked ? '' : 'ghost'} sm" id="cookedBtn">${m.cooked ? '✓ 已做过' : '标记做过'}</button>
+      <button class="btn ${m.cooked ? '' : 'ghost'} sm" id="cookedBtn">${esc(m.cooked ? tr('detail.cooked') : tr('detail.markCooked'))}</button>
       <div class="rating" id="rating">${[1, 2, 3, 4, 5].map(n => `<span class="rs ${m.rating >= n ? 'on' : ''}" data-r="${n}">★</span>`).join('')}</div>
     </div>
-    <div class="cta"><button class="btn ghost" id="btnBack2">返回</button><button class="btn" id="btnCook">▶ 开始跟做</button></div>`);
+    <div class="cta"><button class="btn ghost" id="btnBack2">${esc(tr('detail.back').replace(/^‹\s*/, ''))}</button><button class="btn" id="btnCook">${esc(tr('detail.startCook'))}</button></div>`);
 
   function renderIng() {
     const checked = new Set(m.ingChecked || []);
     p.querySelector('#ingBox').innerHTML = (r.ingredients || []).map((i, idx) => {
-      const amount = scaledAmount(i, factor) || '视频未明确';
+      const amount = scaledAmount(i, factor) || tr('detail.amountUnknown');
       return `
       <div class="irow ${checked.has(idx) ? 'checked' : ''}" data-i="${idx}">
         <div class="ck ${checked.has(idx) ? 'on' : ''}">${checked.has(idx) ? '✓' : ''}</div>
         ${i.image ? `<img class="ingthumb" data-zoom src="${esc(recipeImg(r.id, i.image))}" alt="${esc(i.name)}" loading="lazy" onerror="this.remove()">` : ''}
         <span class="name">${esc(i.name)}${i.note ? `<span class="amt">（${esc(i.note)}）</span>` : ''}</span>
         <span class="amt">${esc(amount)}${unitTipButtonHtml(`${amount} ${i.unit || ''}`)}</span>
-        <button class="btn ghost sm" data-sub="${esc(i.name)}">替代</button>
+        <button class="btn ghost sm" data-sub="${esc(i.name)}">${esc(tr('detail.substitute'))}</button>
       </div>`;
-    }).join('') || '<div class="irow"><span class="name">视频未列出食材</span></div>';
+    }).join('') || `<div class="irow"><span class="name">${esc(tr('detail.noIngredients'))}</span></div>`;
     p.querySelectorAll('#ingBox .irow').forEach(row => {
       row.onclick = (e) => {
         if (e.target.dataset.sub !== undefined || e.target.closest('.unit-tip,.unit-pop')) return;
@@ -1274,7 +1274,7 @@ function openDetail(r, focusStepIndex = null) {
       <div class="t"><span class="n">${s.index}</span>${esc(s.title || '')}${riskBadge(s.risk_level)}</div>
       <div class="a">${esc(s.action || '')}</div>
       ${stepWhyPrintHtml(s)}
-      ${segUrl ? `<a class="step-video-link" href="${esc(segUrl)}" target="_blank" rel="noopener">▶ 看原视频这一段</a>` : ''}</div>`));
+      ${segUrl ? `<a class="step-video-link" href="${esc(segUrl)}" target="_blank" rel="noopener">${esc(tr('detail.watchSegment'))}</a>` : ''}</div>`));
   });
   wireZoom(stepsBox);
 
@@ -1282,7 +1282,7 @@ function openDetail(r, focusStepIndex = null) {
   p.querySelector('.back').onclick = close;
   p.querySelector('#btnBack2').onclick = close;
   p.querySelector('#dfav').onclick = (e) => { toggleRecipe(r.id); const on = favRecipes.includes(r.id); e.target.className = 'star ' + (on ? 'on' : ''); e.target.textContent = on ? '★' : '☆'; renderRecipes(); renderFilters(); };
-  p.querySelector('#dDel').onclick = async () => { if (!(await confirmModal('删除这道菜？此操作不可撤销。', '删除'))) return; try { await API.del(r.id); } catch { } close(); refresh(); toast('已删除'); };
+  p.querySelector('#dDel').onclick = async () => { if (!(await confirmModal(tr('detail.delete.confirm'), tr('common.delete')))) return; try { await API.del(r.id); } catch { } close(); refresh(); toast('已删除'); };
   p.querySelector('#dPrint').onclick = () => window.print();
   p.querySelector('#dEdit').onclick = () => { close(); openEdit(r); };
   p.querySelector('#dShare').onclick = () => shareRecipe(r, factor);
@@ -1297,17 +1297,17 @@ function openDetail(r, focusStepIndex = null) {
     let node = aiBox.querySelector(`[data-ai="${key}"]`);
     if (!node) {
       node = el(`<div class="qa" data-ai="${key}" style="border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:8px;position:relative">
-        <button class="ai-x" title="收起" style="position:absolute;top:6px;right:8px;color:var(--muted);font-size:16px;padding:4px 6px">✕</button>
+        <button class="ai-x" title="${esc(tr('common.close'))}" style="position:absolute;top:6px;right:8px;color:var(--muted);font-size:16px;padding:4px 6px">✕</button>
         <div class="q" style="font-weight:600;margin-bottom:6px;padding-right:22px">${title}</div>
-        <div class="a" style="color:var(--muted);white-space:pre-wrap">思考中…</div></div>`);
+        <div class="a" style="color:var(--muted);white-space:pre-wrap">${esc(tr('detail.ai.thinking'))}</div></div>`);
       node.querySelector('.ai-x').onclick = () => node.remove();
       aiBox.appendChild(node);
-    } else { node.querySelector('.a').textContent = '思考中…'; }
+    } else { node.querySelector('.a').textContent = tr('detail.ai.thinking'); }
     try { const { answer } = await fn(); node.querySelector('.a').textContent = answer; }
-    catch (e) { node.querySelector('.a').textContent = '失败：' + e.message; }
+    catch (e) { node.querySelector('.a').textContent = tr('detail.ai.failed', { message: e.message }); }
     btn.disabled = false;
   };
-  p.querySelector('#btnOverview').onclick = (e) => aiCall(e.currentTarget, () => API.overview(r.id), '💡 为什么这样设计', 'overview');
+  p.querySelector('#btnOverview').onclick = (e) => aiCall(e.currentTarget, () => API.overview(r.id), tr('detail.overview'), 'overview');
   p.querySelector('#btnTags').onclick = () => editRecipeTags(r, (nextTags) => {
     r.tags = nextTags;
     recipes = recipes.map(x => x.id === r.id ? { ...x, tags: nextTags } : x);
@@ -1317,7 +1317,7 @@ function openDetail(r, focusStepIndex = null) {
   const importExplainBtn = p.querySelector('#btnImportExplain');
   if (importExplainBtn) importExplainBtn.onclick = async (e) => {
     const btn = e.currentTarget;
-    btn.disabled = true; btn.textContent = '补讲解中…';
+    btn.disabled = true; btn.textContent = tr('detail.imported.explaining');
     try {
       const data = await API.explainRecipe(r.id, depth);
       Object.assign(r, data.recipe || {});
@@ -1325,14 +1325,14 @@ function openDetail(r, focusStepIndex = null) {
       toast('已补齐原理讲解');
       close(); openDetail(r);
     } catch (err) {
-      btn.disabled = false; btn.textContent = 'AI 补讲解';
+      btn.disabled = false; btn.textContent = tr('detail.imported.explain');
       toast('补讲解失败：' + err.message);
     }
   };
   p.querySelector('#btnNutri').onclick = async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true;
-    p.querySelector('#nutritionBox').innerHTML = '<div class="nutrition-card"><div class="nutrition-title">每份营养 <span>估算中…</span></div></div>';
+    p.querySelector('#nutritionBox').innerHTML = `<div class="nutrition-card"><div class="nutrition-title">${esc(tr('nutrition.title'))} <span>${esc(tr('detail.nutrition.loading'))}</span></div></div>`;
     try {
       const data = await API.nutrition(r.id);
       r.nutrition = data.nutrition;
@@ -1346,7 +1346,7 @@ function openDetail(r, focusStepIndex = null) {
   p.querySelector('#btnExport2').onclick = () => openExport(r, factor);
   p.querySelector('#btnCook').onclick = () => { close(); openCook(r); };
   p.querySelector('#notes').oninput = (e) => { m.notes = e.target.value; saveMeta(); };
-  p.querySelector('#cookedBtn').onclick = (e) => { m.cooked = !m.cooked; if (m.cooked) m.cooked_at = new Date().toISOString(); saveMeta(); e.target.className = 'btn sm ' + (m.cooked ? '' : 'ghost'); e.target.textContent = m.cooked ? '✓ 已做过' : '标记做过'; renderRecipes(); };
+  p.querySelector('#cookedBtn').onclick = (e) => { m.cooked = !m.cooked; if (m.cooked) m.cooked_at = new Date().toISOString(); saveMeta(); e.target.className = 'btn sm ' + (m.cooked ? '' : 'ghost'); e.target.textContent = m.cooked ? tr('detail.cooked') : tr('detail.markCooked'); renderRecipes(); };
   p.querySelectorAll('#rating .rs').forEach(rs => rs.onclick = () => { m.rating = +rs.dataset.r; saveMeta(); p.querySelectorAll('#rating .rs').forEach(x => x.classList.toggle('on', +x.dataset.r <= m.rating)); renderRecipes(); });
   if (base) p.querySelectorAll('.st').forEach(b => b.onclick = () => { factor = Math.max(0.5, factor + (b.dataset.s === '+' ? 0.5 : -0.5)); m.servingsFactor = factor; saveMeta(); p.querySelector('#svVal').textContent = Math.round(base * factor * 10) / 10; renderIng(); renderNutrition(); });
 
@@ -1356,13 +1356,13 @@ function openDetail(r, focusStepIndex = null) {
     if (node) { node.classList.add('focus-step'); node.scrollIntoView({ block: 'center' }); }
   }, 30);
 }
-function riskBadge(r) { return r === 'high' ? ' <span class="badge risk-high">🔴 新手雷区</span>' : r === 'medium' ? ' <span class="badge risk-medium">🟡 需留意</span>' : ''; }
+function riskBadge(r) { return r === 'high' ? ` <span class="badge risk-high">${esc(tr('risk.high'))}</span>` : r === 'medium' ? ` <span class="badge risk-medium">${esc(tr('risk.medium'))}</span>` : ''; }
 function stepWhyPrintHtml(s) {
   const w = s?.why || {};
   const rows = [
-    ['为什么', w.reason],
-    ['不这么做', w.if_not],
-    ['判断到位', w.cue],
+    [tr('why.reason'), w.reason],
+    [tr('why.ifNot'), w.if_not],
+    [tr('why.cue'), w.cue],
   ].filter(([, value]) => String(value || '').trim());
   if (!rows.length) return '';
   return `<div class="print-why">${rows.map(([label, value]) => `<p><b>${label}：</b>${esc(value)}</p>`).join('')}</div>`;
@@ -1394,55 +1394,55 @@ function openEdit(r) {
   const fld = 'border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;font-size:15px;color:var(--ink);font-family:inherit;width:100%';
   const p = el(`<div class="page">
     <div class="topbar">
-      <button class="back">‹ 取消</button>
-      <button class="btn sm" id="eSave">✓ 保存</button>
+      <button class="back">${esc(tr('edit.cancel'))}</button>
+      <button class="btn sm" id="eSave">${esc(tr('edit.save'))}</button>
     </div>
-    <div class="detail-hd"><h2 style="font-size:22px">编辑菜谱</h2>
-      <div class="meta">改错的用量 / 步骤 / 讲解，保存后同步到所有设备</div></div>
+    <div class="detail-hd"><h2 style="font-size:22px">${esc(tr('edit.title'))}</h2>
+      <div class="meta">${esc(tr('edit.desc'))}</div></div>
 
-    <div class="sec-title">基本信息</div>
+    <div class="sec-title">${esc(tr('edit.basicInfo'))}</div>
     <div style="padding:0 16px;display:flex;flex-direction:column;gap:8px">
-      <input type="text" id="eTitle" placeholder="菜名" value="${esc(d.title || '')}">
+      <input type="text" id="eTitle" placeholder="${esc(tr('edit.recipeTitle.placeholder'))}" value="${esc(d.title || '')}">
       <div style="display:flex;gap:8px">
-        <input type="text" id="eServings" placeholder="份量，如 2人份" value="${esc(d.servings || '')}" style="flex:1;min-width:0">
-        <input type="text" id="eTime" inputmode="numeric" placeholder="总时长(分钟)" value="${esc(d.total_time_min || '')}" style="width:130px">
+        <input type="text" id="eServings" placeholder="${esc(tr('edit.servings.placeholder'))}" value="${esc(d.servings || '')}" style="flex:1;min-width:0">
+        <input type="text" id="eTime" inputmode="numeric" placeholder="${esc(tr('edit.totalTime.placeholder'))}" value="${esc(d.total_time_min || '')}" style="width:130px">
       </div>
       <div style="display:flex;gap:8px">
         <select id="eDiff" style="${fld};flex:1">
-          <option value="easy" ${d.difficulty === 'easy' ? 'selected' : ''}>简单</option>
-          <option value="medium" ${d.difficulty === 'medium' || !d.difficulty ? 'selected' : ''}>中等</option>
-          <option value="hard" ${d.difficulty === 'hard' ? 'selected' : ''}>有挑战</option>
+          <option value="easy" ${d.difficulty === 'easy' ? 'selected' : ''}>${esc(tr('difficulty.easy'))}</option>
+          <option value="medium" ${d.difficulty === 'medium' || !d.difficulty ? 'selected' : ''}>${esc(tr('difficulty.medium'))}</option>
+          <option value="hard" ${d.difficulty === 'hard' ? 'selected' : ''}>${esc(tr('difficulty.hard'))}</option>
         </select>
-        <input type="text" id="eCuisine" placeholder="菜系" value="${esc(d.cuisine || '')}" style="flex:1;min-width:0">
+        <input type="text" id="eCuisine" placeholder="${esc(tr('edit.cuisine.placeholder'))}" value="${esc(d.cuisine || '')}" style="flex:1;min-width:0">
       </div>
-      <input type="text" id="eTags" placeholder="标签，用逗号分隔" value="${esc(d.tags.join('、'))}">
+      <input type="text" id="eTags" placeholder="${esc(tr('edit.tags.placeholder'))}" value="${esc(d.tags.join('、'))}">
     </div>
 
-    <div class="sec-title">食材 <span class="act" id="eAddIng">＋ 加一行</span></div>
+    <div class="sec-title">${esc(tr('detail.ingredients'))} <span class="act" id="eAddIng">${esc(tr('edit.ingredients.add'))}</span></div>
     <div id="eIng" style="padding:0 16px;display:flex;flex-direction:column;gap:6px"></div>
 
-    <div class="sec-title">步骤 <span class="act" id="eAddStep">＋ 加一步</span></div>
+    <div class="sec-title">${esc(tr('detail.stepsOverview'))} <span class="act" id="eAddStep">${esc(tr('edit.steps.add'))}</span></div>
     <div id="eSteps" style="padding:0 16px;display:flex;flex-direction:column;gap:14px"></div>
 
-    <div class="cta"><button class="btn ghost" id="eCancel">取消</button><button class="btn" id="eSave2">✓ 保存</button></div>`);
+    <div class="cta"><button class="btn ghost" id="eCancel">${esc(tr('common.cancel'))}</button><button class="btn" id="eSave2">${esc(tr('common.save'))}</button></div>`);
 
   function renderIng() {
     const box = p.querySelector('#eIng');
     box.innerHTML = d.ingredients.map((i, idx) => `
       <div style="display:flex;gap:6px;align-items:center" data-i="${idx}">
-        <input type="text" class="fName" placeholder="食材" value="${esc(i.name || '')}" style="${fld};flex:2">
-        <input type="text" class="fAmt" placeholder="用量" value="${esc(i.amount || '')}" style="${fld};flex:1;min-width:0">
-        <button class="iconbtn fUp" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
-        <button class="iconbtn fDown" title="下移" ${idx === d.ingredients.length - 1 ? 'disabled' : ''}>↓</button>
-        <button class="iconbtn fDel" title="删除">🗑</button>
-      </div>`).join('') || '<div style="color:var(--muted);font-size:13px">还没有食材，点上面「加一行」</div>';
+        <input type="text" class="fName" placeholder="${esc(tr('edit.ingredient.placeholder'))}" value="${esc(i.name || '')}" style="${fld};flex:2">
+        <input type="text" class="fAmt" placeholder="${esc(tr('edit.amount.placeholder'))}" value="${esc(i.amount || '')}" style="${fld};flex:1;min-width:0">
+        <button class="iconbtn fUp" title="${esc(tr('common.moveUp'))}" ${idx === 0 ? 'disabled' : ''}>↑</button>
+        <button class="iconbtn fDown" title="${esc(tr('common.moveDown'))}" ${idx === d.ingredients.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="iconbtn fDel" title="${esc(tr('common.delete'))}">🗑</button>
+      </div>`).join('') || `<div style="color:var(--muted);font-size:13px">${esc(tr('edit.noIngredients'))}</div>`;
     box.querySelectorAll('[data-i]').forEach(row => {
       const idx = +row.dataset.i;
       row.querySelector('.fName').oninput = (e) => d.ingredients[idx].name = e.target.value;
       row.querySelector('.fAmt').oninput = (e) => { d.ingredients[idx].amount = e.target.value; delete d.ingredients[idx].qty; delete d.ingredients[idx].unit; };
       row.querySelector('.fUp').onclick = () => { d.ingredients = moveItem(d.ingredients, idx, idx - 1); renderIng(); };
       row.querySelector('.fDown').onclick = () => { d.ingredients = moveItem(d.ingredients, idx, idx + 1); renderIng(); };
-      row.querySelector('.fDel').onclick = async () => { if (!(await confirmModal('删除这个食材？', '删除'))) return; d.ingredients = removeItem(d.ingredients, idx); renderIng(); };
+      row.querySelector('.fDel').onclick = async () => { if (!(await confirmModal(tr('edit.deleteIngredient.confirm'), tr('common.delete')))) return; d.ingredients = removeItem(d.ingredients, idx); renderIng(); };
     });
   }
   function renderSteps() {
@@ -1450,21 +1450,21 @@ function openEdit(r) {
     box.innerHTML = d.steps.map((s, idx) => `
       <div class="stepmini" style="padding:12px" data-s="${idx}">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <b>第 ${idx + 1} 步</b>
+          <b>${esc(tr('edit.stepNo', { n: idx + 1 }))}</b>
           <span style="display:flex;gap:2px">
-            <button class="iconbtn sUp" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
-            <button class="iconbtn sDown" title="下移" ${idx === d.steps.length - 1 ? 'disabled' : ''}>↓</button>
-            <button class="iconbtn sDel" title="删除">🗑</button>
+            <button class="iconbtn sUp" title="${esc(tr('common.moveUp'))}" ${idx === 0 ? 'disabled' : ''}>↑</button>
+            <button class="iconbtn sDown" title="${esc(tr('common.moveDown'))}" ${idx === d.steps.length - 1 ? 'disabled' : ''}>↓</button>
+            <button class="iconbtn sDel" title="${esc(tr('common.delete'))}">🗑</button>
           </span>
         </div>
-        <input type="text" class="sTitle" placeholder="步骤标题" value="${esc(s.title || '')}" style="${fld};margin-bottom:6px">
-        <textarea class="sAction" placeholder="具体怎么做" style="${fld};min-height:56px;margin-bottom:6px">${esc(s.action || '')}</textarea>
+        <input type="text" class="sTitle" placeholder="${esc(tr('edit.stepTitle.placeholder'))}" value="${esc(s.title || '')}" style="${fld};margin-bottom:6px">
+        <textarea class="sAction" placeholder="${esc(tr('edit.stepAction.placeholder'))}" style="${fld};min-height:56px;margin-bottom:6px">${esc(s.action || '')}</textarea>
         <div style="display:flex;gap:6px;margin-bottom:6px">
-          <input type="text" class="sHeat" placeholder="火候" value="${esc(s.params?.heat || '')}" style="${fld};flex:1;min-width:0">
-          <input type="text" class="sTime" placeholder="时间(如3分钟)" value="${esc(s.params?.time || '')}" style="${fld};flex:1;min-width:0">
+          <input type="text" class="sHeat" placeholder="${esc(tr('edit.heat.placeholder'))}" value="${esc(s.params?.heat || '')}" style="${fld};flex:1;min-width:0">
+          <input type="text" class="sTime" placeholder="${esc(tr('edit.time.placeholder'))}" value="${esc(s.params?.time || '')}" style="${fld};flex:1;min-width:0">
         </div>
-        <textarea class="sReason" placeholder="为什么这么做（讲解）" style="${fld};min-height:56px">${esc(s.why?.reason || '')}</textarea>
-      </div>`).join('') || '<div style="color:var(--muted);font-size:13px">还没有步骤，点上面「加一步」</div>';
+        <textarea class="sReason" placeholder="${esc(tr('edit.reason.placeholder'))}" style="${fld};min-height:56px">${esc(s.why?.reason || '')}</textarea>
+      </div>`).join('') || `<div style="color:var(--muted);font-size:13px">${esc(tr('edit.noSteps'))}</div>`;
     box.querySelectorAll('[data-s]').forEach(row => {
       const idx = +row.dataset.s, s = d.steps[idx];
       row.querySelector('.sTitle').oninput = (e) => s.title = e.target.value;
@@ -1472,7 +1472,7 @@ function openEdit(r) {
       row.querySelector('.sHeat').oninput = (e) => (s.params = s.params || {}).heat = e.target.value;
       row.querySelector('.sTime').oninput = (e) => (s.params = s.params || {}).time = e.target.value;
       row.querySelector('.sReason').oninput = (e) => (s.why = s.why || {}).reason = e.target.value;
-      row.querySelector('.sDel').onclick = async () => { if (!(await confirmModal('删除这一步？', '删除'))) return; d.steps = removeItem(d.steps, idx); renderSteps(); };
+      row.querySelector('.sDel').onclick = async () => { if (!(await confirmModal(tr('edit.deleteStep.confirm'), tr('common.delete')))) return; d.steps = removeItem(d.steps, idx); renderSteps(); };
       row.querySelector('.sUp').onclick = () => { d.steps = moveItem(d.steps, idx, idx - 1); renderSteps(); };
       row.querySelector('.sDown').onclick = () => { d.steps = moveItem(d.steps, idx, idx + 1); renderSteps(); };
     });
@@ -1519,9 +1519,10 @@ function openEdit(r) {
 }
 
 async function showSubstitute(r, ingredient) {
-  const ov = openModal(`<h3>${esc(ingredient)} 的替代</h3><p style="color:var(--muted)">思考中…</p>`);
-  try { const { answer } = await API.substitute(r.id, ingredient); ov.querySelector('.modal').innerHTML = `<h3>${esc(ingredient)} 的替代</h3><p style="white-space:pre-wrap;text-align:left">${esc(answer)}</p><div class="mrow"><button class="btn" id="ok">知道了</button></div>`; ov.querySelector('#ok').onclick = () => ov.remove(); }
-  catch (e) { ov.querySelector('.modal').innerHTML = `<p>没问出来：${esc(e.message)}</p><div class="mrow"><button class="btn" id="ok">关闭</button></div>`; ov.querySelector('#ok').onclick = () => ov.remove(); }
+  const title = tr('substitute.title', { ingredient });
+  const ov = openModal(`<h3>${esc(title)}</h3><p style="color:var(--muted)">${esc(tr('substitute.thinking'))}</p>`);
+  try { const { answer } = await API.substitute(r.id, ingredient); ov.querySelector('.modal').innerHTML = `<h3>${esc(title)}</h3><p style="white-space:pre-wrap;text-align:left">${esc(answer)}</p><div class="mrow"><button class="btn" id="ok">${esc(tr('substitute.ok'))}</button></div>`; ov.querySelector('#ok').onclick = () => ov.remove(); }
+  catch (e) { ov.querySelector('.modal').innerHTML = `<p>${esc(tr('substitute.failed', { message: e.message }))}</p><div class="mrow"><button class="btn" id="ok">${esc(tr('common.close'))}</button></div>`; ov.querySelector('#ok').onclick = () => ov.remove(); }
 }
 function shareRecipe(r, factor) {
   const md = recipeToText(r, factor);
@@ -1579,15 +1580,15 @@ function downloadFile(name, content, type) {
 }
 function openExport(r, factor) {
   const safe = (r.title || 'recipe').replace(/[\/\\:*?"<>|]/g, '');
-  const ov = openModal(`<h3 style="text-align:left">导出「${esc(r.title || '')}」</h3>
-    <p style="color:var(--muted);font-size:13px;text-align:left;margin:0 0 12px">选一种格式</p>
+  const ov = openModal(`<h3 style="text-align:left">${esc(tr('export.title', { title: r.title || '' }))}</h3>
+    <p style="color:var(--muted);font-size:13px;text-align:left;margin:0 0 12px">${esc(tr('export.chooseFormat'))}</p>
     <div style="display:flex;flex-direction:column;gap:8px">
-      <button class="btn ghost" id="xLink">🔗 复制分享链接（任何人可看）</button>
-      <button class="btn ghost" id="xMd">📋 复制文字（含每步为什么）</button>
-      <button class="btn ghost" id="xCook">⬇ 下载 .cook（Cooklang 标准）</button>
-      <button class="btn ghost" id="xJson">⬇ 下载 schema.org JSON-LD</button>
+      <button class="btn ghost" id="xLink">${esc(tr('export.link'))}</button>
+      <button class="btn ghost" id="xMd">${esc(tr('export.text'))}</button>
+      <button class="btn ghost" id="xCook">${esc(tr('export.cook'))}</button>
+      <button class="btn ghost" id="xJson">${esc(tr('export.jsonld'))}</button>
     </div>
-    <div class="mrow"><button class="btn" id="xClose">关闭</button></div>`, 'left');
+    <div class="mrow"><button class="btn" id="xClose">${esc(tr('common.close'))}</button></div>`, 'left');
   ov.querySelector('#xLink').onclick = () => { navigator.clipboard?.writeText(shareRecipeUrl(r.id)); toast('已复制分享链接'); };
   ov.querySelector('#xMd').onclick = () => { navigator.clipboard?.writeText(recipeToText(r, factor)); toast('已复制菜谱文字'); };
   ov.querySelector('#xCook').onclick = () => { downloadFile(safe + '.cook', recipeToCooklang(r), 'text/plain;charset=utf-8'); toast('已下载 .cook'); };
