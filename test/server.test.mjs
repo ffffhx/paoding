@@ -350,6 +350,41 @@ test("import 写入→列表可见→分享页→删除", async () => {
   assert.ok(!(await (await request("/api/recipes")).json()).some((r) => r.title === "测试菜X"));
 });
 
+test("菜谱路由拒绝嵌套路径或编码斜杠别名", async () => {
+  const id = "别名防护菜";
+  const fp = path.join(recipesDir, `${id}.json`);
+  const dir = path.join(recipesDir, id);
+  fs.writeFileSync(fp, JSON.stringify({
+    title: id,
+    steps: [{ index: 1, title: "切", action: "切菜", image: "step-1.jpg" }],
+  }, null, 2));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "step-1.jpg"), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  try {
+    const nestedDelete = await request(`/api/recipes/other/images/${encodeURIComponent(id)}`, { method: "DELETE" });
+    assert.equal(nestedDelete.status, 404);
+    assert.ok(fs.existsSync(fp), "嵌套 DELETE 不应折叠 basename 后删除真实菜谱");
+
+    const encodedDelete = await request(`/api/recipes/${encodeURIComponent(`other/${id}`)}`, { method: "DELETE" });
+    assert.equal(encodedDelete.status, 404);
+    assert.ok(fs.existsSync(fp), "编码斜杠 DELETE 不应折叠 basename 后删除真实菜谱");
+
+    const nestedPut = await request(`/api/recipes/other/images/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "被误改" }),
+    });
+    assert.equal(nestedPut.status, 404);
+    assert.equal(JSON.parse(fs.readFileSync(fp, "utf8")).title, id);
+
+    assert.equal((await request(`/r/${encodeURIComponent(`other/${id}`)}`)).status, 404);
+    assert.equal((await request(`/api/recipes/${encodeURIComponent(`other/${id}`)}/images/step-1.jpg`)).status, 404);
+  } finally {
+    fs.rmSync(fp, { force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("分享页包含 JSON-LD、营养卡片和技法标注", async () => {
   const id = "分享互通菜";
   const fp = path.join(recipesDir, `${id}.json`);

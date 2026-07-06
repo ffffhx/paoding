@@ -265,7 +265,7 @@ function listRecipes() {
   return recipes;
 }
 function loadRecipe(id) {
-  if (!id || typeof id !== "string") return null; // 缺 recipeId 时返回 null，避免 path.basename(undefined) 抛错→500
+  if (!isSafeStorageId(id)) return null; // 缺/非法 recipeId 时返回 null，避免路径别名或 path.basename(undefined) 抛错→500
   const p = recipePath(id);
   if (!fs.existsSync(p)) return null;
   try {
@@ -276,6 +276,23 @@ function loadRecipe(id) {
 }
 function recipePath(id) {
   return path.join(RECIPES_DIR, `${path.basename(id)}.json`);
+}
+function isSafeStorageId(id) {
+  return typeof id === "string" && Boolean(id) && id !== "." && id !== ".." && !/[\\/]/.test(id);
+}
+function decodeSafeRouteSegment(raw) {
+  try {
+    const value = decodeURIComponent(String(raw || ""));
+    return isSafeStorageId(value) ? value : "";
+  } catch {
+    return "";
+  }
+}
+function singleRouteSegmentAfter(prefix, p) {
+  if (!p.startsWith(prefix)) return null;
+  const raw = p.slice(prefix.length);
+  if (!raw || raw.includes("/")) return null;
+  return decodeSafeRouteSegment(raw) || null;
 }
 function uniqueRecipeId(seed) {
   const base = slug(seed || "recipe") || "recipe";
@@ -1136,8 +1153,8 @@ export async function handleRequest(req, res) {
     // ---- 菜谱图片（步骤状态图/食材图，解析时截自原视频）----
     if (isRecipeImage) {
       const m = p.match(/^\/api\/recipes\/([^/]+)\/images\/([^/]+)$/);
-      const id = path.basename(decodeURIComponent(m[1]));
-      const file = path.basename(decodeURIComponent(m[2]));
+      const id = decodeSafeRouteSegment(m[1]);
+      const file = decodeSafeRouteSegment(m[2]);
       // 文件名只可能是解析器写出的 step-N.jpg / ing-N.jpg，白名单校验兼防穿越
       const fp = /^[\w-]+\.jpg$/.test(file) ? path.join(RECIPES_DIR, id, file) : "";
       if (!fp || !fs.existsSync(fp)) { res.writeHead(404); return res.end("Not found"); }
@@ -1146,24 +1163,22 @@ export async function handleRequest(req, res) {
     }
 
     // ---- 删除 ----
-    if (req.method === "DELETE" && p.startsWith("/api/recipes/")) {
-      const id = decodeURIComponent(p.slice("/api/recipes/".length));
-      const bid = path.basename(id);
-      const fp = path.join(RECIPES_DIR, `${bid}.json`);
-      const mp = path.join(RECIPES_DIR, `${bid}.md`);
+    const recipeIdForMutation = singleRouteSegmentAfter("/api/recipes/", p);
+    if (req.method === "DELETE" && recipeIdForMutation) {
+      const fp = path.join(RECIPES_DIR, `${recipeIdForMutation}.json`);
+      const mp = path.join(RECIPES_DIR, `${recipeIdForMutation}.md`);
       if (!fs.existsSync(fp)) return sendJSON(res, 404, { error: "菜谱不存在" }); // 不存在别谎报成功
       fs.rmSync(fp, { force: true }); fs.rmSync(mp, { force: true });
-      // 连图片目录一起删（bid 非空且不等于 RECIPES_DIR 本身，防误删整个库）
-      const dir = path.join(RECIPES_DIR, bid);
-      if (bid && dir !== RECIPES_DIR) fs.rmSync(dir, { recursive: true, force: true });
+      // 连图片目录一起删（recipeIdForMutation 非空且不等于 RECIPES_DIR 本身，防误删整个库）
+      const dir = path.join(RECIPES_DIR, recipeIdForMutation);
+      if (dir !== RECIPES_DIR) fs.rmSync(dir, { recursive: true, force: true });
       invalidateRecipeListCache();
       return sendJSON(res, 200, { ok: true });
     }
 
     // ---- 覆盖保存（笔记/评分/做过 等本地增改回写到菜谱）----
-    if (req.method === "PUT" && p.startsWith("/api/recipes/")) {
-      const id = decodeURIComponent(p.slice("/api/recipes/".length));
-      const fp = path.join(RECIPES_DIR, `${path.basename(id)}.json`);
+    if (req.method === "PUT" && recipeIdForMutation) {
+      const fp = path.join(RECIPES_DIR, `${recipeIdForMutation}.json`);
       if (!fs.existsSync(fp)) return sendJSON(res, 404, { error: "菜谱不存在" });
       const patch = await readJson(req);
       const cur = JSON.parse(fs.readFileSync(fp, "utf8"));
@@ -1171,7 +1186,7 @@ export async function handleRequest(req, res) {
       const nutritionTouched = ("ingredients" in patch && JSON.stringify(patch.ingredients) !== JSON.stringify(cur.ingredients))
         || ("servings" in patch && patch.servings !== cur.servings);
       if (nutritionTouched) delete next.nutrition;
-      writeRecipeFile(id, next);
+      writeRecipeFile(recipeIdForMutation, next);
       return sendJSON(res, 200, { ok: true });
     }
 
@@ -1302,7 +1317,7 @@ export async function handleRequest(req, res) {
 
     // ---- 只读分享页：/r/<菜谱id> 任何人可看，无需 App ----
     if (req.method === "GET" && p.startsWith("/r/")) {
-      const id = decodeURIComponent(p.slice("/r/".length));
+      const id = singleRouteSegmentAfter("/r/", p);
       const r = loadRecipe(id);
       if (!r) { res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" }); return res.end("<meta charset=utf-8><p style='font-family:sans-serif;text-align:center;margin-top:40px;color:#8A817A'>菜谱不存在或已删除</p>"); }
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
