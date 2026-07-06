@@ -16,6 +16,7 @@ const USERDATA_FILE = path.join(HERE, "..", "paoding-userdata.json");
 const PORT = process.env.PAODING_PORT ? Number(process.env.PAODING_PORT) : 4177;
 const HOST = process.env.PAODING_HOST || "0.0.0.0"; // 默认局域网可达(手机用)；设 127.0.0.1 可锁本机
 const MAX_RUNNING = Number(process.env.PAODING_MAX_JOBS || 2); // 同时解析上限，防资源耗尽
+const MAX_IMPORT_RECIPES = Number(process.env.PAODING_MAX_IMPORT || 5000); // 单次导入菜谱上限，防脏/超大备份写爆磁盘
 fs.mkdirSync(RECIPES_DIR, { recursive: true });
 
 let config;
@@ -166,14 +167,21 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && p === "/api/import") {
       let data; try { data = JSON.parse((await readBody(req)).toString("utf8") || "{}"); }
       catch { return sendJSON(res, 400, { error: "无效 JSON" }); }
-      let n = 0;
-      for (const r of (Array.isArray(data.recipes) ? data.recipes : [])) {
-        if (!r || !r.title) continue;
+      const list = Array.isArray(data.recipes) ? data.recipes : [];
+      if (list.length > MAX_IMPORT_RECIPES) {
+        return sendJSON(res, 400, { error: `菜谱数量过多（${list.length}），单次最多导入 ${MAX_IMPORT_RECIPES} 道` });
+      }
+      let n = 0, skipped = 0;
+      for (const r of list) {
+        // 只接受带字符串标题的对象，跳过脏数据，避免把垃圾写进 recipes/。
+        if (!r || typeof r !== "object" || typeof r.title !== "string" || !r.title.trim()) { skipped++; continue; }
         const id = slug(r.id || r.title); const rr = { ...r }; delete rr.id;
         fs.writeFileSync(path.join(RECIPES_DIR, `${id}.json`), JSON.stringify(rr, null, 2)); n++;
       }
-      if (data.userdata && typeof data.userdata === "object") fs.writeFileSync(USERDATA_FILE, JSON.stringify(data.userdata));
-      return sendJSON(res, 200, { ok: true, count: n });
+      if (data.userdata && typeof data.userdata === "object" && !Array.isArray(data.userdata)) {
+        fs.writeFileSync(USERDATA_FILE, JSON.stringify(data.userdata));
+      }
+      return sendJSON(res, 200, { ok: true, count: n, skipped });
     }
 
     // ---- 删除 ----
