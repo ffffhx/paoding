@@ -51,12 +51,15 @@ const escHtml = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;"
 // 只读分享页：任何人打开链接即可看整份菜谱（含每步为什么），无需 App。自包含 HTML。
 function shareHTML(r) {
   const DIFF = { easy: "简单", medium: "中等", hard: "有挑战" };
+  // 图片走公开的图片路由（onerror 移除：备份导入的菜谱可能没带图）
+  const imgSrc = (file) => `${BASE_PATH}/api/recipes/${encodeURIComponent(r.id)}/images/${encodeURIComponent(file)}`;
   const meta = [r.difficulty && DIFF[r.difficulty], r.cuisine, r.total_time_min && `约${r.total_time_min}分钟`, `${(r.steps || []).length}步`].filter(Boolean).join(" · ");
-  const ings = (r.ingredients || []).map((i) => `<li><span>${escHtml(i.name)}${i.note ? `（${escHtml(i.note)}）` : ""}</span><span class="amt">${escHtml(i.amount || "")}</span></li>`).join("");
+  const ings = (r.ingredients || []).map((i) => `<li><span>${i.image ? `<img class="ith" src="${imgSrc(i.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}${escHtml(i.name)}${i.note ? `（${escHtml(i.note)}）` : ""}</span><span class="amt">${escHtml(i.amount || "")}</span></li>`).join("");
   const steps = (r.steps || []).map((s) => {
     const w = s.why || {};
     const why = [w.reason && `<p><b>为什么</b> ${escHtml(w.reason)}</p>`, w.if_not && `<p><b>不这么做</b> ${escHtml(w.if_not)}</p>`, w.cue && `<p class="g"><b>判断到位</b> ${escHtml(w.cue)}</p>`].filter(Boolean).join("");
-    return `<li><div class="st">${escHtml(s.title || "")}</div><div class="ac">${escHtml(s.action || "")}</div>${why ? `<div class="why">${why}</div>` : ""}</li>`;
+    const pic = s.image ? `<img class="simg" src="${imgSrc(s.image)}" alt="" loading="lazy" onerror="this.remove()">` : "";
+    return `<li><div class="st">${escHtml(s.title || "")}</div><div class="ac">${escHtml(s.action || "")}</div>${pic}${why ? `<div class="why">${why}</div>` : ""}</li>`;
   }).join("");
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(r.title)} · 庖丁</title>
@@ -73,6 +76,8 @@ ol.steps li{counter-increment:s;background:var(--card);border:1px solid var(--li
 ol.steps li::before{content:counter(s);position:absolute;left:14px;top:15px;width:24px;height:24px;border-radius:50%;background:var(--ink);color:var(--bg);display:flex;align-items:center;justify-content:center;font-size:14px}
 .st{font-weight:600;font-size:17px}.ac{margin-top:5px}
 .why{margin-top:12px;background:var(--bg);border-radius:10px;padding:11px 13px;font-size:14px}.why p{margin:6px 0}.why b{color:var(--tomato)}.why .g b{color:var(--herb)}
+.simg{display:block;max-width:100%;border-radius:10px;margin-top:10px}
+.ith{width:30px;height:30px;object-fit:cover;border-radius:7px;vertical-align:-9px;margin-right:8px}
 footer{margin-top:30px;text-align:center;color:var(--muted);font-size:13px}footer a{color:var(--tomato);text-decoration:none}
 </style></head><body><div class="wrap">
 <h1>${escHtml(r.title)}</h1><div class="meta">${escHtml(meta)}</div>
@@ -155,11 +160,16 @@ function pushJob(id, ev) {
   if (!j) return;
   for (const res of j.listeners) res.write(`data: ${JSON.stringify(ev)}\n\n`);
 }
-function runJob(id, input, depth, kind = "video", wantVision = false) {
+function runJob(id, input, depth, kind = "video", wantVision = false, wantImages = false) {
   const j = jobs.get(id);
   // 非法/缺省的 depth 归一到配置默认值，避免前端传错值时静默按 balanced 生成。
-  // 视觉按次开关：仅当本次请求要且服务端配置了视觉模型时才启用。
-  const cfg = { ...config, depth: DEPTHS.includes(depth) ? depth : config.depth, vision: wantVision ? config.vision : null };
+  // 视觉/截图按次开关：仅当本次请求要且服务端配置了视觉模型时才启用（截图挑帧也靠视觉模型）。
+  const cfg = {
+    ...config,
+    depth: DEPTHS.includes(depth) ? depth : config.depth,
+    vision: wantVision ? config.vision : null,
+    images: wantImages ? config.vision : null,
+  };
   const onProgress = (p) => { j.progress = p; pushJob(id, { type: "progress", ...p }); };
   // 超时时用它强杀底层卡死的 yt-dlp/ffmpeg/whisper 子进程与 LLM/ASR 请求，而不只是释放槽位。
   const ac = new AbortController();
@@ -227,11 +237,13 @@ const server = http.createServer(async (req, res) => {
   // CORS：App(Capacitor WebView，源为 capacitor://localhost / http://localhost)跨域访问本机后端时放行
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Filename,X-Depth,X-Vision,X-Paoding-Token,Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Filename,X-Depth,X-Vision,X-Images,X-Paoding-Token,Authorization");
   if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
 
+  // 菜谱图片 GET 豁免鉴权：<img> 标签带不了自定义头，且分享页 /r/ 本就无鉴权可见整份菜谱，图片同级公开。
+  const isRecipeImage = req.method === "GET" && /^\/api\/recipes\/[^/]+\/images\/[^/]+$/.test(p);
   // 鉴权：所有 /api/* 都要过（分享页 /r/、静态资源、APK 不拦，PWA 外壳才能加载）。未配 token 时直接放行。
-  if (p.startsWith("/api/") && !authOk(req, url)) return sendJSON(res, 401, { error: "未授权：缺少或错误的 API token" });
+  if (p.startsWith("/api/") && !isRecipeImage && !authOk(req, url)) return sendJSON(res, 401, { error: "未授权：缺少或错误的 API token" });
 
   try {
     // ---- 列表 ----
@@ -266,13 +278,29 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { ok: true, count: n, skipped });
     }
 
+    // ---- 菜谱图片（步骤状态图/食材图，解析时截自原视频）----
+    if (isRecipeImage) {
+      const m = p.match(/^\/api\/recipes\/([^/]+)\/images\/([^/]+)$/);
+      const id = path.basename(decodeURIComponent(m[1]));
+      const file = path.basename(decodeURIComponent(m[2]));
+      // 文件名只可能是解析器写出的 step-N.jpg / ing-N.jpg，白名单校验兼防穿越
+      const fp = /^[\w-]+\.jpg$/.test(file) ? path.join(RECIPES_DIR, id, file) : "";
+      if (!fp || !fs.existsSync(fp)) { res.writeHead(404); return res.end("Not found"); }
+      res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=86400" });
+      return res.end(fs.readFileSync(fp));
+    }
+
     // ---- 删除 ----
     if (req.method === "DELETE" && p.startsWith("/api/recipes/")) {
       const id = decodeURIComponent(p.slice("/api/recipes/".length));
-      const fp = path.join(RECIPES_DIR, `${path.basename(id)}.json`);
-      const mp = path.join(RECIPES_DIR, `${path.basename(id)}.md`);
+      const bid = path.basename(id);
+      const fp = path.join(RECIPES_DIR, `${bid}.json`);
+      const mp = path.join(RECIPES_DIR, `${bid}.md`);
       if (!fs.existsSync(fp)) return sendJSON(res, 404, { error: "菜谱不存在" }); // 不存在别谎报成功
       fs.rmSync(fp, { force: true }); fs.rmSync(mp, { force: true });
+      // 连图片目录一起删（bid 非空且不等于 RECIPES_DIR 本身，防误删整个库）
+      const dir = path.join(RECIPES_DIR, bid);
+      if (bid && dir !== RECIPES_DIR) fs.rmSync(dir, { recursive: true, force: true });
       return sendJSON(res, 200, { ok: true });
     }
 
@@ -295,7 +323,7 @@ const server = http.createServer(async (req, res) => {
       if (!/^https?:\/\//.test(body.url || "")) return sendJSON(res, 400, { error: "请提供 http(s) 链接" });
       if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
       const id = newJob();
-      runJob(id, body.url, body.depth, "video", !!body.vision);
+      runJob(id, body.url, body.depth, "video", !!body.vision, !!body.images);
       return sendJSON(res, 200, { jobId: id });
     }
     // ---- 文字解析：粘贴的文字，或图文/文字帖链接（小红书/公众号/下厨房等无音频来源）----
@@ -313,6 +341,7 @@ const server = http.createServer(async (req, res) => {
       const filename = decodeURIComponent(req.headers["x-filename"] || "video.mp4");
       const depth = req.headers["x-depth"];
       const wantVision = req.headers["x-vision"] === "1";
+      const wantImages = req.headers["x-images"] === "1";
       if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
       // 先同步占住并发 slot，再读上传体：否则「检查→await readBody→newJob」之间的事件循环让步会让
       // 多个并发上传同时通过 runningCount 检查，绕过 MAX_RUNNING、并发拉起过多 ffmpeg/whisper。
@@ -322,7 +351,7 @@ const server = http.createServer(async (req, res) => {
       if (!buf.length) { jobs.delete(id); return sendJSON(res, 400, { error: "空文件" }); }
       const tmp = path.join(os.tmpdir(), `paoding-up-${Date.now()}-${slug(filename)}`);
       await fs.promises.writeFile(tmp, buf); // 异步写，避免大文件同步写阻塞事件循环（卡住其他请求/SSE）
-      runJob(id, tmp, depth, "video", wantVision);
+      runJob(id, tmp, depth, "video", wantVision, wantImages);
       const j = jobs.get(id);
       // 任务结束(或超 1 小时兜底)后清理临时文件，避免卡死时泄漏
       let ticks = 0;

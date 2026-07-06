@@ -48,6 +48,7 @@ _Turn any cooking video into step-by-step instructions that explain the **why** 
 |---|---|
 | 🎬 **智能解析** | 粘链接（B站/抖音/YouTube）或传视频，**实时进度**、可后台化；手机可从别的 App 分享链接直接解析 |
 | 🔎 **读画面字幕** | 可选视觉 OCR（qwen2.5-VL）：抽帧读屏上字幕/画面，**兜住没口播、只有字幕的视频** |
+| 📸 **画面配图** | 从原视频截出**每步的状态图**（“鸡蛋煎到什么样”一眼看到）和**食材/小料特写**（视觉定位+裁剪）；时间戳定位、视觉模型挑帧复核，找不到就不硬配 |
 | 📝 **文字也能解析** | 除视频外：**粘贴小红书图文/公众号/任意文字帖**，或贴链接时自动兜底抓网页文字 |
 | 📱 **双端一套** | 手机装成 App（Capacitor 安卓 APK）+ 电脑桌面响应式；同一后端、改一处两端同步、检测到新版**自动更新**（免重装） |
 | 📖 **跟做模式** | 一步一屏 / 大字 / 屏幕常亮 / 进度条 / 左右滑 / 断点续做 / **本步用到的食材高亮** |
@@ -74,12 +75,14 @@ _Turn any cooking video into step-by-step instructions that explain the **why** 
 视频URL / 本地文件                     图文帖链接 / 粘贴的文字
    → [yt-dlp]  下载音频 + 标题/简介         → [fetch]  抓网页文字(og/正文) 或直接用粘贴内容
    → [ffmpeg]  抽音轨（16k 单声道）                       │
-   → [ASR]     口播转文字(whisper.cpp/云)                 │
+   → [ASR]     口播转文字(whisper.cpp/云，带时间戳)        │
         └──────────────┬──────────────────────────────────┘
                        ↓
-                → [LLM]  整理成结构化菜谱 JSON（食材 qty/unit、火候、时间…）
+                → [LLM]  整理成结构化菜谱 JSON（食材 qty/unit、火候、时间、每步对应的视频时间段…）
                 → [LLM]  逐步生成「为什么」讲解     ← 庖丁的核心差异
-                → JSON + Markdown + 双端跟做（可导出 .cook / JSON-LD）
+                → [视觉] （可选）按每步时间段抽候选帧 → VL 挑最能体现状态的一张；
+                          识别食材画面 → 定位裁特写（找不到就不配，绝不硬凑）
+                → JSON + Markdown(嵌图) + 双端跟做（可导出 .cook / JSON-LD）
 ```
 
 > 视频抓不到时（如小红书无 yt-dlp 抽取器）会**自动改按文字帖**抓网页文字；纯图文/文字帖直接走右侧文字管线。
@@ -93,6 +96,7 @@ _Turn any cooking video into step-by-step instructions that explain the **why** 
 ```bash
 # 大模型（Ollama 自带 OpenAI 兼容接口）
 ollama pull qwen2.5:14b
+ollama pull qwen2.5vl:7b   # 可选：视觉模型（读画面字幕 + 每步状态图/食材图）
 
 # 本地语音转写
 brew install whisper-cpp ffmpeg yt-dlp
@@ -163,6 +167,7 @@ node --test        # 或 npm test
 - [x] 跨设备同步收藏/笔记/评分/购物清单 + 导出备份
 - [x] 菜谱可编辑、结构化用量份量缩放、购物清单智能合并、导出 Cooklang / schema.org
 - [x] 抽帧 + 视觉 OCR（qwen2.5-VL），兜住「没口播只有字幕」的视频（前端「读画面字幕」开关）
+- [x] 画面配图：时间戳定位每步 → 截「到位状态」截图；食材/小料识别 + 视觉定位裁特写（前端「提取画面截图」开关 / CLI `--images`）
 - [x] 本周膳食计划（周日历排菜 → 一键合并购物清单）
 - [ ] 更多真实视频调 prompt，沉淀跨视频「技法库」
 

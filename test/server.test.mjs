@@ -99,3 +99,36 @@ test("兼容 /paoding 子路径首页和 API", async () => {
 test("recipes/ 目录禁止直接静态访问", async () => {
   assert.equal((await fetch(BASE + "/recipes/anything.json")).status, 403);
 });
+
+/* ===== 菜谱截图（步骤状态图/食材图）====== */
+test("菜谱图片路由：读图/404/防穿越/删除连图一起删", async () => {
+  // 造一道带图的菜：json + 同名目录下的 jpg
+  const id = "图测菜";
+  fs.writeFileSync(path.join(recipesDir, `${id}.json`), JSON.stringify({
+    title: id, created_at: "2026-01-01",
+    ingredients: [{ name: "葱", amount: "1根", image: "ing-1.jpg" }],
+    steps: [{ index: 1, title: "切", action: "切葱", image: "step-1.jpg" }],
+  }));
+  const dir = path.join(recipesDir, id);
+  fs.mkdirSync(dir, { recursive: true });
+  const fakeJpg = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x01, 0xff, 0xd9]);
+  fs.writeFileSync(path.join(dir, "step-1.jpg"), fakeJpg);
+
+  // 读图 200 + jpeg 头
+  const ok = await fetch(BASE + `/api/recipes/${encodeURIComponent(id)}/images/step-1.jpg`);
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get("content-type"), "image/jpeg");
+  assert.equal((await ok.arrayBuffer()).byteLength, fakeJpg.length);
+
+  // 不存在的图 404；带路径穿越/非法文件名 404
+  assert.equal((await fetch(BASE + `/api/recipes/${encodeURIComponent(id)}/images/none.jpg`)).status, 404);
+  assert.equal((await fetch(BASE + `/api/recipes/${encodeURIComponent(id)}/images/${encodeURIComponent("../" + id + ".json")}`)).status, 404);
+  assert.equal((await fetch(BASE + `/api/recipes/${encodeURIComponent(id)}/images/x.png`)).status, 404);
+
+  // 子路径部署下同样可用
+  assert.equal((await fetch(BASE + `/paoding/api/recipes/${encodeURIComponent(id)}/images/step-1.jpg`)).status, 200);
+
+  // 删除菜谱 → 图片目录一并清掉
+  assert.equal((await fetch(BASE + `/api/recipes/${encodeURIComponent(id)}`, { method: "DELETE" })).status, 200);
+  assert.ok(!fs.existsSync(dir), "删除菜谱应连图片目录一起删");
+});

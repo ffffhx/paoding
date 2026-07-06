@@ -3,7 +3,9 @@
 const CONF_BADGE = { high: "", medium: " ⚠️ 讲解置信度中", low: " ⚠️ 原视频信息有限，以下为推测" };
 const RISK_BADGE = { high: "🔴 新手雷区", medium: "🟡 需留意", low: "", unknown: "" };
 
-export function toMarkdown(recipe, source) {
+// imagesDir：图片目录名（与 .md 同级）。有步骤/食材截图时嵌进 Markdown。
+export function toMarkdown(recipe, source, imagesDir) {
+  const img = (file, alt) => (imagesDir && file ? `![${alt}](${imagesDir}/${file})` : "");
   const L = [];
   L.push(`# ${recipe.title || "未命名菜谱"}`);
   L.push("");
@@ -16,7 +18,8 @@ export function toMarkdown(recipe, source) {
   L.push("## 食材");
   for (const ing of recipe.ingredients || []) {
     const note = ing.note ? `（${ing.note}）` : "";
-    L.push(`- ${ing.name} · ${ing.amount || "视频未明确"}${note}`);
+    const pic = img(ing.image, ing.name);
+    L.push(`- ${ing.name} · ${ing.amount || "视频未明确"}${note}${pic ? ` ${pic}` : ""}`);
   }
   L.push("");
 
@@ -25,6 +28,8 @@ export function toMarkdown(recipe, source) {
     const risk = RISK_BADGE[s.risk_level] ? `  ${RISK_BADGE[s.risk_level]}` : "";
     L.push(`### 第 ${s.index} 步 · ${s.title || ""}${risk}`);
     L.push(s.action || "");
+    const pic = img(s.image, `第${s.index}步画面`);
+    if (pic) L.push("", pic);
     const p = s.params || {};
     const params = [
       p.heat && `火候：${p.heat}`,

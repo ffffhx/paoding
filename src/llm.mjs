@@ -91,6 +91,11 @@ export async function chatVision(vision, { system, user, images = [], temperatur
 }
 
 // 有些模型即使开了 json_object 也会包 ```json 代码块，做个兜底。
+// 导出供视觉挑图等场景解析模型输出（视觉接口没有 response_format 保证）。
+export function parseModelJSON(text) {
+  return parseJSON(text);
+}
+
 function parseJSON(text) {
   const trimmed = String(text).trim();
   try {

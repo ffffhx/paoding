@@ -264,3 +264,12 @@ html[data-theme="dark"] .hl{color:var(--amber)}
   #app{max-width:1200px}
   #view-recipes.list, #view-skills.list{grid-template-columns:repeat(auto-fill, minmax(340px, 1fr))}
 }
+
+/* ===== 解析截图：步骤状态图 / 食材图 / 封面 / 灯箱 ===== */
+.rcard .rcover{width:86px;height:86px;object-fit:cover;border-radius:12px;flex-shrink:0;cursor:pointer;order:-1}
+.ing .irow .ingthumb{width:36px;height:36px;object-fit:cover;border-radius:9px;flex-shrink:0;cursor:zoom-in}
+.stepmini .mthumb{float:right;width:78px;height:58px;object-fit:cover;border-radius:9px;margin:0 0 6px 10px;cursor:zoom-in}
+#cook .stepimg{display:block;width:100%;max-height:42vh;object-fit:cover;border-radius:14px;margin:12px 0 4px;cursor:zoom-in}
+.lightbox{position:fixed;inset:0;z-index:120;background:rgba(20,17,15,.88);display:flex;align-items:center;justify-content:center;cursor:zoom-out;animation:fadein .15s}
+.lightbox img{max-width:96vw;max-height:92vh;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+@keyframes fadein{from{opacity:0}to{opacity:1}}

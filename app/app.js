@@ -21,8 +21,8 @@ const F = (p, opts = {}) => fetch(api(p), { ...opts, headers: { ...(opts.headers
 const API = {
   list: () => F('/api/recipes').then(r => r.json()),
   del: (id) => F('/api/recipes/' + encodeURIComponent(id), { method: 'DELETE' }),
-  startUrl: (url, depth, vision) => F('/api/parse-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth, vision: !!vision }) }).then(j),
-  startFile: (file, depth, vision) => F('/api/parse-file', { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth, 'X-Vision': vision ? '1' : '0' }, body: file }).then(j),
+  startUrl: (url, depth, vision, images) => F('/api/parse-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth, vision: !!vision, images: !!images }) }).then(j),
+  startFile: (file, depth, vision, images) => F('/api/parse-file', { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth, 'X-Vision': vision ? '1' : '0', 'X-Images': images ? '1' : '0' }, body: file }).then(j),
   startText: (text, depth) => F('/api/parse-text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, depth }) }).then(j),
   ask: (recipeId, stepIndex, question) => F('/api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, question }) }).then(j),
   substitute: (recipeId, ingredient) => F('/api/substitute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, ingredient }) }).then(j),
@@ -136,6 +136,18 @@ function highlightInfo(text) {
   return text.replace(/(\d+(?:\.\d+)?\s*(?:成热|分钟|秒钟|秒|小时|度|℃|克|毫升|斤|两|片|勺|颗|个|瓣|大卡|kcal)|大火|中大火|中火|中小火|小火|微火|金黄|焦黄|微黄|七成热|冒烟)/g, '<b class="hl">$1</b>');
 }
 const richText = (t) => highlightInfo(linkifyTerms(t));
+/* 解析时截取的步骤/食材图片：走公开图片路由（服务端对图片 GET 豁免 token，<img> 无需带头） */
+const recipeImg = (rid, file) => api('/api/recipes/' + encodeURIComponent(rid) + '/images/' + encodeURIComponent(file));
+// 点图放大；onerror 时图会自行移除（备份导入的菜谱可能没带图片文件）
+function showLightbox(src) {
+  const ov = el(`<div class="lightbox"><img src="${esc(src)}" alt=""></div>`);
+  ov.onclick = () => ov.remove();
+  document.body.appendChild(ov);
+}
+// 给容器里所有带 data-zoom 的图挂点击放大
+function wireZoom(root) {
+  root.querySelectorAll('img[data-zoom]').forEach(im => im.onclick = (e) => { e.stopPropagation(); showLightbox(im.src); });
+}
 
 /* ---------- 全局多计时器（跨步骤/后台闹铃）---------- */
 const Timers = {
@@ -229,7 +241,10 @@ function renderRecipes() {
   box.innerHTML = '';
   items.forEach(r => {
     const m = rmeta(r.id), faved = favRecipes.includes(r.id);
+    // 封面：取最后一个有截图的步骤（通常是接近成品的状态图）
+    const cover = (r.steps || []).slice().reverse().find(s => s.image);
     const card = el(`<div class="rcard">
+      ${cover ? `<img class="rcover" src="${esc(recipeImg(r.id, cover.image))}" alt="" loading="lazy" onerror="this.remove()">` : ''}
       <div style="flex:1;min-width:0">
         <h3>${esc(r.title || '未命名')}</h3>
         <div class="meta">
@@ -243,6 +258,7 @@ function renderRecipes() {
       </div>
       <button class="star ${faved ? 'on' : ''}">${faved ? '★' : '☆'}</button></div>`);
     card.querySelector('div').onclick = () => openDetail(r);
+    const cv = card.querySelector('.rcover'); if (cv) cv.onclick = () => openDetail(r);
     card.querySelector('.star').onclick = (e) => { e.stopPropagation(); toggleRecipe(r.id); renderRecipes(); renderFilters(); };
     box.appendChild(card);
   });
@@ -493,6 +509,7 @@ function openDetail(r) {
     p.querySelector('#ingBox').innerHTML = (r.ingredients || []).map((i, idx) => `
       <div class="irow ${checked.has(idx) ? 'checked' : ''}" data-i="${idx}">
         <div class="ck ${checked.has(idx) ? 'on' : ''}">${checked.has(idx) ? '✓' : ''}</div>
+        ${i.image ? `<img class="ingthumb" data-zoom src="${esc(recipeImg(r.id, i.image))}" alt="${esc(i.name)}" loading="lazy" onerror="this.remove()">` : ''}
         <span class="name">${esc(i.name)}${i.note ? `<span class="amt">（${esc(i.note)}）</span>` : ''}</span>
         <span class="amt">${esc(scaledAmount(i, factor) || '视频未明确')}</span>
         <button class="btn ghost sm" data-sub="${esc(i.name)}">替代</button>
@@ -505,13 +522,16 @@ function openDetail(r) {
       };
     });
     p.querySelectorAll('[data-sub]').forEach(b => b.onclick = async (e) => { e.stopPropagation(); await showSubstitute(r, b.dataset.sub); });
+    wireZoom(p.querySelector('#ingBox'));
   }
   renderIng();
 
   const stepsBox = p.querySelector('#steps');
   (r.steps || []).forEach(s => stepsBox.appendChild(el(`<div class="stepmini">
+    ${s.image ? `<img class="mthumb" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="" loading="lazy" onerror="this.remove()">` : ''}
     <div class="t"><span class="n">${s.index}</span>${esc(s.title || '')}${riskBadge(s.risk_level)}</div>
     <div class="a">${esc(s.action || '')}</div></div>`)));
+  wireZoom(stepsBox);
 
   const close = () => p.remove();
   p.querySelector('.back').onclick = close;
@@ -790,6 +810,7 @@ async function openCook(r) {
         <div class="stepno">第 ${s.index} 步${riskBadge(s.risk_level)}</div>
         <h2>${esc(s.title || '')}</h2>
         <div class="action">${richText(s.action || '')}</div>
+        ${s.image ? `<img class="stepimg" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="本步画面" loading="lazy" onerror="this.remove()">` : ''}
         ${paramsHtml(s.params)}${usedIngsHtml(r, s)}${timerHtml(s.params)}
         ${(w.reason || w.if_not || w.cue) ? `<div class="why"><div class="why-hd"><span>🤔 为什么这么做</span>${warn}</div>
           ${w.reason ? `<p><span class="lbl">原理　　</span>${richText(w.reason)}</p>` : ''}
@@ -810,6 +831,7 @@ async function openCook(r) {
     const tb = box.querySelector('#timerBtn'); if (tb) tb.onclick = () => Timers.add(s.title || ('第' + s.index + '步'), parseSeconds(s.params && s.params.time));
     if (SR) box.querySelector('#voiceBtn').onclick = toggleVoice;
     box.querySelectorAll('.term').forEach(t => t.onclick = () => showTerm(t.dataset.term));
+    wireZoom(box);
     renderQA(s);
     if (settings.tts) speak(`第${s.index}步，${s.title}`);
   }
@@ -966,7 +988,7 @@ async function doParse(starter) {
   } catch (e) { cleanup(); toast('解析失败：' + e.message); }
 }
 function stageLabel(stage, message) {
-  const map = { acquire: '下载 & 抽取音频', transcribe: '语音转文字', vision: '看画面读字幕', structure: '整理成步骤', explain: '逐步生成「为什么」', done: '完成' };
+  const map = { acquire: '下载 & 抽取音频', transcribe: '语音转文字', vision: '看画面读字幕', structure: '整理成步骤', explain: '逐步生成「为什么」', images: '截取步骤/食材画面', done: '完成' };
   return map[stage] || message || '处理中…';
 }
 
@@ -1007,7 +1029,7 @@ function init() {
   });
   initTabs();
   $('#depth').onclick = (e) => { const c = e.target.closest('.chip'); if (!c) return; depth = c.dataset.d; syncDepthChips(); };
-  $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast('请粘贴 http(s) 视频链接'); return; } const vision = $('#visChk')?.checked; doParse(() => API.startUrl(u, depth, vision)); $('#url').value = ''; };
+  $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast('请粘贴 http(s) 视频链接'); return; } const vision = $('#visChk')?.checked, images = $('#imgChk')?.checked; doParse(() => API.startUrl(u, depth, vision, images)); $('#url').value = ''; };
   $('#url').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#parseUrl').click(); } });
   $('#fileBtn').onclick = () => $('#file').click();
   $('#textBtn').onclick = async () => {
@@ -1015,7 +1037,7 @@ function init() {
     if (t && t.length >= 10) doParse(() => API.startText(t, depth));
     else if (t) toast('文字太短了，多粘一点');
   };
-  $('#file').onchange = (e) => { const f = e.target.files[0]; if (f) doParse(() => API.startFile(f, depth, $('#visChk')?.checked)); e.target.value = ''; };
+  $('#file').onchange = (e) => { const f = e.target.files[0]; if (f) doParse(() => API.startFile(f, depth, $('#visChk')?.checked, $('#imgChk')?.checked)); e.target.value = ''; };
   $('#search').oninput = (e) => { filter.q = e.target.value.trim(); renderRecipes(); };
   // 系统分享导入：从别的 App 分享 B站/YouTube 链接进庖丁 → 自动填入并解析
   try {
