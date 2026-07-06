@@ -214,7 +214,7 @@ function applyUserData(d) {
   meta = d.meta && typeof d.meta === 'object' && !Array.isArray(d.meta) ? d.meta : {};
   mealPlan = d.mealPlan && typeof d.mealPlan === 'object' && !Array.isArray(d.mealPlan) ? d.mealPlan : {};
   const syncedSettings = syncSettingsFrom(d.settings);
-  if (syncedSettings.lang) { setLanguage(syncedSettings.lang); _storeSet('settings', settings); }
+  if (syncedSettings.lang) { setLanguage(syncedSettings.lang); applyStaticI18n(); _storeSet('settings', settings); }
   _storeSet('favRecipes', favRecipes); _storeSet('favSteps', favSteps); _storeSet('shopping', shopping); _storeSet('meta', meta); _storeSet('mealPlan', mealPlan);
 }
 async function syncUserDataNow(retry = true) {
@@ -251,6 +251,7 @@ async function loadUserData() {
   const remoteSettings = syncSettingsFrom(d.settings);
   if (remoteSettings.lang) {
     setLanguage(remoteSettings.lang);
+    applyStaticI18n();
     _storeSet('settings', settings);
   } else if (settings.lang !== 'zh') {
     needPush = true;
@@ -263,6 +264,20 @@ function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;'
 function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 1800); }
 function $(s, r = document) { return r.querySelector(s); }
 function el(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild; }
+function hasI18nKey(key) {
+  return !!(I18N.dictionaries && (
+    Object.prototype.hasOwnProperty.call(I18N.dictionaries.zh || {}, key) ||
+    Object.prototype.hasOwnProperty.call(I18N.dictionaries.en || {}, key)
+  ));
+}
+function trOr(key, fallback, params) { return hasI18nKey(key) ? tr(key, params) : fallback; }
+function applyStaticI18n(root = document) {
+  document.title = tr('app.title');
+  root.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = tr(node.dataset.i18n); });
+  root.querySelectorAll('[data-i18n-placeholder]').forEach(node => { node.setAttribute('placeholder', tr(node.dataset.i18nPlaceholder)); });
+  root.querySelectorAll('[data-i18n-title]').forEach(node => { node.setAttribute('title', tr(node.dataset.i18nTitle)); });
+  root.querySelectorAll('[data-i18n-aria-label]').forEach(node => { node.setAttribute('aria-label', tr(node.dataset.i18nAriaLabel)); });
+}
 
 const TERMS = ['美拉德反应', '焦糖化', '焯水', '飞水', '滑油', '过油', '糖色', '勾芡', '断生', '锁水', '乳化', '收汁', '爆香', '腌制', '上浆', '挂糊', '养锅', '汆烫', '走油', '回锅', '醒面', '拉丝'];
 function linkifyTerms(text) {
@@ -511,6 +526,7 @@ function hasRecipeWhy(r) {
 }
 function baseServings(r) { const m = String(r.servings || '').match(/(\d+)/); return m ? +m[1] : null; }
 const DIFF = { easy: '简单', medium: '中等', hard: '有挑战' };
+function difficultyLabel(value) { return trOr('difficulty.' + value, DIFF[value] || value); }
 function highlightInfo(text) {
   // 高亮用量/时间/火候/成度等关键信息（在已转义文本上做）
   return text.replace(/(\d+(?:\.\d+)?\s*(?:成热|分钟|秒钟|秒|小时|度|℃|克|毫升|斤|两|片|勺|颗|个|瓣|大卡|kcal)|大火|中大火|中火|中小火|小火|微火|金黄|焦黄|微黄|七成热|冒烟)/g, '<b class="hl">$1</b>');
@@ -691,9 +707,32 @@ function filterAndSortRecipes(list, opts = {}, ctx = {}) {
     return compareRecent(a, b);
   });
 }
+function homeFilterChips(tagValues = []) {
+  return [
+    ['', tr('home.filter.all')],
+    ['__fav', tr('home.filter.favorite')],
+    ['__cooked', tr('home.filter.cooked')],
+    ['__uncooked', tr('home.filter.uncooked')],
+    ['__nutrition', tr('home.filter.nutrition')],
+    ...tagValues.slice(0, 12).map(t => [t, t]),
+  ];
+}
+function recipeListTimeText(totalMin, sort = filter.sort) {
+  if (totalMin != null) return tr('recipe.time.approxMin', { min: totalMin });
+  return sort === 'time' ? tr('recipe.time.unknown') : '';
+}
+function recentJobStatusLabel(j) {
+  return trOr('jobs.status.' + (j?.status || 'unknown'), j?.status || tr('jobs.status.unknown'));
+}
+function recentJobTypeLabel(j) {
+  return trOr('jobs.type.' + (j?.type || 'default'), tr('jobs.type.default'));
+}
+function recentJobTitle(j) {
+  return j?.params?.filename || j?.params?.url || (j?.params?.input ? tr('jobs.title.pastedText') : recentJobTypeLabel(j));
+}
 function renderFilters() {
   const tags = new Set(); recipes.forEach(r => (r.tags || []).forEach(t => tags.add(t)));
-  const chips = [['', '全部'], ['__fav', '★ 已收藏'], ['__cooked', '✓ 做过'], ['__uncooked', '未做过'], ['__nutrition', '有营养信息'], ...[...tags].slice(0, 12).map(t => [t, t])];
+  const chips = homeFilterChips([...tags]);
   $('#filters').innerHTML = chips.map(([v, l]) => `<span class="chip ${filter.tag === v ? 'on' : ''}" data-f="${esc(v)}">${esc(l)}</span>`).join('');
   $('#filters').querySelectorAll('.chip').forEach(c => c.onclick = () => { filter.tag = c.dataset.f; renderFilters(); renderRecipes(); });
 }
@@ -702,23 +741,23 @@ function renderRecipes() {
   const items = filterAndSortRecipes(recipes, filter, { meta, favRecipes });
   box.innerHTML = '';
   renderRecentJobs(box);
-  if (!recipes.length) { box.insertAdjacentHTML('beforeend', '<div class="empty">还没有菜谱。<br>粘贴一个做菜视频链接，或上传本地视频开始解析。</div>'); return; }
-  if (!items.length) { box.insertAdjacentHTML('beforeend', '<div class="empty">没有匹配的菜谱。</div>'); return; }
+  if (!recipes.length) { box.insertAdjacentHTML('beforeend', `<div class="empty">${esc(tr('recipe.empty.title'))}<br>${esc(tr('recipe.empty.help'))}</div>`); return; }
+  if (!items.length) { box.insertAdjacentHTML('beforeend', `<div class="empty">${esc(tr('recipe.noMatch'))}</div>`); return; }
   items.forEach(r => {
     const m = rmeta(r.id), faved = favRecipes.includes(r.id);
     const totalMin = recipeTotalTimeMin(r);
-    const timeText = totalMin != null ? `<span>⏱ 约${esc(totalMin)}分钟</span>` : (filter.sort === 'time' ? '<span>⏱ 未知</span>' : '');
+    const timeText = recipeListTimeText(totalMin) ? `<span>${esc(recipeListTimeText(totalMin))}</span>` : '';
     // 封面：取最后一个有截图的步骤（通常是接近成品的状态图）
     const cover = (r.steps || []).slice().reverse().find(s => s.image);
     const card = el(`<div class="rcard">
       ${cover ? `<img class="rcover" src="${esc(recipeImg(r.id, cover.image))}" alt="" loading="lazy" onerror="this.remove()">` : ''}
       <div style="flex:1;min-width:0">
-        <h3>${esc(r.title || '未命名')}</h3>
+        <h3>${esc(r.title || tr('recipe.untitled'))}</h3>
         <div class="meta">
-          ${r.difficulty ? `<span class="tag diff-${esc(r.difficulty)}">${esc(DIFF[r.difficulty] || r.difficulty)}</span>` : ''}
+          ${r.difficulty ? `<span class="tag diff-${esc(r.difficulty)}">${esc(difficultyLabel(r.difficulty))}</span>` : ''}
           ${timeText}
-          <span>📋 ${(r.steps || []).length}步</span>
-          ${m.cooked ? `<span class="cooked">✓ 做过</span>` : ''}
+          <span>${esc(tr('recipe.steps', { count: (r.steps || []).length }))}</span>
+          ${m.cooked ? `<span class="cooked">${esc(tr('recipe.cooked'))}</span>` : ''}
           ${m.rating ? `<span class="cooked">${'★'.repeat(m.rating)}</span>` : ''}
         </div>
         ${(r.tags || []).length ? `<div class="tags">${r.tags.slice(0, 4).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
@@ -734,17 +773,11 @@ function toggleRecipe(id) { favRecipes = favRecipes.includes(id) ? favRecipes.fi
 function renderRecentJobs(box) {
   const list = (recentJobs || []).filter(Boolean).slice(0, 5);
   if (!list.length) return;
-  const label = (j) => {
-    const map = { queued: '排队中', running: '解析中', done: '已完成', error: '失败', interrupted: '已中断' };
-    return map[j.status] || j.status || '未知';
-  };
-  const type = (j) => ({ url: '链接', text: '文字', file: '文件', images: '图片' }[j.type] || '任务');
-  const title = (j) => j.params?.filename || j.params?.url || (j.params?.input ? '粘贴文字' : type(j));
   const rows = list.map(j => `<div class="job-row ${esc(j.status || '')}">
-    <div><b>${esc(type(j))}</b><span>${esc(title(j))}</span></div>
-    <em>${esc(j.progress?.message || j.error || label(j))}</em>
+    <div><b>${esc(recentJobTypeLabel(j))}</b><span>${esc(recentJobTitle(j))}</span></div>
+    <em>${esc(j.progress?.message || j.error || recentJobStatusLabel(j))}</em>
   </div>`).join('');
-  box.insertAdjacentHTML('beforeend', `<div class="jobs-lite"><div class="jobs-hd">最近任务</div>${rows}</div>`);
+  box.insertAdjacentHTML('beforeend', `<div class="jobs-lite"><div class="jobs-hd">${esc(tr('jobs.header'))}</div>${rows}</div>`);
 }
 
 /* ================= 技法库 ================= */
@@ -1084,7 +1117,7 @@ function renderSettings() {
   box.querySelectorAll('[data-fs]').forEach(b => b.onclick = () => { settings.fontScale = Math.min(1.5, Math.max(0.85, settings.fontScale + (b.dataset.fs === '+' ? 0.1 : -0.1))); saveSettings(); applyTheme(); renderSettings(); });
   box.querySelectorAll('[data-tr]').forEach(b => b.onclick = () => { settings.ttsRate = Math.min(1.6, Math.max(0.6, settings.ttsRate + (b.dataset.tr === '+' ? 0.1 : -0.1))); saveSettings(); renderSettings(); });
   $('#setDepth').querySelectorAll('.chip').forEach(c => c.onclick = () => { settings.depth = c.dataset.d; depth = c.dataset.d; saveSettings(); renderSettings(); syncDepthChips(); });
-  $('#uiLang').onchange = (e) => { setLanguage(e.target.value); saveSettings(); renderAll(); renderSettings(); toast(tr('settings.language.saved')); };
+  $('#uiLang').onchange = (e) => { setLanguage(e.target.value); saveSettings(); applyStaticI18n(); renderAll(); renderSettings(); toast(tr('settings.language.saved')); };
   $('#apiBase').onchange = (e) => { settings.apiBase = e.target.value.trim().replace(/\/$/, ''); saveSettings(); toast('已保存后端地址'); refresh(); };
   $('#apiToken').onchange = (e) => { settings.apiToken = e.target.value.trim(); saveSettings(); toast('已保存 API Token'); refresh(); };
   $('#btnExport').onclick = exportData;
@@ -1731,12 +1764,12 @@ function confirmModal(title, okText = '确定') {
   });
 }
 async function doParse(starter) {
-  const ov = openModal(`<div class="pct" id="pct">0%</div><div class="stage" id="stage">发起解析…</div>
+  const ov = openModal(`<div class="pct" id="pct">0%</div><div class="stage" id="stage">${esc(tr('parse.starting'))}</div>
     <div class="pbar"><div id="bar"></div></div>
-    <p style="color:var(--muted);font-size:12px">解析约需 1–3 分钟，别关页面</p>
-    <div class="mrow"><button class="btn ghost" id="pMin">放到后台继续</button></div>`);
+    <p style="color:var(--muted);font-size:12px">${esc(tr('parse.keepOpen'))}</p>
+    <div class="mrow"><button class="btn ghost" id="pMin">${esc(tr('parse.background'))}</button></div>`);
   // 「放到后台」：把进度收成一个悬浮小药丸，先去浏览别的菜谱，点药丸再展开
-  let pill = null, lastPct = 0, lastStage = '解析中';
+  let pill = null, lastPct = 0, lastStage = tr('parse.running');
   const showPill = () => {
     if (pill) return;
     pill = el(`<div class="parse-pill">🍳 <span class="ps">${esc(lastStage)}</span> <b>${lastPct}%</b></div>`);
@@ -1812,7 +1845,7 @@ function initTabs() {
   document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x.classList.contains('on') ? 'true' : 'false'));
 }
 function init() {
-  applyTheme(); syncDepthChips();
+  applyTheme(); applyStaticI18n(); syncDepthChips();
   Timers.restore(); // 恢复上次未结束的计时（刷新/被系统回收后不丢）
   // 无障碍：让 role=button/tab 的非原生控件(标签栏/深度选择等)支持键盘 Enter/Space 触发，而不只是鼠标/触屏点击。
   document.addEventListener('keydown', (e) => {

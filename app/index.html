@@ -15,46 +15,46 @@
 <body>
 <div id="app">
   <header>
-    <div class="brand"><h1>庖丁</h1><span class="sub">解剖每一道菜的为什么</span></div>
+    <div class="brand"><h1 data-i18n="app.name">庖丁</h1><span class="sub" data-i18n="app.subtitle">解剖每一道菜的为什么</span></div>
   </header>
 
   <div class="parsebar">
     <div class="row">
-      <input id="url" type="text" inputmode="url" placeholder="粘贴 B站 / 抖音 / 小红书 / YouTube 链接" />
-      <button class="btn" id="parseUrl">解析</button>
+      <input id="url" type="text" inputmode="url" placeholder="粘贴 B站 / 抖音 / 小红书 / YouTube 链接" data-i18n-placeholder="home.url.placeholder" />
+      <button class="btn" id="parseUrl" data-i18n="home.parse">解析</button>
     </div>
     <div class="depth" id="depth">
-      <span class="depth-lbl">讲解深度</span>
-      <span class="chip" data-d="beginner" role="button" tabindex="0" title="每步讲得更细、更基础，适合厨房新手">新手向</span>
-      <span class="chip on" data-d="balanced" role="button" tabindex="0" title="通俗易懂、详略得当（推荐）">通俗（默认）</span>
-      <span class="chip" data-d="advanced" role="button" tabindex="0" title="讲透火候/食材科学等原理，适合想深入的人">进阶原理</span>
+      <span class="depth-lbl" data-i18n="home.depth.label">讲解深度</span>
+      <span class="chip" data-d="beginner" role="button" tabindex="0" title="每步讲得更细、更基础，适合厨房新手" data-i18n="home.depth.beginner" data-i18n-title="home.depth.beginner.title">新手向</span>
+      <span class="chip on" data-d="balanced" role="button" tabindex="0" title="通俗易懂、详略得当（推荐）" data-i18n="home.depth.balanced" data-i18n-title="home.depth.balanced.title">通俗（默认）</span>
+      <span class="chip" data-d="advanced" role="button" tabindex="0" title="讲透火候/食材科学等原理，适合想深入的人" data-i18n="home.depth.advanced" data-i18n-title="home.depth.advanced.title">进阶原理</span>
     </div>
-    <label class="vischk"><input type="checkbox" id="visChk"> 🔎 读画面字幕 <span class="muted">（视频没口播/字幕多时开，会下整段视频、较慢）</span></label>
-    <label class="vischk"><input type="checkbox" id="imgChk" checked> 📸 提取画面截图 <span class="muted">（每步状态图 + 食材图，需服务端配视觉模型，会下整段视频、较慢）</span></label>
-    <div class="hint">也可以 <button id="fileBtn" class="linklike">上传本地视频</button>、<button id="imageBtn" class="linklike">拍照/图片导入</button> 或 <button id="textBtn" class="linklike">粘贴文字菜谱</button>（菜谱书/手写菜谱/小红书图文适用）· 解析约 1–3 分钟</div>
+    <label class="vischk"><input type="checkbox" id="visChk"> <span data-i18n="home.vision.label">🔎 读画面字幕</span> <span class="muted" data-i18n="home.vision.desc">（视频没口播/字幕多时开，会下整段视频、较慢）</span></label>
+    <label class="vischk"><input type="checkbox" id="imgChk" checked> <span data-i18n="home.images.label">📸 提取画面截图</span> <span class="muted" data-i18n="home.images.desc">（每步状态图 + 食材图，需服务端配视觉模型，会下整段视频、较慢）</span></label>
+    <div class="hint"><span data-i18n="home.hint.prefix">也可以 </span><button id="fileBtn" class="linklike" data-i18n="home.hint.file">上传本地视频</button><span data-i18n="home.hint.sep">、</span><button id="imageBtn" class="linklike" data-i18n="home.hint.image">拍照/图片导入</button><span data-i18n="home.hint.or"> 或 </span><button id="textBtn" class="linklike" data-i18n="home.hint.text">粘贴文字菜谱</button><span data-i18n="home.hint.suffix">（菜谱书/手写菜谱/小红书图文适用）· 解析约 1–3 分钟</span></div>
     <input id="file" type="file" accept="video/*,audio/*" class="hidden" />
     <input id="imageFile" type="file" accept="image/*" capture="environment" multiple class="hidden" />
   </div>
 
   <div class="tabs" role="tablist">
-    <div class="tab on" data-tab="recipes" role="tab" tabindex="0">菜谱</div>
-    <div class="tab" data-tab="plan" role="tab" tabindex="0">本周计划</div>
-    <div class="tab" data-tab="techniques" role="tab" tabindex="0">技法</div>
-    <div class="tab" data-tab="shopping" role="tab" tabindex="0">购物清单<span id="tabShopBadge"></span></div>
-    <div class="tab" data-tab="skills" role="tab" tabindex="0">技巧收藏<span id="tabSkillsBadge"></span></div>
-    <div class="tab" data-tab="settings" role="tab" tabindex="0">设置</div>
+    <div class="tab on" data-tab="recipes" role="tab" tabindex="0" data-i18n="tabs.recipes">菜谱</div>
+    <div class="tab" data-tab="plan" role="tab" tabindex="0" data-i18n="tabs.plan">本周计划</div>
+    <div class="tab" data-tab="techniques" role="tab" tabindex="0" data-i18n="tabs.techniques">技法</div>
+    <div class="tab" data-tab="shopping" role="tab" tabindex="0"><span data-i18n="tabs.shopping">购物清单</span><span id="tabShopBadge"></span></div>
+    <div class="tab" data-tab="skills" role="tab" tabindex="0"><span data-i18n="tabs.skills">技巧收藏</span><span id="tabSkillsBadge"></span></div>
+    <div class="tab" data-tab="settings" role="tab" tabindex="0" data-i18n="tabs.settings">设置</div>
   </div>
 
   <div class="searchrow" id="searchrow">
-    <input id="search" type="search" placeholder="搜索菜名 / 食材 / 标签" />
+    <input id="search" type="search" placeholder="搜索菜名 / 食材 / 标签" data-i18n-placeholder="home.search.placeholder" />
   </div>
   <div class="recipe-tools" id="recipeTools">
-    <input id="ingredientFilter" type="text" placeholder="食材：鸡蛋,番茄" />
-    <select id="sortRecipe" aria-label="菜谱排序">
-      <option value="recent">最近添加</option>
-      <option value="rating">评分</option>
-      <option value="time">总时长</option>
-      <option value="name">名称</option>
+    <input id="ingredientFilter" type="text" placeholder="食材：鸡蛋,番茄" data-i18n-placeholder="home.ingredient.placeholder" />
+    <select id="sortRecipe" aria-label="菜谱排序" data-i18n-aria-label="home.sort.aria">
+      <option value="recent" data-i18n="home.sort.recent">最近添加</option>
+      <option value="rating" data-i18n="home.sort.rating">评分</option>
+      <option value="time" data-i18n="home.sort.time">总时长</option>
+      <option value="name" data-i18n="home.sort.name">名称</option>
     </select>
   </div>
   <div class="filters" id="filters"></div>

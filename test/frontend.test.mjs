@@ -54,6 +54,25 @@ test("settingsLanguageRowHtml 切 en 后关键 UI 字符串是英文", () => {
   app.setLanguage("zh");
 });
 
+test("首页/列表文案切 en 后使用英文标签", () => {
+  app.setLanguage("en");
+  assert.deepEqual(Array.from(app.homeFilterChips(["家常"]).slice(0, 6).map((x) => x[1])), [
+    "All",
+    "★ Favorited",
+    "✓ Cooked",
+    "Not cooked",
+    "Has nutrition",
+    "家常",
+  ]);
+  assert.equal(app.recipeListTimeText(15), "⏱ about 15 min");
+  assert.equal(app.recipeListTimeText(null, "time"), "⏱ unknown");
+  assert.equal(app.difficultyLabel("hard"), "Challenging");
+  assert.equal(app.recentJobTypeLabel({ type: "images" }), "Images");
+  assert.equal(app.recentJobStatusLabel({ status: "interrupted" }), "Interrupted");
+  assert.equal(app.recentJobTitle({ type: "text", params: { input: "番茄炒蛋" } }), "Pasted text");
+  app.setLanguage("zh");
+});
+
 test("scaledAmount 结构化优先，文本兜底", () => {
   assert.equal(app.scaledAmount({ qty: 3, unit: "个" }, 2), "6个");
   assert.equal(app.scaledAmount({ qty: 1, unit: "勺" }, 1.5), "1.5勺");
