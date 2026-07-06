@@ -166,6 +166,10 @@ docker compose --profile ollama up --build paoding
 
 默认监听局域网地址时会强制开启 API token；在 `.env` 设置 `PAODING_API_TOKEN`，再到 App「设置 → API Token」填同一个值。只在本机浏览器使用可设 `PAODING_HOST=127.0.0.1` 跳过强制鉴权。CORS 默认只允许同源与 Capacitor，跨域自托管前端可用 `PAODING_CORS_ORIGINS=https://你的域名` 放行。
 
+### 多用户（household）
+
+家庭共用一个后端时，可以用 `PAODING_API_TOKENS=alice:token1,bob:token2` 配多个用户 token。每个人在自己的 App 设置页填对应 token：菜谱库仍全局共享，收藏、笔记、评分、购物清单、本周计划和最近任务按用户隔离。只设置旧的 `PAODING_API_TOKEN` 时仍是单用户模式，继续使用原来的 `paoding-userdata.json` 文件。
+
 > B站等平台反爬（HTTP 412）：`.env` 里设 `PAODING_COOKIES_FROM_BROWSER=chrome`，借用浏览器已登录的 cookie 即可。
 
 解析服务默认同时跑 2 个任务，最多排队 10 个；可用 `PAODING_MAX_JOBS` 和 `PAODING_MAX_QUEUE` 调整。任务状态会写入 `jobs/`，服务重启后正在执行的任务会标为「已中断」，首页「最近任务」可看到并重新发起。

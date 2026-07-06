@@ -38,6 +38,8 @@ before(async () => {
     PAODING_RECIPES_DIR: recipesDir,
     PAODING_USERDATA_FILE: userFile,
     PAODING_MAX_JOBS: "0",
+    PAODING_API_TOKEN: "",
+    PAODING_API_TOKENS: "",
     PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL || "http://localhost:11434/v1",
     PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY || "test",
   });
@@ -111,18 +113,34 @@ class MockRes {
   }
 }
 
-async function request(input, opts = {}) {
-  const u = new URL(input, BASE);
-  const headers = { host: `127.0.0.1:${PORT}`, ...(opts.headers || {}) };
+async function requestWith(handler, input, opts = {}, port = PORT) {
+  const u = new URL(input, `http://127.0.0.1:${port}`);
+  const headers = { host: `127.0.0.1:${port}`, ...(opts.headers || {}) };
   const req = new MockReq(opts.method || "GET", u.pathname + u.search, headers);
   const res = new MockRes();
-  const handling = handleRequest(req, res);
+  const handling = handler(req, res);
   process.nextTick(() => {
     if (opts.body != null) req.emit("data", Buffer.isBuffer(opts.body) ? opts.body : Buffer.from(String(opts.body)));
     req.emit("end");
   });
   await Promise.all([Promise.resolve(handling), res.done]);
   return res;
+}
+async function request(input, opts = {}) {
+  return requestWith(handleRequest, input, opts, PORT);
+}
+async function importServerWithEnv(env) {
+  const keys = Object.keys(env);
+  const old = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  Object.assign(process.env, env);
+  try {
+    return await import(`../app/server.mjs?test=${Date.now()}-${Math.random()}`);
+  } finally {
+    for (const k of keys) {
+      if (old[k] === undefined) delete process.env[k];
+      else process.env[k] = old[k];
+    }
+  }
 }
 
 test("空库 GET /api/recipes 返回 []", async () => {
@@ -163,6 +181,109 @@ test("userdata 空→PUT→回读", async () => {
   const conflict = await stale.json();
   assert.equal(conflict.userdata.rev, 1);
   assert.deepEqual(conflict.userdata.favRecipes, ["x"]);
+});
+
+test("PAODING_API_TOKENS 双用户 userdata 与最近任务互不串扰", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-multi-"));
+  try {
+    const port = 41990;
+    const userFile2 = path.join(root, "paoding-userdata.json");
+    const recipes2 = path.join(root, "recipes");
+    fs.mkdirSync(recipes2, { recursive: true });
+    const { handleRequest: h } = await importServerWithEnv({
+      PAODING_PORT: String(port),
+      PAODING_HOST: "127.0.0.1",
+      PAODING_RECIPES_DIR: recipes2,
+      PAODING_USERDATA_FILE: userFile2,
+      PAODING_MAX_JOBS: "0",
+      PAODING_API_TOKEN: "",
+      PAODING_API_TOKENS: "alice:tokA,bob:tokB",
+      PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL || "http://localhost:11434/v1",
+      PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY || "test",
+    });
+    const req = (token, input, opts = {}) => requestWith(h, input, {
+      ...opts,
+      headers: { ...(opts.headers || {}), "X-Paoding-Token": token },
+    }, port);
+
+    assert.equal((await requestWith(h, "/api/userdata", {}, port)).status, 401);
+    assert.equal((await req("tokA", "/api/userdata", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rev: 0, favRecipes: ["alice"] }) })).status, 200);
+    assert.equal((await req("tokB", "/api/userdata", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rev: 0, favRecipes: ["bob"] }) })).status, 200);
+    assert.deepEqual((await (await req("tokA", "/api/userdata")).json()).favRecipes, ["alice"]);
+    assert.deepEqual((await (await req("tokB", "/api/userdata")).json()).favRecipes, ["bob"]);
+    assert.ok(fs.existsSync(path.join(root, "paoding-userdata-alice.json")));
+    assert.ok(fs.existsSync(path.join(root, "paoding-userdata-bob.json")));
+
+    const aliceJob = await (await req("tokA", "/api/parse-file", { method: "POST", headers: { "X-Filename": encodeURIComponent("a.mp4") }, body: Buffer.from("a") })).json();
+    const bobJob = await (await req("tokB", "/api/parse-file", { method: "POST", headers: { "X-Filename": encodeURIComponent("b.mp4") }, body: Buffer.from("b") })).json();
+    const aliceJobs = await (await req("tokA", "/api/jobs")).json();
+    const bobJobs = await (await req("tokB", "/api/jobs")).json();
+    assert.deepEqual(aliceJobs.map(j => j.id), [aliceJob.jobId]);
+    assert.deepEqual(bobJobs.map(j => j.id), [bobJob.jobId]);
+    assert.equal(aliceJobs[0].params._user, undefined);
+    assert.equal(bobJobs[0].params._user, undefined);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("PAODING_API_TOKEN 旧单 token 配置沿用原 userdata 文件", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-legacy-"));
+  try {
+    const port = 41991;
+    const userFile2 = path.join(root, "ud.json");
+    const recipes2 = path.join(root, "recipes");
+    fs.mkdirSync(recipes2, { recursive: true });
+    const { handleRequest: h } = await importServerWithEnv({
+      PAODING_PORT: String(port),
+      PAODING_HOST: "127.0.0.1",
+      PAODING_RECIPES_DIR: recipes2,
+      PAODING_USERDATA_FILE: userFile2,
+      PAODING_API_TOKEN: "legacy-token",
+      PAODING_API_TOKENS: "",
+      PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL || "http://localhost:11434/v1",
+      PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY || "test",
+    });
+    const req = (token, input, opts = {}) => requestWith(h, input, {
+      ...opts,
+      headers: { ...(opts.headers || {}), "X-Paoding-Token": token },
+    }, port);
+    assert.equal((await requestWith(h, "/api/userdata", {}, port)).status, 401);
+    const put = await req("legacy-token", "/api/userdata", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rev: 0, favRecipes: ["x"] }) });
+    assert.equal(put.status, 200);
+    assert.deepEqual(await (await req("legacy-token", "/api/userdata")).json(), { rev: 1, favRecipes: ["x"] });
+    assert.ok(fs.existsSync(userFile2));
+    assert.ok(!fs.existsSync(path.join(root, "ud-default.json")));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("限流维度包含用户", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-limit-user-"));
+  try {
+    const port = 41992;
+    const recipes2 = path.join(root, "recipes");
+    fs.mkdirSync(recipes2, { recursive: true });
+    const { handleRequest: h } = await importServerWithEnv({
+      PAODING_PORT: String(port),
+      PAODING_HOST: "127.0.0.1",
+      PAODING_RECIPES_DIR: recipes2,
+      PAODING_USERDATA_FILE: path.join(root, "ud.json"),
+      PAODING_API_TOKEN: "",
+      PAODING_API_TOKENS: "alice:tokA,bob:tokB",
+      PAODING_LLM_RATE_LIMIT_PER_MIN: "1",
+      PAODING_LLM_RATE_LIMIT_WINDOW_MS: "60000",
+      PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL || "http://localhost:11434/v1",
+      PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY || "test",
+    });
+    const req = (token) => requestWith(h, "/api/techniques", { headers: { "X-Paoding-Token": token } }, port);
+    assert.equal((await req("tokA")).status, 200);
+    assert.equal((await req("tokA")).status, 429);
+    assert.equal((await req("tokB")).status, 200);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("import 写入→列表可见→分享页→删除", async () => {
@@ -328,6 +449,27 @@ test("非回环监听未配置 token 时拒绝启动", async () => {
   assert.notEqual(code, 0);
   assert.match(err, /PAODING_API_TOKEN/);
   assert.match(err, /PAODING_ALLOW_INSECURE=1/);
+});
+
+test("PAODING_API_TOKENS 拒绝非法用户名", async () => {
+  const bad = spawn("node", [path.join(ROOT, "app/server.mjs")], {
+    env: {
+      ...process.env,
+      PAODING_PORT: "41993",
+      PAODING_HOST: "127.0.0.1",
+      PAODING_API_TOKEN: "",
+      PAODING_API_TOKENS: "bad/name:tok",
+      PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL || "http://localhost:11434/v1",
+      PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY || "test",
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let err = "";
+  bad.stderr.on("data", (b) => { err += b; });
+  const [code] = await once(bad, "exit");
+  assert.notEqual(code, 0);
+  assert.match(err, /PAODING_API_TOKENS/);
+  assert.match(err, /非法用户/);
 });
 
 /* ===== 菜谱截图（步骤状态图/食材图）====== */
