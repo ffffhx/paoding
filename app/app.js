@@ -1442,11 +1442,16 @@ function openExport(r, factor) {
       <button class="btn ghost" id="xJson">⬇ 下载 schema.org JSON-LD</button>
     </div>
     <div class="mrow"><button class="btn" id="xClose">关闭</button></div>`, 'left');
-  ov.querySelector('#xLink').onclick = () => { const url = location.origin + BASE + '/r/' + encodeURIComponent(r.id); (navigator.clipboard?.writeText(url)); toast('已复制分享链接'); };
+  ov.querySelector('#xLink').onclick = () => { navigator.clipboard?.writeText(shareRecipeUrl(r.id)); toast('已复制分享链接'); };
   ov.querySelector('#xMd').onclick = () => { navigator.clipboard?.writeText(recipeToText(r, factor)); toast('已复制菜谱文字'); };
   ov.querySelector('#xCook').onclick = () => { downloadFile(safe + '.cook', recipeToCooklang(r), 'text/plain;charset=utf-8'); toast('已下载 .cook'); };
   ov.querySelector('#xJson').onclick = () => { downloadFile(safe + '.jsonld', JSON.stringify(recipeToSchemaOrg(r), null, 2), 'application/ld+json'); toast('已下载 JSON-LD'); };
   ov.querySelector('#xClose').onclick = () => ov.remove();
+}
+function shareRecipeUrl(recipeId, { apiBase = settings.apiBase, origin = location.origin, base = BASE } = {}) {
+  const root = String(apiBase || origin || '').replace(/\/+$/, '');
+  const prefix = apiBase ? '' : String(base || '').replace(/\/+$/, '');
+  return `${root}${prefix}/r/${encodeURIComponent(recipeId)}`;
 }
 
 /* ================= 跟做模式 ================= */

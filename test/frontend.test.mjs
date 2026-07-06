@@ -200,6 +200,12 @@ test("sourceSegmentUrl 按平台生成原视频时间戳链接", () => {
   assert.equal(app.sourceSegmentUrl("", [1, 2]), "");
 });
 
+test("shareRecipeUrl 优先使用远程后端地址", () => {
+  assert.equal(app.shareRecipeUrl("红烧肉", { origin: "https://cook.example", base: "" }), "https://cook.example/r/%E7%BA%A2%E7%83%A7%E8%82%89");
+  assert.equal(app.shareRecipeUrl("红烧肉", { origin: "https://cook.example", base: "/paoding" }), "https://cook.example/paoding/r/%E7%BA%A2%E7%83%A7%E8%82%89");
+  assert.equal(app.shareRecipeUrl("红烧肉", { apiBase: "http://192.168.1.5:4177/paoding/", origin: "capacitor://localhost", base: "" }), "http://192.168.1.5:4177/paoding/r/%E7%BA%A2%E7%83%A7%E8%82%89");
+});
+
 test("filterAndSortRecipes 支持食材 AND 筛选、快捷筛选和排序", () => {
   const list = [
     { id: "a", title: "番茄炒蛋", created_at: "2026-01-03T00:00:00.000Z", total_time: "PT15M", ingredients: [{ name: "番茄" }, { name: "鸡蛋" }], nutrition: { per_serving: { calories_kcal: 1 } } },
