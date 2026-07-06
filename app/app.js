@@ -377,6 +377,44 @@ function scaledAmount(i, f) {
   if (i && Number.isFinite(i.qty)) return (Math.round(i.qty * f * 100) / 100) + (i.unit || '');
   return scaleAmount(i && i.amount, f);
 }
+const UNIT_REFERENCES = [
+  { unit: '勺', aliases: ['勺', '瓷勺', '汤匙', '大勺', 'tbsp', 'tablespoon'], lines: ['1瓷勺/汤匙≈15毫升', '1茶匙/小勺≈5毫升', '3茶匙≈1汤匙'] },
+  { unit: '克', aliases: ['克', 'g', 'gram'], lines: ['1两=50克', '1斤=500克', '100克≈2两'] },
+  { unit: '两', aliases: ['两'], lines: ['1两=50克', '半斤=5两=250克', '2两=100克'] },
+  { unit: '毫升', aliases: ['毫升', 'ml', 'milliliter'], lines: ['1毫升水≈1克', '15毫升≈1瓷勺', '240毫升≈1量杯'] },
+  { unit: '杯', aliases: ['杯', '量杯', 'cup'], lines: ['1量杯≈240毫升', '1/2杯≈120毫升', '1/4杯≈60毫升'] },
+];
+function reEsc(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function unitAliasInText(text, alias) {
+  const a = String(alias || '').toLowerCase();
+  if (!a) return false;
+  if (/^[a-z]+$/.test(a)) return new RegExp(`(^|[^a-z])${reEsc(a)}([^a-z]|$)`).test(text);
+  if (a === '两') return /(?:^|[\s,，;；]|[0-9０-９一二三四五六七八九十半]\s*)两(?!\s*(?:勺|匙|个|颗|片|瓣|根|只|块|杯|碗|盘|半|克|斤|g|毫升|毫|升|ml))/.test(text);
+  return text.includes(a);
+}
+function unitReferencesFor(text) {
+  const s = String(text || '').toLowerCase();
+  if (!s.trim()) return [];
+  return UNIT_REFERENCES.filter(ref => ref.aliases.some(alias => unitAliasInText(s, alias)));
+}
+function unitLookupText(text) {
+  return unitReferencesFor(text).map(ref => `${ref.unit}：${ref.lines.join('；')}`).join('\n');
+}
+function unitTipButtonHtml(query) {
+  return unitReferencesFor(query).length ? `<button class="unit-tip" title="单位速查" data-unit-tip="${esc(query)}">≈</button>` : '';
+}
+function unitReferencePopHtml(query) {
+  const refs = unitReferencesFor(query);
+  if (!refs.length) return '';
+  return `<div class="unit-pop" role="note">
+    <button class="unit-pop-x" title="关闭">×</button>
+    <h4>单位速查</h4>
+    ${refs.map(ref => `<p><b>${esc(ref.unit)}</b>${ref.lines.map(line => `<span>${esc(line)}</span>`).join('')}</p>`).join('')}
+  </div>`;
+}
+function closeUnitBubbles(root = document) {
+  root.querySelectorAll('.unit-pop').forEach(node => node.remove());
+}
 function scaledNutritionValue(v, f) {
   return Number.isFinite(v) ? Math.round(v * (f || 1) * 10) / 10 : null;
 }
@@ -1118,25 +1156,39 @@ function openDetail(r, focusStepIndex = null) {
 
   function renderIng() {
     const checked = new Set(m.ingChecked || []);
-    p.querySelector('#ingBox').innerHTML = (r.ingredients || []).map((i, idx) => `
+    p.querySelector('#ingBox').innerHTML = (r.ingredients || []).map((i, idx) => {
+      const amount = scaledAmount(i, factor) || '视频未明确';
+      return `
       <div class="irow ${checked.has(idx) ? 'checked' : ''}" data-i="${idx}">
         <div class="ck ${checked.has(idx) ? 'on' : ''}">${checked.has(idx) ? '✓' : ''}</div>
         ${i.image ? `<img class="ingthumb" data-zoom src="${esc(recipeImg(r.id, i.image))}" alt="${esc(i.name)}" loading="lazy" onerror="this.remove()">` : ''}
         <span class="name">${esc(i.name)}${i.note ? `<span class="amt">（${esc(i.note)}）</span>` : ''}</span>
-        <span class="amt">${esc(scaledAmount(i, factor) || '视频未明确')}</span>
+        <span class="amt">${esc(amount)}${unitTipButtonHtml(`${amount} ${i.unit || ''}`)}</span>
         <button class="btn ghost sm" data-sub="${esc(i.name)}">替代</button>
-      </div>`).join('') || '<div class="irow"><span class="name">视频未列出食材</span></div>';
+      </div>`;
+    }).join('') || '<div class="irow"><span class="name">视频未列出食材</span></div>';
     p.querySelectorAll('#ingBox .irow').forEach(row => {
       row.onclick = (e) => {
-        if (e.target.dataset.sub !== undefined) return;
+        if (e.target.dataset.sub !== undefined || e.target.closest('.unit-tip,.unit-pop')) return;
         const idx = +row.dataset.i; const set = new Set(m.ingChecked || []);
         set.has(idx) ? set.delete(idx) : set.add(idx); m.ingChecked = [...set]; saveMeta(); renderIng();
       };
     });
     p.querySelectorAll('[data-sub]').forEach(b => b.onclick = async (e) => { e.stopPropagation(); await showSubstitute(r, b.dataset.sub); });
+    p.querySelectorAll('[data-unit-tip]').forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      const row = b.closest('.irow');
+      const html = unitReferencePopHtml(b.dataset.unitTip);
+      const existed = row && row.querySelector('.unit-pop');
+      closeUnitBubbles(p);
+      if (!row || existed || !html) return;
+      row.appendChild(el(html));
+      row.querySelector('.unit-pop-x').onclick = (ev) => { ev.stopPropagation(); closeUnitBubbles(p); };
+    });
     wireZoom(p.querySelector('#ingBox'));
   }
   renderIng();
+  p.addEventListener('click', (e) => { if (!e.target.closest('.unit-tip,.unit-pop')) closeUnitBubbles(p); });
 
   const stepsBox = p.querySelector('#steps');
   (r.steps || []).forEach(s => {

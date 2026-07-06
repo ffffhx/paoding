@@ -40,6 +40,25 @@ test("scaledAmount 结构化优先，文本兜底", () => {
   assert.equal(app.scaledAmount({ amount: "500克" }, 2), "1000克");
 });
 
+test("unitReferencesFor 匹配中餐常用单位并避免英文误命中", () => {
+  const units = app.unitReferencesFor("生抽 2勺，水 100ml，肉 2两").map(ref => ref.unit);
+  assert.deepEqual(Array.from(units), ["勺", "两", "毫升"]);
+  assert.equal(app.unitReferencesFor("白糖 50g")[0].unit, "克");
+  assert.deepEqual(Array.from(app.unitReferencesFor("生抽 两勺").map(ref => ref.unit)), ["勺"]);
+  assert.deepEqual(Array.from(app.unitReferencesFor("盐 两克").map(ref => ref.unit)), ["克"]);
+  assert.deepEqual(Array.from(app.unitReferencesFor("水 两毫升").map(ref => ref.unit)), ["毫升"]);
+  assert.deepEqual(Array.from(app.unitReferencesFor("egg").map(ref => ref.unit)), []);
+});
+
+test("unitLookupText 输出静态换算速查文本", () => {
+  const text = app.unitLookupText("15毫升 1瓷勺");
+  assert.ok(text.includes("毫升："));
+  assert.ok(text.includes("勺："));
+  assert.ok(text.includes("1瓷勺/汤匙≈15毫升"));
+  assert.ok(text.includes("1毫升水≈1克"));
+  assert.equal(app.unitLookupText("适量"), "");
+});
+
 test("mergeAmounts 同单位求和，异单位并列", () => {
   assert.equal(app.mergeAmounts(["500克", "300克"]), "800克");
   assert.equal(app.mergeAmounts(["3勺", "2勺"]), "5勺");
