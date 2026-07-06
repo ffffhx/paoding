@@ -263,10 +263,21 @@ function mergeAmounts(amts) {
   const parts = Object.entries(byUnit).map(([u, v]) => (Math.round(v * 100) / 100) + u);
   return [...parts, ...others].join(' + ');
 }
+function shopManualAdd() {
+  const inp = $('#shopAdd'); if (!inp) return;
+  const v = inp.value.trim(); if (!v) return;
+  shopping.push({ name: v, amount: '', from: '手动添加', checked: false });
+  store.set('shopping', shopping); updateBadges(); renderShopping();
+}
 function renderShopping() {
   const box = $('#view-shopping');
-  const head = `<div class="searchrow" style="padding:4px 0 12px"><button class="btn ghost sm" id="shopClear">清除已勾选</button><button class="btn ghost sm" id="shopAll">清空</button></div>`;
-  if (!shopping.length) { box.innerHTML = '<div class="empty">购物清单是空的。<br>在菜谱详情里点「加入购物清单」，食材就会汇总到这里。</div>'; return; }
+  const head = `<div class="searchrow" style="padding:4px 0 8px;gap:8px"><input type="text" id="shopAdd" placeholder="手动加一项，如 酱油" style="flex:1;min-width:0"><button class="btn sm" id="shopAddBtn">加入</button></div>
+    <div class="searchrow" style="padding:0 0 12px"><button class="btn ghost sm" id="shopClear">清除已勾选</button><button class="btn ghost sm" id="shopAll">清空</button></div>`;
+  const wireAdd = () => {
+    $('#shopAddBtn') && ($('#shopAddBtn').onclick = shopManualAdd);
+    $('#shopAdd') && ($('#shopAdd').onkeydown = (e) => { if (e.key === 'Enter') shopManualAdd(); });
+  };
+  if (!shopping.length) { box.innerHTML = head + '<div class="empty">购物清单是空的。<br>在菜谱详情里点「加入购物清单」，或上面手动加一项。</div>'; wireAdd(); return; }
   // 同名合并：记录每个名字对应的原始下标（用于勾选/删除），累积用量与来源
   const groups = {};
   shopping.forEach((it, i) => {
@@ -293,6 +304,7 @@ function renderShopping() {
       </div>`).join('');
   }
   box.innerHTML = html;
+  wireAdd();
   box.querySelectorAll('.shop-item').forEach(node => node.onclick = () => {
     const idxs = node.dataset.idxs.split(',').map(Number);
     const target = !idxs.every(i => shopping[i].checked); // 未全勾→全勾；已全勾→全取消
