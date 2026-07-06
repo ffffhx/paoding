@@ -1937,7 +1937,7 @@ function init() {
 }
 function showInstall(deferred) {
   if ($('#installBanner') || store.get('installDismiss')) return;
-  const b = el(`<div class="install-banner" id="installBanner"><span>把庖丁装到主屏，像 App 一样用</span><span><button class="btn sm" id="doInstall">安装</button> <button class="iconbtn" id="noInstall">✕</button></span></div>`);
+  const b = el(`<div class="install-banner" id="installBanner"><span>${esc(tr('install.prompt'))}</span><span><button class="btn sm" id="doInstall">${esc(tr('install.action'))}</button> <button class="iconbtn" id="noInstall">✕</button></span></div>`);
   $('header').after(b);
   $('#doInstall').onclick = async () => { b.remove(); deferred.prompt(); };
   $('#noInstall').onclick = () => { b.remove(); store.set('installDismiss', true); };

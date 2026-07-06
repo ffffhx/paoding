@@ -57,6 +57,13 @@ test("settingsLanguageRowHtml 切 en 后关键 UI 字符串是英文", () => {
   app.setLanguage("zh");
 });
 
+test("安装横幅切 en 后使用英文文案", () => {
+  app.setLanguage("en");
+  assert.equal(app.t("install.prompt"), "Install Paoding to your home screen and use it like an app");
+  assert.equal(app.t("install.action"), "Install");
+  app.setLanguage("zh");
+});
+
 test("首页/列表文案切 en 后使用英文标签", () => {
   app.setLanguage("en");
   assert.deepEqual(Array.from(app.homeFilterChips(["家常"]).slice(0, 6).map((x) => x[1])), [

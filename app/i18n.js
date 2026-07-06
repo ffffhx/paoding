@@ -371,6 +371,8 @@
     'settings.backendSetup.desc': '填写自己的庖丁服务地址和 API Token。',
     'settings.backendSetup.later': '稍后',
     'settings.backendSetup.connect': '连接',
+    'install.prompt': '把庖丁装到主屏，像 App 一样用',
+    'install.action': '安装',
   };
 
   const en = {
@@ -742,6 +744,8 @@
     'settings.backendSetup.desc': 'Enter your Paoding service URL and API token.',
     'settings.backendSetup.later': 'Later',
     'settings.backendSetup.connect': 'Connect',
+    'install.prompt': 'Install Paoding to your home screen and use it like an app',
+    'install.action': 'Install',
   };
 
   const dictionaries = { zh, en };
