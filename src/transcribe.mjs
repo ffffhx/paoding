@@ -6,13 +6,13 @@ import path from "node:path";
 // 支持两种 ASR：
 //   provider=local  → 本地 whisper.cpp（whisper-cli），免费离线，Mac 首选
 //   provider=openai → OpenAI 兼容的 /audio/transcriptions（Whisper 云端）
-export async function transcribe(asr, audioPath, onProgress = () => {}) {
-  if (asr.provider === "local") return transcribeLocal(asr, audioPath, onProgress);
-  return transcribeCloud(asr, audioPath, onProgress);
+export async function transcribe(asr, audioPath, onProgress = () => {}, signal) {
+  if (asr.provider === "local") return transcribeLocal(asr, audioPath, onProgress, signal);
+  return transcribeCloud(asr, audioPath, onProgress, signal);
 }
 
 // ---- 本地 whisper.cpp ----
-function transcribeLocal(asr, audioPath, onProgress = () => {}) {
+function transcribeLocal(asr, audioPath, onProgress = () => {}, signal) {
   return new Promise((resolve, reject) => {
     const bin = asr.whisperBin || "whisper-cli";
     if (!asr.whisperModel || !fs.existsSync(asr.whisperModel)) {
@@ -31,7 +31,7 @@ function transcribeLocal(asr, audioPath, onProgress = () => {}) {
       "-otxt", "-of", outBase,
       "-pp", // 打印进度，供解析
     ];
-    const child = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"], signal });
     let err = "";
     child.stderr.on("data", (d) => {
       err += d;
@@ -65,13 +65,13 @@ function transcribeLocal(asr, audioPath, onProgress = () => {}) {
 const ASR_MAX_MB = 24; // 略低于 25MB 硬上限留余量
 const SEG_SECONDS = 15 * 60; // 15 分钟一段；acquire 出的是 16k 单声道 64k mp3，一段 ≈ 7MB
 
-async function transcribeCloud(asr, audioPath, onProgress = () => {}) {
+async function transcribeCloud(asr, audioPath, onProgress = () => {}, signal) {
   const sizeMB = fs.statSync(audioPath).size / (1024 * 1024);
 
   // 未超限：单次请求（原路径）。
   if (sizeMB <= ASR_MAX_MB) {
     onProgress({ pct: 10, message: "语音转文字…" });
-    const text = await transcribeChunk(asr, audioPath);
+    const text = await transcribeChunk(asr, audioPath, signal);
     onProgress({ pct: 100, message: "语音转文字…" });
     if (!text.trim()) throw new Error("ASR 返回空转写文本。");
     return text.trim();
@@ -79,12 +79,12 @@ async function transcribeCloud(asr, audioPath, onProgress = () => {}) {
 
   // 超限：切片 → 逐段转写 → 拼接。
   console.warn(`  · 音频约 ${sizeMB.toFixed(1)}MB，超过接口上限，自动按 ${SEG_SECONDS / 60} 分钟分片转写。`);
-  const { chunks, cleanup } = await splitAudio(audioPath, SEG_SECONDS);
+  const { chunks, cleanup } = await splitAudio(audioPath, SEG_SECONDS, signal);
   try {
     const parts = [];
     for (let i = 0; i < chunks.length; i++) {
       onProgress({ pct: Math.round((i / chunks.length) * 100), message: `语音转文字…（分片 ${i + 1}/${chunks.length}）` });
-      const t = await transcribeChunk(asr, chunks[i]);
+      const t = await transcribeChunk(asr, chunks[i], signal);
       if (t.trim()) parts.push(t.trim());
     }
     onProgress({ pct: 100, message: "语音转文字…" });
@@ -97,7 +97,7 @@ async function transcribeCloud(asr, audioPath, onProgress = () => {}) {
 }
 
 // 单个音频文件 → 文本（一次 OpenAI 兼容请求）。
-async function transcribeChunk(asr, filePath) {
+async function transcribeChunk(asr, filePath, signal) {
   const buf = fs.readFileSync(filePath);
   const form = new FormData();
   form.append("file", new Blob([buf]), path.basename(filePath));
@@ -108,6 +108,7 @@ async function transcribeChunk(asr, filePath) {
     method: "POST",
     headers: { Authorization: `Bearer ${asr.apiKey}` },
     body: form,
+    signal,
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
@@ -118,7 +119,7 @@ async function transcribeChunk(asr, filePath) {
 }
 
 // 用 ffmpeg 按 segSeconds 把音频切成多段 mp3；返回有序分片路径 + 清理函数。
-function splitAudio(audioPath, segSeconds) {
+function splitAudio(audioPath, segSeconds, signal) {
   return new Promise((resolve, reject) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-asr-seg-"));
     const cleanup = () => fs.rmSync(dir, { recursive: true, force: true });
@@ -129,7 +130,7 @@ function splitAudio(audioPath, segSeconds) {
       "-c", "copy", "-reset_timestamps", "1",
       pattern,
     ];
-    const child = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"], signal });
     let err = "";
     child.stderr.on("data", (d) => (err += d));
     child.on("error", (e) => { cleanup(); reject(new Error(`调用 ffmpeg 切片失败：${e.message}`)); });

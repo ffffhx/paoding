@@ -1,6 +1,6 @@
 // OpenAI 兼容的 chat/completions 客户端 —— 只用内置 fetch，无第三方依赖。
 
-export async function chatJSON(llm, { system, user, temperature = 0.3, _retry = true }) {
+export async function chatJSON(llm, { system, user, temperature = 0.3, signal, _retry = true }) {
   const body = {
     model: llm.model,
     temperature,
@@ -18,6 +18,7 @@ export async function chatJSON(llm, { system, user, temperature = 0.3, _retry = 
       Authorization: `Bearer ${llm.apiKey}`,
     },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!res.ok) {
@@ -36,13 +37,14 @@ export async function chatJSON(llm, { system, user, temperature = 0.3, _retry = 
       system: system + "\n\n【重要】上一次输出不是合法 JSON。这次只输出一个 JSON 对象，不要任何解释、不要 markdown 代码块。",
       user,
       temperature: Math.min(temperature, 0.1),
+      signal,
       _retry: false,
     });
   }
 }
 
 // 自由文本对话（追问、食材替代等），不强制 JSON。
-export async function chatText(llm, { system, user, temperature = 0.5 }) {
+export async function chatText(llm, { system, user, temperature = 0.5, signal }) {
   const res = await fetch(`${llm.baseUrl}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${llm.apiKey}` },
@@ -54,6 +56,7 @@ export async function chatText(llm, { system, user, temperature = 0.5 }) {
         { role: "user", content: user },
       ],
     }),
+    signal,
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
@@ -64,7 +67,7 @@ export async function chatText(llm, { system, user, temperature = 0.5 }) {
 }
 
 // 视觉对话：把若干截图（base64 jpg）连同提示喂给视觉模型，读屏上文字与画面观察。
-export async function chatVision(vision, { system, user, images = [], temperature = 0.2 }) {
+export async function chatVision(vision, { system, user, images = [], temperature = 0.2, signal }) {
   const content = [
     { type: "text", text: user },
     ...images.map((b64) => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } })),
@@ -77,6 +80,7 @@ export async function chatVision(vision, { system, user, images = [], temperatur
       temperature,
       messages: [...(system ? [{ role: "system", content: system }] : []), { role: "user", content }],
     }),
+    signal,
   });
   if (!res.ok) {
     const d = await res.text().catch(() => "");
