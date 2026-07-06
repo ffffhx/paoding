@@ -6,7 +6,7 @@ const store = {
   get(k, d) { try { const v = JSON.parse(localStorage.getItem('paoding.' + k)); return v ?? d; } catch { return d; } },
   set(k, v) { localStorage.setItem('paoding.' + k, JSON.stringify(v)); },
 };
-const settings = Object.assign({ theme: 'light', fontScale: 1, tts: true, ttsRate: 1, apiBase: '', depth: 'balanced' }, store.get('settings', {}));
+const settings = Object.assign({ theme: 'light', fontScale: 1, tts: true, ttsRate: 1, apiBase: '', apiToken: '', depth: 'balanced' }, store.get('settings', {}));
 function saveSettings() { store.set('settings', settings); }
 
 /* ---------- API ---------- */
@@ -14,21 +14,25 @@ function saveSettings() { store.set('settings', settings); }
 // 这样 App 从 https://域名:8443/paoding/ 加载时，/api 调用会自动带上 /paoding 前缀，无需手工配。
 const BASE = location.pathname.replace(/\/[^/]*$/, '');
 const api = (p) => (settings.apiBase || BASE) + p;
+// 可选 API token：服务端设了 PAODING_API_TOKEN 时，所有 /api/* 都要带上（走 X-Paoding-Token 头）。
+const authHeaders = () => settings.apiToken ? { 'X-Paoding-Token': settings.apiToken } : {};
+// 统一 fetch 包装：自动注入 token 头，与调用方自带 headers 合并。
+const F = (p, opts = {}) => fetch(api(p), { ...opts, headers: { ...(opts.headers || {}), ...authHeaders() } });
 const API = {
-  list: () => fetch(api('/api/recipes')).then(r => r.json()),
-  del: (id) => fetch(api('/api/recipes/' + encodeURIComponent(id)), { method: 'DELETE' }),
-  startUrl: (url, depth, vision) => fetch(api('/api/parse-url'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth, vision: !!vision }) }).then(j),
-  startFile: (file, depth, vision) => fetch(api('/api/parse-file'), { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth, 'X-Vision': vision ? '1' : '0' }, body: file }).then(j),
-  startText: (text, depth) => fetch(api('/api/parse-text'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, depth }) }).then(j),
-  ask: (recipeId, stepIndex, question) => fetch(api('/api/ask'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, question }) }).then(j),
-  substitute: (recipeId, ingredient) => fetch(api('/api/substitute'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, ingredient }) }).then(j),
-  term: (term) => fetch(api('/api/term'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ term }) }).then(j),
-  troubleshoot: (recipeId, stepIndex, problem) => fetch(api('/api/troubleshoot'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, problem }) }).then(j),
-  nutrition: (recipeId) => fetch(api('/api/nutrition'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
-  overview: (recipeId) => fetch(api('/api/overview'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
-  userdataGet: () => fetch(api('/api/userdata')).then(r => r.json()).catch(() => ({})),
-  userdataPut: (data) => fetch(api('/api/userdata'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).catch(() => { }),
-  importAll: (data) => fetch(api('/api/import'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(j),
+  list: () => F('/api/recipes').then(r => r.json()),
+  del: (id) => F('/api/recipes/' + encodeURIComponent(id), { method: 'DELETE' }),
+  startUrl: (url, depth, vision) => F('/api/parse-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth, vision: !!vision }) }).then(j),
+  startFile: (file, depth, vision) => F('/api/parse-file', { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth, 'X-Vision': vision ? '1' : '0' }, body: file }).then(j),
+  startText: (text, depth) => F('/api/parse-text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, depth }) }).then(j),
+  ask: (recipeId, stepIndex, question) => F('/api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, question }) }).then(j),
+  substitute: (recipeId, ingredient) => F('/api/substitute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, ingredient }) }).then(j),
+  term: (term) => F('/api/term', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ term }) }).then(j),
+  troubleshoot: (recipeId, stepIndex, problem) => F('/api/troubleshoot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, problem }) }).then(j),
+  nutrition: (recipeId) => F('/api/nutrition', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
+  overview: (recipeId) => F('/api/overview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
+  userdataGet: () => F('/api/userdata').then(r => r.json()).catch(() => ({})),
+  userdataPut: (data) => F('/api/userdata', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).catch(() => { }),
+  importAll: (data) => F('/api/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(j),
 };
 async function exportData() {
   try {
@@ -80,15 +84,18 @@ store.set = (k, v) => { _storeSet(k, v); if (SYNC_KEYS.has(k)) syncUp(); };
 async function loadUserData() {
   let d = null;
   try { d = await API.userdataGet(); } catch { }
-  if (d && (d.favRecipes || d.favSteps || d.shopping || d.meta || d.mealPlan)) {
-    if (Array.isArray(d.favRecipes)) { favRecipes = d.favRecipes; _storeSet('favRecipes', favRecipes); }
-    if (Array.isArray(d.favSteps)) { favSteps = d.favSteps; _storeSet('favSteps', favSteps); }
-    if (Array.isArray(d.shopping)) { shopping = d.shopping; _storeSet('shopping', shopping); }
-    if (d.meta && typeof d.meta === 'object') { meta = d.meta; _storeSet('meta', meta); }
-    if (d.mealPlan && typeof d.mealPlan === 'object') { mealPlan = d.mealPlan; _storeSet('mealPlan', mealPlan); }
-  } else {
-    syncUp(); // 后端还没有数据 → 用本设备现有数据播种
-  }
+  d = d || {};
+  const nonEmpty = (v) => Array.isArray(v) ? v.length > 0 : !!(v && typeof v === 'object' && Object.keys(v).length > 0);
+  let needPush = false;
+  // 每个键：后端有非空数据才采用；后端空/缺而本地有数据时保留本地并回推。
+  // 否则某台设备首启播种的空 {favRecipes:[],meta:{}…}（[]/{} 都是 truthy）会把另一台离线攒的收藏/清单/排菜静默清空。
+  const merge = (remote, local) => { if (nonEmpty(remote)) return remote; if (nonEmpty(local)) needPush = true; return local; };
+  favRecipes = merge(d.favRecipes, favRecipes); _storeSet('favRecipes', favRecipes);
+  favSteps = merge(d.favSteps, favSteps); _storeSet('favSteps', favSteps);
+  shopping = merge(d.shopping, shopping); _storeSet('shopping', shopping);
+  meta = merge(d.meta, meta); _storeSet('meta', meta);
+  mealPlan = merge(d.mealPlan, mealPlan); _storeSet('mealPlan', mealPlan);
+  if (needPush) syncUp(); // 把后端缺的本地数据推上去，避免下次又被空值覆盖
 }
 
 /* ---------- 工具 ---------- */
@@ -112,9 +119,10 @@ function parseSeconds(t) {
 }
 function scaleAmount(amt, f) {
   if (!amt || f === 1) return amt;
-  return String(amt).replace(/(\d+(?:\.\d+)?)/g, (n) => {
-    let v = +n * f; v = Math.round(v * 10) / 10; return String(v);
-  });
+  const fmt = (v) => String(Math.round(v * 100) / 100); // 最多两位小数
+  // 先整体处理分数 a/b（否则 1/2 会被拆成 1 和 2 各自缩放，得到荒谬的 2/4）；再处理独立数字。
+  return String(amt).replace(/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)/g,
+    (m, fnum, fden, whole) => fden !== undefined ? fmt((+fnum / +fden) * f) : fmt(+whole * f));
 }
 // 优先用结构化 qty/unit 精确缩放（新菜谱有）；没有就回退到对 amount 文本的数字缩放（旧菜谱兼容）
 function scaledAmount(i, f) {
@@ -132,12 +140,24 @@ const richText = (t) => highlightInfo(linkifyTerms(t));
 /* ---------- 全局多计时器（跨步骤/后台闹铃）---------- */
 const Timers = {
   list: [], iv: null,
+  // 计时是本机状态，用 _storeSet 存 localStorage、不触发跨设备同步。
+  save() { _storeSet('timers', this.list); },
+  // 启动时恢复：刷新 / PWA 被系统回收 / 自动更新后，计时不再丢失。
+  // 已过期的直接标 done（不补响铃，避免回来时突然乱响），仍在跑的重启 interval。
+  restore() {
+    const saved = store.get('timers', []);
+    if (!Array.isArray(saved) || !saved.length) return;
+    const now = Date.now();
+    this.list = saved.map(t => ({ ...t, done: t.done || now >= t.endAt })).filter(t => !t.done || now - t.endAt < 10 * 60 * 1000);
+    this.save(); this.render();
+    if (this.list.some(t => !t.done)) this.start();
+  },
   ensureHUD() { let h = document.getElementById('timerhud'); if (!h) { h = el('<div id="timerhud"></div>'); document.body.appendChild(h); } return h; },
   add(label, seconds) {
     if (!seconds) return;
     if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => { });
     this.list.push({ id: Date.now() + '' + Math.floor(performance.now()), label, endAt: Date.now() + seconds * 1000, done: false });
-    this.render(); this.start(); toast('⏱ 已开始计时：' + label);
+    this.save(); this.render(); this.start(); toast('⏱ 已开始计时：' + label);
   },
   start() { if (this.iv) return; this.iv = setInterval(() => this.tick(), 500); },
   tick() {
@@ -145,6 +165,7 @@ const Timers = {
     for (const t of this.list) {
       if (!t.done && now >= t.endAt) { t.done = true; changed = true; this.ring(t); }
     }
+    if (changed) this.save(); // 有计时到点才落盘，避免每 500ms 写一次
     this.render();
     // 全部倒计时结束（或清空）后停掉空转的 interval；新加计时会在 add() 里重启
     if ((!this.list.length || this.list.every(t => t.done)) && this.iv) { clearInterval(this.iv); this.iv = null; }
@@ -154,7 +175,7 @@ const Timers = {
     speak(t.label + ' 时间到'); toast('⏰ ' + t.label + ' 时间到！');
     try { if ('Notification' in window && Notification.permission === 'granted') new Notification('⏰ 庖丁计时', { body: t.label + ' 时间到！', tag: t.id }); } catch { }
   },
-  remove(id) { this.list = this.list.filter(x => x.id !== id); this.render(); },
+  remove(id) { this.list = this.list.filter(x => x.id !== id); this.save(); this.render(); },
   render() {
     const h = this.ensureHUD(); const now = Date.now();
     if (!this.list.length) { h.innerHTML = ''; return; }
@@ -171,7 +192,8 @@ const Timers = {
 let ttsVoice = null;
 function pickVoice() {
   const vs = speechSynthesis.getVoices();
-  ttsVoice = vs.find(v => /zh|Chinese|Tingting|Ting-Ting/i.test(v.lang + v.name)) || vs[0] || null;
+  // 只认中文音色；挑不到就留 null，让 speak() 靠 lang='zh-CN' 交给引擎自动选，而不是退回 vs[0]（常是英文音色）硬念中文。
+  ttsVoice = vs.find(v => /zh|Chinese|Tingting|Ting-Ting/i.test(v.lang + v.name)) || null;
 }
 if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
 function speak(text) {
@@ -186,9 +208,10 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 /* ================= 首页 ================= */
 function matchFilter(r) {
-  if (filter.tag === '__fav') return favRecipes.includes(r.id);
-  if (filter.tag === '__cooked') return rmeta(r.id).cooked;
-  if (filter.tag && !(r.tags || []).includes(filter.tag) && r.difficulty !== filter.tag && r.cuisine !== filter.tag) return false;
+  if (filter.tag === '__fav') { if (!favRecipes.includes(r.id)) return false; }
+  else if (filter.tag === '__cooked') { if (!rmeta(r.id).cooked) return false; }
+  else if (filter.tag && !(r.tags || []).includes(filter.tag) && r.difficulty !== filter.tag && r.cuisine !== filter.tag) return false;
+  // 搜索词对所有筛选都生效（含「★收藏」「✓做过」下）；此前这两个分支提前 return 导致搜索失效
   if (filter.q) { const hay = (r.title + ' ' + (r.tags || []).join(' ') + ' ' + (r.ingredients || []).map(i => i.name).join(' ')); if (!hay.includes(filter.q)) return false; }
   return true;
 }
@@ -400,6 +423,8 @@ function renderSettings() {
         <span class="chip ${settings.depth === 'advanced' ? 'on' : ''}" data-d="advanced">进阶原理</span></div></div>
     <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">后端地址</div><div class="desc">手机端填电脑的「局域网地址」（启动服务器时会打印）；本机留空即可</div></div>
       <input type="text" id="apiBase" placeholder="如 http://192.168.1.5:4177" value="${esc(settings.apiBase)}" style="margin-top:8px"></div>
+    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">API Token</div><div class="desc">后端设了 PAODING_API_TOKEN 才需填（公网/隧道暴露时建议开启）；本机局域网可留空</div></div>
+      <input type="password" id="apiToken" placeholder="与服务端 PAODING_API_TOKEN 一致" value="${esc(settings.apiToken)}" style="margin-top:8px"></div>
     <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">数据备份</div><div class="desc">把全部菜谱与收藏导出成一个文件；换设备或搬后端时可导入恢复</div></div>
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="btn ghost sm" id="btnExport">⬇ 导出备份</button>
@@ -412,6 +437,7 @@ function renderSettings() {
   box.querySelectorAll('[data-tr]').forEach(b => b.onclick = () => { settings.ttsRate = Math.min(1.6, Math.max(0.6, settings.ttsRate + (b.dataset.tr === '+' ? 0.1 : -0.1))); saveSettings(); renderSettings(); });
   $('#setDepth').querySelectorAll('.chip').forEach(c => c.onclick = () => { settings.depth = c.dataset.d; depth = c.dataset.d; saveSettings(); renderSettings(); syncDepthChips(); });
   $('#apiBase').onchange = (e) => { settings.apiBase = e.target.value.trim().replace(/\/$/, ''); saveSettings(); toast('已保存后端地址'); refresh(); };
+  $('#apiToken').onchange = (e) => { settings.apiToken = e.target.value.trim(); saveSettings(); toast('已保存 API Token'); refresh(); };
   $('#btnExport').onclick = exportData;
   $('#btnImport').onclick = () => $('#importFile').click();
   $('#importFile').onchange = (e) => { const f = e.target.files[0]; if (f) importData(f); e.target.value = ''; };
@@ -438,7 +464,8 @@ function openDetail(r) {
         ${r.difficulty ? `<span class="tag diff-${esc(r.difficulty)}">${esc(DIFF[r.difficulty] || r.difficulty)}</span>` : ''}
         ${r.cuisine ? `<span>${esc(r.cuisine)}</span>` : ''}
         ${r.total_time_min ? `<span>⏱ 约${esc(r.total_time_min)}分钟</span>` : ''}
-        <span>📋 ${(r.steps || []).length}步</span></div>
+        <span>📋 ${(r.steps || []).length}步</span>
+        ${/^https?:\/\//.test(r.source || '') ? `<a class="src-link" href="${esc(r.source)}" target="_blank" rel="noopener">▶ 看原视频</a>` : ''}</div>
       ${(r.tags || []).length ? `<div class="tags" style="margin-top:8px">${r.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
     </div>
     ${base ? `<div class="scaler"><span>份量</span><button class="st" data-s="-">－</button><b id="svVal">${base * factor}</b><button class="st" data-s="+">＋</button><span>人份</span></div>` : ''}
@@ -522,6 +549,23 @@ function openDetail(r) {
   $('#app').appendChild(p);
 }
 function riskBadge(r) { return r === 'high' ? ' <span class="badge risk-high">🔴 新手雷区</span>' : r === 'medium' ? ' <span class="badge risk-medium">🟡 需留意</span>' : ''; }
+// 跟做走到最后一步 → 闭环：自动记「做过」，顺手引导打分（做完正是最该沉淀的节点）。
+function finishCook(r) {
+  const m = rmeta(r.id);
+  if (!m.cooked) { m.cooked = true; m.cooked_at = new Date().toISOString(); }
+  saveMeta(); renderRecipes();
+  const stars = [1, 2, 3, 4, 5].map(n => `<span class="rs ${m.rating >= n ? 'on' : ''}" data-r="${n}">★</span>`).join('');
+  const ov = openModal(`<h3>🍜 做好啦，开动！</h3>
+    <p style="color:var(--muted)">已记为「做过」。给这道菜打个分？</p>
+    <div class="rating" style="justify-content:center;font-size:30px;margin:8px 0 2px">${stars}</div>
+    <div class="mrow"><button class="btn ghost" id="finishSkip">先不打分</button></div>`, 'finish');
+  ov.querySelectorAll('.rs').forEach(rs => rs.onclick = () => {
+    m.rating = +rs.dataset.r; saveMeta(); renderRecipes();
+    ov.querySelectorAll('.rs').forEach(x => x.classList.toggle('on', +x.dataset.r <= m.rating));
+    toast('已记录：' + '★'.repeat(m.rating)); setTimeout(() => ov.remove(), 350);
+  });
+  ov.querySelector('#finishSkip').onclick = () => ov.remove();
+}
 
 /* ================= 编辑菜谱（修正 AI 的错误）================= */
 function openEdit(r) {
@@ -627,11 +671,19 @@ function openEdit(r) {
     d.cuisine = p.querySelector('#eCuisine').value.trim() || null;
     d.tags = p.querySelector('#eTags').value.split(/[,，、\s]+/).map(t => t.trim()).filter(Boolean);
     d.ingredients = d.ingredients.filter(i => (i.name || '').trim());
-    d.steps = d.steps.filter(s => (s.title || s.action || '').trim());
+    // 只填了「为什么」而没写标题/做法的步骤也保留，别把用户输入的讲解静默丢掉
+    d.steps = d.steps.filter(s => (s.title || s.action || s.why?.reason || s.why?.if_not || s.why?.cue || '').trim());
     d.steps.forEach((s, i) => s.index = i + 1);
+    // 食材增删/重排后，勾选态(ingChecked 存下标)按名字重映射到新下标，否则勾中的是错误的食材。
+    const em = rmeta(r.id);
+    if (Array.isArray(em.ingChecked) && em.ingChecked.length) {
+      const checkedNames = new Set(em.ingChecked.map(i => r.ingredients?.[i]?.name).filter(Boolean));
+      em.ingChecked = d.ingredients.reduce((acc, ing, idx) => (checkedNames.has(ing.name) && acc.push(idx), acc), []);
+      saveMeta();
+    }
     const patch = { title: d.title, servings: d.servings, total_time_min: d.total_time_min, difficulty: d.difficulty, cuisine: d.cuisine, tags: d.tags, ingredients: d.ingredients, steps: d.steps };
     try {
-      const res = await fetch(api('/api/recipes/' + encodeURIComponent(r.id)), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+      const res = await F('/api/recipes/' + encodeURIComponent(r.id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || ('HTTP ' + res.status));
       toast('已保存'); close();
       recipes = await API.list(); renderAll();
@@ -772,7 +824,7 @@ async function openCook(r) {
     catch (e) { asks[s.index][asks[s.index].length - 1].a = '没问出来：' + e.message; }
     renderQA(s);
   }
-  function next() { stopSpeak(); if (cur === steps.length - 1) { exit(); toast('做好啦，开动！🍜'); return; } cur++; saveProg(cur); render(); }
+  function next() { stopSpeak(); if (cur === steps.length - 1) { exit(); finishCook(r); return; } cur++; saveProg(cur); render(); }
   async function sosStep(r, s) {
     const problem = await promptModal('🆘 哪里翻车了？', '描述现象，如：粘锅了 / 太咸 / 没熟 / 糊了', '求救'); if (!problem) return;
     (asks[s.index] = asks[s.index] || []).push({ q: '🆘 ' + problem, a: '想办法…' }); renderQA(s);
@@ -825,7 +877,16 @@ function paramsHtml(p) {
   return items.length ? `<div class="params">${items.map(([k, v]) => `<span class="param"><b>${k}</b> ${esc(v)}</span>`).join('')}</div>` : '';
 }
 function timerHtml(p) { const s = parseSeconds(p && p.time); return s ? `<div class="timer"><button class="btn sm" id="timerBtn">⏱ 开始计时（${Math.floor(s / 60) ? Math.floor(s / 60) + '分' : ''}${s % 60 ? (s % 60) + '秒' : ''}）</button></div>` : ''; }
-function beep() { try { const a = new (window.AudioContext || window.webkitAudioContext)(); for (let i = 0; i < 3; i++) { const o = a.createOscillator(), g = a.createGain(); o.connect(g); g.connect(a.destination); o.frequency.value = 880; g.gain.value = .15; o.start(a.currentTime + i * .4); o.stop(a.currentTime + i * .4 + .2); } } catch { } }
+// 复用同一个 AudioContext：浏览器对 AudioContext 数量有上限(~6)且不及时回收，每次响铃 new 一个响几次后就抛异常静默失败。
+let _actx = null;
+function beep() {
+  try {
+    _actx = _actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (_actx.state === 'suspended') _actx.resume();
+    const a = _actx;
+    for (let i = 0; i < 3; i++) { const o = a.createOscillator(), g = a.createGain(); o.connect(g); g.connect(a.destination); o.frequency.value = 880; g.gain.value = .15; o.start(a.currentTime + i * .4); o.stop(a.currentTime + i * .4 + .2); }
+  } catch { }
+}
 function showVoiceHint() { const h = el('<div class="voice-hint">🎙 说「下一步 / 上一步 / 朗读」</div>'); document.body.appendChild(h); setTimeout(() => h.remove(), 3000); }
 async function showTerm(term) {
   const ov = openModal(`<h3>${esc(term)}</h3><p style="color:var(--muted)">查询中…</p>`);
@@ -886,14 +947,18 @@ async function doParse(starter) {
   try {
     const { jobId } = await starter();
     await new Promise((resolve, reject) => {
-      const es = new EventSource(api('/api/progress/' + jobId));
+      const es = new EventSource(api('/api/progress/' + jobId) + (settings.apiToken ? '?token=' + encodeURIComponent(settings.apiToken) : ''));
+      let errs = 0;
       es.onmessage = (ev) => {
+        errs = 0; // 收到任何消息就重置错误计数
         const d = JSON.parse(ev.data);
         if (d.type === 'progress') setP(d.pct || 0, stageLabel(d.stage, d.message));
         else if (d.type === 'done') { es.close(); resolve(d.recipe); }
         else if (d.type === 'error') { es.close(); reject(new Error(d.error)); }
       };
-      es.onerror = () => { es.close(); reject(new Error('连接中断')); };
+      // 瞬时断网时 EventSource 会自动重连、服务端补发当前进度；只有确实关闭或连续多次失败(约18s)才判失败，
+      // 避免长解析(1~3分钟)中一次网络抖动就误报「连接中断」。
+      es.onerror = () => { if (es.readyState === EventSource.CLOSED || ++errs >= 6) { es.close(); reject(new Error('连接中断')); } };
     }).then(async (recipe) => {
       recipes = await API.list(); renderAll(); cleanup(); toast('解析完成：' + (recipe.title || ''));
       const found = recipes.find(x => x.title === recipe.title); if (found) openDetail(found);
@@ -906,10 +971,16 @@ function stageLabel(stage, message) {
 }
 
 /* ================= PWA / 初始化 ================= */
+// 与购物清单页一致：按名字合并后、未全部勾选的组数（列表显示合并项，角标也该数合并组）
+function shoppingUnchecked() {
+  const byName = {};
+  shopping.forEach(it => { (byName[it.name] = byName[it.name] || []).push(it); });
+  return Object.values(byName).filter(items => !items.every(it => it.checked)).length;
+}
 function updateBadges() {
   const set = (sel, n) => { const b = $(sel); if (b) b.innerHTML = n ? `<span class="badge-count">${n}</span>` : ''; };
   set('#tabSkillsBadge', favSteps.length);
-  set('#tabShopBadge', shopping.filter(x => !x.checked).length);
+  set('#tabShopBadge', shoppingUnchecked());
 }
 function renderAll() { renderFilters(); renderRecipes(); renderSkills(); renderShopping(); updateBadges(); }
 function syncDepthChips() { document.querySelectorAll('#depth .chip').forEach(x => x.classList.toggle('on', x.dataset.d === depth)); }
@@ -918,15 +989,22 @@ async function refresh() { try { recipes = await API.list(); } catch { recipes =
 function initTabs() {
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     curTab = t.dataset.tab;
-    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
+    document.querySelectorAll('.tab').forEach(x => { const on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', on ? 'true' : 'false'); });
     ['recipes', 'plan', 'skills', 'shopping', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== curTab));
     const showSearch = curTab === 'recipes';
     $('#searchrow').classList.toggle('hidden', !showSearch); $('#filters').classList.toggle('hidden', !showSearch);
     if (curTab === 'skills') renderSkills(); if (curTab === 'shopping') renderShopping(); if (curTab === 'settings') renderSettings(); if (curTab === 'plan') renderPlan();
   });
+  // 加载时同步一次 aria-selected，读屏用户一进来就知道当前在哪个标签
+  document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x.classList.contains('on') ? 'true' : 'false'));
 }
 function init() {
   applyTheme(); syncDepthChips();
+  Timers.restore(); // 恢复上次未结束的计时（刷新/被系统回收后不丢）
+  // 无障碍：让 role=button/tab 的非原生控件(标签栏/深度选择等)支持键盘 Enter/Space 触发，而不只是鼠标/触屏点击。
+  document.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[role="button"],[role="tab"]')) { e.preventDefault(); e.target.click(); }
+  });
   initTabs();
   $('#depth').onclick = (e) => { const c = e.target.closest('.chip'); if (!c) return; depth = c.dataset.d; syncDepthChips(); };
   $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast('请粘贴 http(s) 视频链接'); return; } const vision = $('#visChk')?.checked; doParse(() => API.startUrl(u, depth, vision)); $('#url').value = ''; };

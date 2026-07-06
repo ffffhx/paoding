@@ -25,21 +25,21 @@
     </div>
     <div class="depth" id="depth">
       <span class="depth-lbl">讲解深度</span>
-      <span class="chip" data-d="beginner" title="每步讲得更细、更基础，适合厨房新手">新手向</span>
-      <span class="chip on" data-d="balanced" title="通俗易懂、详略得当（推荐）">通俗（默认）</span>
-      <span class="chip" data-d="advanced" title="讲透火候/食材科学等原理，适合想深入的人">进阶原理</span>
+      <span class="chip" data-d="beginner" role="button" tabindex="0" title="每步讲得更细、更基础，适合厨房新手">新手向</span>
+      <span class="chip on" data-d="balanced" role="button" tabindex="0" title="通俗易懂、详略得当（推荐）">通俗（默认）</span>
+      <span class="chip" data-d="advanced" role="button" tabindex="0" title="讲透火候/食材科学等原理，适合想深入的人">进阶原理</span>
     </div>
     <label class="vischk"><input type="checkbox" id="visChk"> 🔎 读画面字幕 <span class="muted">（视频没口播/字幕多时开，会下整段视频、较慢）</span></label>
     <div class="hint">也可以 <button id="fileBtn" class="linklike">上传本地视频</button> 或 <button id="textBtn" class="linklike">粘贴文字菜谱</button>（小红书图文/公众号适用）· 解析约 1–3 分钟</div>
     <input id="file" type="file" accept="video/*,audio/*" class="hidden" />
   </div>
 
-  <div class="tabs">
-    <div class="tab on" data-tab="recipes">菜谱</div>
-    <div class="tab" data-tab="plan">本周计划</div>
-    <div class="tab" data-tab="shopping">购物清单<span id="tabShopBadge"></span></div>
-    <div class="tab" data-tab="skills">技巧收藏<span id="tabSkillsBadge"></span></div>
-    <div class="tab" data-tab="settings">设置</div>
+  <div class="tabs" role="tablist">
+    <div class="tab on" data-tab="recipes" role="tab" tabindex="0">菜谱</div>
+    <div class="tab" data-tab="plan" role="tab" tabindex="0">本周计划</div>
+    <div class="tab" data-tab="shopping" role="tab" tabindex="0">购物清单<span id="tabShopBadge"></span></div>
+    <div class="tab" data-tab="skills" role="tab" tabindex="0">技巧收藏<span id="tabSkillsBadge"></span></div>
+    <div class="tab" data-tab="settings" role="tab" tabindex="0">设置</div>
   </div>
 
   <div class="searchrow" id="searchrow">

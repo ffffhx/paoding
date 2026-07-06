@@ -1,5 +1,5 @@
 /* 庖丁 Service Worker —— 应用外壳网络优先(可更新) + 已解析菜谱离线可用 */
-const VER = 'paoding-v19';
+const VER = 'paoding-v20';
 const SHELL = [
   './index.html', './styles.css', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png',
@@ -33,7 +33,10 @@ self.addEventListener('fetch', (e) => {
   const apiPath = i >= 0 ? url.pathname.slice(i) : '';
   if (apiPath.startsWith('/api/progress/')) return; // SSE 不拦
   if (apiPath.startsWith('/api/') && apiPath !== '/api/recipes') return; // AI 调用直连
+  if (url.pathname.endsWith('/paoding-debug.apk')) return; // APK 直连，别进 SW 缓存（体积大、无离线意义）
   if (apiPath === '/api/recipes') { e.respondWith(networkFirst(req)); return; }
-  // 应用外壳与同源资源：网络优先，离线回退缓存/首页
-  e.respondWith(networkFirst(req, './index.html'));
+  // 只有「导航请求」离线时才回退首页；子资源(JS/CSS/图片)只回退各自缓存，
+  // 否则离线时会拿 index.html 冒充 .js/.css/图片，造成类型错乱。
+  const fallback = req.mode === 'navigate' ? './index.html' : null;
+  e.respondWith(networkFirst(req, fallback));
 });

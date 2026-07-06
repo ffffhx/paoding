@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // 极简 .env 加载：不引第三方依赖，只读 KEY=VALUE。
 function loadDotEnv(cwd) {
@@ -25,7 +26,8 @@ function loadDotEnv(cwd) {
 
 export function loadConfig() {
   // 优先读引擎目录下的 .env，再读当前工作目录的 .env。
-  loadDotEnv(path.resolve(new URL("..", import.meta.url).pathname));
+  // 用 fileURLToPath 而非 .pathname：后者对含空格/中文的安装路径会残留 %20 等编码，导致 .env 读不到。
+  loadDotEnv(fileURLToPath(new URL("..", import.meta.url)));
   loadDotEnv(process.cwd());
 
   const llmBase = process.env.PAODING_LLM_BASE_URL?.replace(/\/$/, "");

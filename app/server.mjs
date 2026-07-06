@@ -17,6 +17,10 @@ const USERDATA_FILE = process.env.PAODING_USERDATA_FILE || path.join(HERE, "..",
 const PORT = process.env.PAODING_PORT ? Number(process.env.PAODING_PORT) : 4177;
 const HOST = process.env.PAODING_HOST || "0.0.0.0"; // 默认局域网可达(手机用)；设 127.0.0.1 可锁本机
 const MAX_RUNNING = Number(process.env.PAODING_MAX_JOBS || 2); // 同时解析上限，防资源耗尽
+const MAX_IMPORT_RECIPES = Number(process.env.PAODING_MAX_IMPORT || 5000); // 单次导入菜谱上限，防脏/超大备份写爆磁盘
+// 可选 API token：设了 PAODING_API_TOKEN 就要求 /api/* 带上正确 token；不设则不鉴权（向后兼容）。
+// 后端一旦经公网/隧道暴露，强烈建议设置。
+const API_TOKEN = process.env.PAODING_API_TOKEN || "";
 fs.mkdirSync(RECIPES_DIR, { recursive: true });
 
 let config;
@@ -28,7 +32,7 @@ try {
   process.exit(1);
 }
 
-const slug = (s) => (s || "recipe").replace(/[\/\\:*?"<>|]/g, "").replace(/\s+/g, "-").slice(0, 40);
+const slug = (s) => (s || "recipe").replace(/[\/\\:*?"<>|]/g, "").replace(/\s+/g, "-").slice(0, 40) || "recipe";
 const escHtml = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // 只读分享页：任何人打开链接即可看整份菜谱（含每步为什么），无需 App。自包含 HTML。
@@ -82,11 +86,14 @@ function listRecipes() {
     .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
 }
 function loadRecipe(id) {
+  if (!id || typeof id !== "string") return null; // 缺 recipeId 时返回 null，避免 path.basename(undefined) 抛错→500
   const p = path.join(RECIPES_DIR, `${path.basename(id)}.json`);
   if (!fs.existsSync(p)) return null;
-  const r = JSON.parse(fs.readFileSync(p, "utf8"));
-  r.id = id;
-  return r;
+  try {
+    const r = JSON.parse(fs.readFileSync(p, "utf8")); // 损坏文件也容错
+    r.id = id;
+    return r;
+  } catch { return null; }
 }
 
 function sendJSON(res, code, obj) {
@@ -105,6 +112,21 @@ function readBody(req, limitMB = 800) {
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
+}
+// 校验请求 token：可来自 Authorization: Bearer / X-Paoding-Token 头，或 ?token=（SSE 无法自定义头）。
+function authOk(req, url) {
+  if (!API_TOKEN) return true; // 未配置 = 不鉴权
+  const auth = req.headers["authorization"] || "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const provided = req.headers["x-paoding-token"] || bearer || url.searchParams.get("token") || "";
+  const a = Buffer.from(String(provided)), b = Buffer.from(API_TOKEN);
+  return a.length === b.length && crypto.timingSafeEqual(a, b); // 常量时间比较，避免时序侧信道
+}
+// 读并解析 JSON 请求体；畸形 JSON 抛 400（而非落到外层 catch 变 500）。
+async function readJson(req) {
+  const text = (await readBody(req)).toString("utf8") || "{}";
+  try { return JSON.parse(text); }
+  catch { throw Object.assign(new Error("请求体不是合法 JSON"), { statusCode: 400 }); }
 }
 
 // ---------- 解析任务（带进度）----------
@@ -139,19 +161,25 @@ function runJob(id, input, depth, kind = "video", wantVision = false) {
       throw e;
     });
   }
+  // 超时兜底：卡死的 yt-dlp/ffmpeg/whisper 不再永久占住 MAX_RUNNING slot（否则卡满就整体瘫）。
+  // 可用 PAODING_JOB_TIMEOUT_MIN 调整（默认 20 分钟）。超时与真实结果竞速，先到者结算，另一个丢弃。
+  const TIMEOUT_MS = Math.max(1000, (Number(process.env.PAODING_JOB_TIMEOUT_MIN) || 20) * 60 * 1000);
+  let settled = false, timer;
+  const finish = (ev) => {
+    if (settled) return; // 只结算一次
+    settled = true;
+    clearTimeout(timer);
+    if (ev.type === "done") { j.status = "done"; j.recipe = ev.recipe; }
+    else { j.status = "error"; j.error = ev.error; }
+    pushJob(id, ev);
+    for (const res of j.listeners) res.end();
+    j.listeners.clear();
+    setTimeout(() => jobs.delete(id), 5 * 60 * 1000);
+  };
+  timer = setTimeout(() => finish({ type: "error", error: `解析超时（超过 ${Math.round(TIMEOUT_MS / 60000)} 分钟无结果），已释放，请重试` }), TIMEOUT_MS);
   run
-    .then(({ recipe }) => {
-      j.status = "done"; j.recipe = recipe;
-      pushJob(id, { type: "done", recipe });
-      for (const res of j.listeners) res.end();
-      setTimeout(() => jobs.delete(id), 5 * 60 * 1000);
-    })
-    .catch((e) => {
-      j.status = "error"; j.error = e.message;
-      pushJob(id, { type: "error", error: e.message });
-      for (const res of j.listeners) res.end();
-      setTimeout(() => jobs.delete(id), 5 * 60 * 1000);
-    });
+    .then(({ recipe }) => finish({ type: "done", recipe }))
+    .catch((e) => finish({ type: "error", error: e.message }));
 }
 
 // ---------- 静态资源 ----------
@@ -164,7 +192,7 @@ const MIME = {
 function serveStatic(res, pathname) {
   let rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const abs = path.join(HERE, rel);
-  if (!abs.startsWith(HERE) || rel.startsWith("recipes/") || rel === "server.mjs") { res.writeHead(403); return res.end(); }
+  if (!(abs === HERE || abs.startsWith(HERE + path.sep)) || rel.startsWith("recipes/") || rel === "server.mjs") { res.writeHead(403); return res.end(); }
   if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) { res.writeHead(404); return res.end("Not found"); }
   const ext = path.extname(abs).toLowerCase();
   const headers = { "Content-Type": MIME[ext] || "application/octet-stream" };
@@ -180,8 +208,11 @@ const server = http.createServer(async (req, res) => {
   // CORS：App(Capacitor WebView，源为 capacitor://localhost / http://localhost)跨域访问本机后端时放行
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Filename,X-Depth,X-Vision");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Filename,X-Depth,X-Vision,X-Paoding-Token,Authorization");
   if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
+
+  // 鉴权：所有 /api/* 都要过（分享页 /r/、静态资源、APK 不拦，PWA 外壳才能加载）。未配 token 时直接放行。
+  if (p.startsWith("/api/") && !authOk(req, url)) return sendJSON(res, 401, { error: "未授权：缺少或错误的 API token" });
 
   try {
     // ---- 列表 ----
@@ -201,16 +232,19 @@ const server = http.createServer(async (req, res) => {
 
     // ---- 备份恢复：把导出的 {recipes,userdata} 写回（换设备/搬后端/防丢数据）----
     if (req.method === "POST" && p === "/api/import") {
-      let data; try { data = JSON.parse((await readBody(req)).toString("utf8") || "{}"); }
+      let data; try { data = await readJson(req); }
       catch { return sendJSON(res, 400, { error: "无效 JSON" }); }
-      let n = 0;
-      for (const r of (Array.isArray(data.recipes) ? data.recipes : [])) {
-        if (!r || !r.title) continue;
+      const list = Array.isArray(data.recipes) ? data.recipes : [];
+      if (list.length > MAX_IMPORT_RECIPES) return sendJSON(res, 400, { error: `菜谱数量过多（${list.length}），单次最多导入 ${MAX_IMPORT_RECIPES} 道` });
+      let n = 0, skipped = 0;
+      for (const r of list) {
+        // 只接受带字符串标题的对象，跳过脏数据，避免把垃圾写进 recipes/。
+        if (!r || typeof r !== "object" || typeof r.title !== "string" || !r.title.trim()) { skipped++; continue; }
         const id = slug(r.id || r.title); const rr = { ...r }; delete rr.id;
         fs.writeFileSync(path.join(RECIPES_DIR, `${id}.json`), JSON.stringify(rr, null, 2)); n++;
       }
-      if (data.userdata && typeof data.userdata === "object") fs.writeFileSync(USERDATA_FILE, JSON.stringify(data.userdata));
-      return sendJSON(res, 200, { ok: true, count: n });
+      if (data.userdata && typeof data.userdata === "object" && !Array.isArray(data.userdata)) fs.writeFileSync(USERDATA_FILE, JSON.stringify(data.userdata));
+      return sendJSON(res, 200, { ok: true, count: n, skipped });
     }
 
     // ---- 删除 ----
@@ -218,6 +252,7 @@ const server = http.createServer(async (req, res) => {
       const id = decodeURIComponent(p.slice("/api/recipes/".length));
       const fp = path.join(RECIPES_DIR, `${path.basename(id)}.json`);
       const mp = path.join(RECIPES_DIR, `${path.basename(id)}.md`);
+      if (!fs.existsSync(fp)) return sendJSON(res, 404, { error: "菜谱不存在" }); // 不存在别谎报成功
       fs.rmSync(fp, { force: true }); fs.rmSync(mp, { force: true });
       return sendJSON(res, 200, { ok: true });
     }
@@ -227,7 +262,7 @@ const server = http.createServer(async (req, res) => {
       const id = decodeURIComponent(p.slice("/api/recipes/".length));
       const fp = path.join(RECIPES_DIR, `${path.basename(id)}.json`);
       if (!fs.existsSync(fp)) return sendJSON(res, 404, { error: "菜谱不存在" });
-      const patch = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const patch = await readJson(req);
       const cur = JSON.parse(fs.readFileSync(fp, "utf8"));
       const next = { ...cur, ...patch };
       delete next.id;
@@ -237,7 +272,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- 发起解析（返回 jobId）----
     if (req.method === "POST" && p === "/api/parse-url") {
-      const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const body = await readJson(req);
       if (!/^https?:\/\//.test(body.url || "")) return sendJSON(res, 400, { error: "请提供 http(s) 链接" });
       if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
       const id = newJob();
@@ -246,7 +281,7 @@ const server = http.createServer(async (req, res) => {
     }
     // ---- 文字解析：粘贴的文字，或图文/文字帖链接（小红书/公众号/下厨房等无音频来源）----
     if (req.method === "POST" && p === "/api/parse-text") {
-      const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const body = await readJson(req);
       const url = (body.url || "").trim();
       const input = /^https?:\/\//.test(url) ? url : (body.text || "").trim();
       if (!input || input.length < 10) return sendJSON(res, 400, { error: "请粘贴菜谱文字，或提供文字帖链接" });
@@ -260,11 +295,14 @@ const server = http.createServer(async (req, res) => {
       const depth = req.headers["x-depth"];
       const wantVision = req.headers["x-vision"] === "1";
       if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
-      const buf = await readBody(req);
-      if (!buf.length) return sendJSON(res, 400, { error: "空文件" });
-      const tmp = path.join(os.tmpdir(), `paoding-up-${Date.now()}-${slug(filename)}`);
-      fs.writeFileSync(tmp, buf);
+      // 先同步占住并发 slot，再读上传体：否则「检查→await readBody→newJob」之间的事件循环让步会让
+      // 多个并发上传同时通过 runningCount 检查，绕过 MAX_RUNNING、并发拉起过多 ffmpeg/whisper。
       const id = newJob();
+      let buf;
+      try { buf = await readBody(req); } catch (e) { jobs.delete(id); return sendJSON(res, 400, { error: e.message }); }
+      if (!buf.length) { jobs.delete(id); return sendJSON(res, 400, { error: "空文件" }); }
+      const tmp = path.join(os.tmpdir(), `paoding-up-${Date.now()}-${slug(filename)}`);
+      await fs.promises.writeFile(tmp, buf); // 异步写，避免大文件同步写阻塞事件循环（卡住其他请求/SSE）
       runJob(id, tmp, depth, "video", wantVision);
       const j = jobs.get(id);
       // 任务结束(或超 1 小时兜底)后清理临时文件，避免卡死时泄漏
@@ -292,7 +330,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AI：对某步追问 ----
     if (req.method === "POST" && p === "/api/ask") {
-      const { recipeId, stepIndex, question } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const { recipeId, stepIndex, question } = await readJson(req);
       const r = loadRecipe(recipeId);
       if (!r) return sendJSON(res, 404, { error: "菜谱不存在" });
       const s = (r.steps || []).find((x) => x.index === stepIndex);
@@ -307,7 +345,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AI：食材替代 ----
     if (req.method === "POST" && p === "/api/substitute") {
-      const { recipeId, ingredient } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const { recipeId, ingredient } = await readJson(req);
       const r = loadRecipe(recipeId);
       const answer = await chatText(config.llm, {
         system: "你是经验丰富的中餐厨师，实话实说、不糊弄。用户做某道菜时缺了某种食材/调料，针对性判断：\n" +
@@ -321,7 +359,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AI：术语微科普 ----
     if (req.method === "POST" && p === "/api/term") {
-      const { term } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const { term } = await readJson(req);
       const answer = await chatText(config.llm, {
         system: "你是食品科学科普作者。用3~4句通俗中文解释这个烹饪术语/原理是什么、为什么重要。",
         user: `解释一下烹饪里的「${term}」。`,
@@ -331,7 +369,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AI：翻车补救 ----
     if (req.method === "POST" && p === "/api/troubleshoot") {
-      const { recipeId, stepIndex, problem } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const { recipeId, stepIndex, problem } = await readJson(req);
       const r = loadRecipe(recipeId);
       const s = r && (r.steps || []).find((x) => x.index === stepIndex);
       const answer = await chatText(config.llm, {
@@ -343,7 +381,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AI：每份营养估算 ----
     if (req.method === "POST" && p === "/api/nutrition") {
-      const { recipeId } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const { recipeId } = await readJson(req);
       const r = loadRecipe(recipeId);
       if (!r) return sendJSON(res, 404, { error: "菜谱不存在" });
       const answer = await chatText(config.llm, {
@@ -355,7 +393,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AI：这道菜为什么这样设计（总览）----
     if (req.method === "POST" && p === "/api/overview") {
-      const { recipeId } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const { recipeId } = await readJson(req);
       const r = loadRecipe(recipeId);
       if (!r) return sendJSON(res, 404, { error: "菜谱不存在" });
       const answer = await chatText(config.llm, {
@@ -391,7 +429,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(404); res.end("Not found");
   } catch (e) {
     console.error(`[${p}]`, e.message);
-    if (!res.headersSent) sendJSON(res, 500, { error: e.message });
+    if (!res.headersSent) sendJSON(res, e.statusCode || 500, { error: e.message });
   }
 });
 
@@ -403,4 +441,5 @@ server.listen(PORT, HOST, () => {
   if (lan) console.log(`  局域网(手机同WiFi): http://${lan}:${PORT}`);
   console.log(`  LLM: ${config.llm.model} @ ${config.llm.baseUrl}`);
   console.log(`  ASR: ${config.asr.provider === "local" ? "本地 whisper.cpp" : config.asr.model}`);
+  console.log(`  API 鉴权: ${API_TOKEN ? "\x1b[32m已开启\x1b[0m（客户端需在设置里填同一 token）" : "\x1b[33m未开启\x1b[0m（公网/隧道暴露时请设 PAODING_API_TOKEN）"}`);
 });
