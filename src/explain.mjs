@@ -9,6 +9,9 @@ const DEPTH_HINT = {
   advanced: "面向进阶爱好者：可深入食品科学与火候化学，允许使用专业术语。",
 };
 
+// 合法的讲解深度（唯一来源，供 CLI / 服务端校验）。
+export const DEPTHS = Object.keys(DEPTH_HINT);
+
 const SYSTEM = (depth) => `你是一位既懂食品科学、又会教做菜的中餐老师。
 用户会给你一份已经结构化的菜谱（含分步骤）。请为【每一步】生成"为什么"讲解。${DEPTH_HINT[depth] || DEPTH_HINT.balanced}
 

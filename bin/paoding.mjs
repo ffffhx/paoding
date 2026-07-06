@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { loadConfig } from "../src/config.mjs";
 import { processVideo } from "../src/pipeline.mjs";
+import { DEPTHS } from "../src/explain.mjs";
 
 const HELP = `庖丁 · 做菜视频解析引擎 (MVP)
 
@@ -46,7 +47,13 @@ async function main() {
     console.error(`\x1b[31m配置错误：\x1b[0m ${e.message}`);
     process.exit(1);
   }
-  if (args.depth) config.depth = args.depth;
+  if (args.depth) {
+    if (!DEPTHS.includes(args.depth)) {
+      console.error(`\x1b[31m参数错误：\x1b[0m --depth 只能是 ${DEPTHS.join(" | ")}（收到「${args.depth}」）`);
+      process.exit(1);
+    }
+    config.depth = args.depth;
+  }
   if (args.out) config.outDir = args.out;
 
   const t0 = Date.now();

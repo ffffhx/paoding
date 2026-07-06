@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "../src/config.mjs";
 import { processVideo } from "../src/pipeline.mjs";
 import { chatText } from "../src/llm.mjs";
+import { DEPTHS } from "../src/explain.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RECIPES_DIR = path.join(HERE, "recipes");
@@ -85,7 +86,8 @@ function pushJob(id, ev) {
 }
 function runJob(id, input, depth) {
   const j = jobs.get(id);
-  const cfg = { ...config, depth: depth || config.depth };
+  // 非法/缺省的 depth 归一到配置默认值，避免前端传错值时静默按 balanced 生成。
+  const cfg = { ...config, depth: DEPTHS.includes(depth) ? depth : config.depth };
   processVideo(input, cfg, {
     onProgress: (p) => { j.progress = p; pushJob(id, { type: "progress", ...p }); },
   })
