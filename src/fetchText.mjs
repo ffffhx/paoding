@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { assertPublicUrl } from "./urlSafety.mjs";
+import { fetchWithRetry } from "./fetchRetry.mjs";
 
 // 跑子进程并捕获 stdout（用于 yt-dlp -j 抓元数据）。
 function run(cmd, args) {
@@ -38,7 +39,7 @@ async function fetchHtml(url) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 15000);
     try {
-      const res = await fetch(current, {
+      const res = await fetchWithRetry(current, {
         signal: ctrl.signal,
         redirect: "manual",
         headers: {

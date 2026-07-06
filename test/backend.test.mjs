@@ -8,6 +8,7 @@ import { DEPTHS } from "../src/explain.mjs";
 import { assertPublicUrl, isPrivateAddress } from "../src/urlSafety.mjs";
 import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 import { createJobQueue } from "../src/jobs.mjs";
+import { fetchWithRetry } from "../src/fetchRetry.mjs";
 
 test("isUrl 只认 http(s)", () => {
   assert.equal(isUrl("https://x.com"), true);
@@ -109,6 +110,59 @@ test("任务队列 FIFO、位置与上限", () => {
   assert.equal(q.position("b"), 1);
   assert.equal(q.dequeueReady().id, "b");
   assert.equal(q.dequeueReady(), null);
+});
+
+test("fetchWithRetry 重试网络错误、5xx 与 429", async () => {
+  let calls = 0;
+  const res = await fetchWithRetry("https://example.test/a", {}, {
+    delaysMs: [0, 0],
+    fetchImpl: async () => {
+      calls++;
+      if (calls === 1) throw new Error("socket hang up");
+      if (calls === 2) return new Response("busy", { status: 503 });
+      return new Response("ok", { status: 200 });
+    },
+  });
+  assert.equal(await res.text(), "ok");
+  assert.equal(calls, 3);
+
+  let hit429 = 0;
+  const after429 = await fetchWithRetry("https://example.test/b", {}, {
+    delaysMs: [0],
+    fetchImpl: async () => (++hit429 === 1 ? new Response("limit", { status: 429 }) : new Response("ok")),
+  });
+  assert.equal(after429.status, 200);
+  assert.equal(hit429, 2);
+});
+
+test("fetchWithRetry 不重试普通 4xx", async () => {
+  let calls = 0;
+  const res = await fetchWithRetry("https://example.test/404", {}, {
+    delaysMs: [0, 0],
+    fetchImpl: async () => { calls++; return new Response("no", { status: 404 }); },
+  });
+  assert.equal(res.status, 404);
+  assert.equal(calls, 1);
+});
+
+test("fetchWithRetry 尊重 AbortSignal", async () => {
+  const ac = new AbortController();
+  ac.abort(new Error("stop-now"));
+  let calls = 0;
+  await assert.rejects(() => fetchWithRetry("https://example.test/abort", { signal: ac.signal }, {
+    fetchImpl: async () => { calls++; return new Response("never"); },
+  }), /stop-now/);
+  assert.equal(calls, 0);
+
+  const ac2 = new AbortController();
+  let delayedCalls = 0;
+  const p = fetchWithRetry("https://example.test/retry", { signal: ac2.signal }, {
+    delaysMs: [50],
+    fetchImpl: async () => { delayedCalls++; return new Response("retry", { status: 503 }); },
+  });
+  setTimeout(() => ac2.abort(new Error("stop-delay")), 0);
+  await assert.rejects(() => p, /stop-delay/);
+  assert.equal(delayedCalls, 1);
 });
 
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */

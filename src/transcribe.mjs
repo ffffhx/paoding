@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fetchWithRetry } from "./fetchRetry.mjs";
 
 // 支持两种 ASR：
 //   provider=local  → 本地 whisper.cpp（whisper-cli），免费离线，Mac 首选
@@ -135,7 +136,7 @@ async function transcribeChunk(asr, filePath, signal, _verbose = true) {
   form.append("prompt", "这是一段中文做菜教学视频，包含食材、用量、火候和步骤。");
   if (_verbose) form.append("response_format", "verbose_json");
 
-  const res = await fetch(`${asr.baseUrl}/audio/transcriptions`, {
+  const res = await fetchWithRetry(`${asr.baseUrl}/audio/transcriptions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${asr.apiKey}` },
     body: form,
