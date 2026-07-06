@@ -104,7 +104,7 @@ node app/server.mjs
 
 Open the printed local/LAN URL in a browser. On a phone in the same Wi-Fi network, add it to the home screen for a full-screen PWA.
 
-Optional: set `PAODING_OUTPUT_LANG=en` to ask the LLM to generate structured recipes, step explanations, nutrition estimates, technique summaries, and AI helper answers in English. The frontend interface i18n work is separate and currently in progress.
+Optional: set `PAODING_OUTPUT_LANG=en` to ask the LLM to generate structured recipes, step explanations, nutrition estimates, technique summaries, and AI helper answers in English. The frontend language is switched in the app settings; date and number formatting are not localized yet.
 
 ### Scheme B: Command Line
 
@@ -162,6 +162,6 @@ The test suite uses Node's built-in test runner and local fakes/stubs for extern
 ## Roadmap Snapshot
 
 - Done: text posts, video fallback, Android/PWA shell, sync and backup, editing, quantity scaling, shopping lists, Cooklang/schema.org export, optional visual OCR, step screenshots, weekly meal planning, multi-dish timelines, household isolation, Docker/Compose, source timestamp jumps, nutrition estimates, technique library, public share pages, print/PDF, Chinese-unit references, and frontend i18n infrastructure.
-- i18n status: `app/i18n.js`, `t()` fallback, zh/en dictionaries, the settings-page language selector, and userdata sync are in place. Only the language setting block is extracted so far; the rest of the UI still uses hard-coded Chinese text.
-- In progress: full English UI coverage across home, detail, cook mode, shopping, planning, techniques, toasts, and errors.
+- i18n status: `app/i18n.js`, `t()` fallback, zh/en dictionaries, the settings-page language selector, and userdata sync are in place. English UI coverage now includes the language setting, home/list views, recipe detail, cook-along mode, shopping/planning, techniques, toasts, and error prompts.
+- In progress: remaining hard-coded Chinese in secondary settings rows, the install banner, tag-edit modal, exported recipe text, and date/number localization.
 - Next: more real-world video prompt tuning, broader technique vocabulary, and higher-quality technique matching.
