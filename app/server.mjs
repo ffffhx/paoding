@@ -155,6 +155,52 @@ function readBody(req, limitMB = 800) {
     req.on("error", reject);
   });
 }
+function streamBodyToFile(req, filePath, limitMB = 800) {
+  return new Promise((resolve, reject) => {
+    const limit = limitMB * 1024 * 1024;
+    const out = fs.createWriteStream(filePath);
+    let size = 0;
+    let settled = false;
+    const cleanup = () => {
+      req.off?.("data", onData);
+      req.off?.("error", onError);
+      req.off?.("aborted", onAborted);
+      out.off("error", onError);
+      out.off("finish", onFinish);
+    };
+    const fail = (e) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try { req.unpipe?.(out); } catch {}
+      out.destroy();
+      fs.rmSync(filePath, { force: true });
+      reject(e);
+    };
+    const onData = (c) => {
+      size += c.length;
+      if (size > limit) {
+        const e = Object.assign(new Error("文件过大"), { statusCode: 413 });
+        try { req.destroy(); } catch {}
+        fail(e);
+      }
+    };
+    const onError = (e) => fail(e);
+    const onAborted = () => fail(Object.assign(new Error("上传中断"), { statusCode: 400 }));
+    const onFinish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(size);
+    };
+    req.on("data", onData);
+    req.on("error", onError);
+    req.on("aborted", onAborted);
+    out.on("error", onError);
+    out.on("finish", onFinish);
+    req.pipe(out);
+  });
+}
 // 校验请求 token：可来自 Authorization: Bearer / X-Paoding-Token 头，或 ?token=（SSE 无法自定义头）。
 function authOk(req, url) {
   if (!API_TOKEN) return true; // 未配置 = 不鉴权
@@ -630,11 +676,11 @@ export async function handleRequest(req, res) {
       const reserved = reserveUploadJob({ filename, depth: depth || null, vision: wantVision, images: wantImages });
       if (!reserved.ok) return sendJSON(res, 429, { error: "解析任务繁忙，队列已满，请稍后再试" });
       const id = reserved.id;
-      let buf;
-      try { buf = await readBody(req); } catch (e) { cancelReservedJob(id); return sendJSON(res, 400, { error: e.message }); }
-      if (!buf.length) { cancelReservedJob(id); return sendJSON(res, 400, { error: "空文件" }); }
       const tmp = path.join(os.tmpdir(), `paoding-up-${Date.now()}-${slug(filename)}`);
-      await fs.promises.writeFile(tmp, buf); // 异步写，避免大文件同步写阻塞事件循环（卡住其他请求/SSE）
+      let size = 0;
+      try { size = await streamBodyToFile(req, tmp); }
+      catch (e) { cancelReservedJob(id); return sendJSON(res, e.statusCode || 400, { error: e.message }); }
+      if (!size) { cancelReservedJob(id); fs.rmSync(tmp, { force: true }); return sendJSON(res, 400, { error: "空文件" }); }
       markUploadReady(id, { tmp }, () => {
         runJob(id, tmp, depth, "video", wantVision, wantImages);
         // 任务结束(或超 1 小时兜底)后清理临时文件，避免卡死时泄漏

@@ -37,6 +37,7 @@ before(async () => {
     PAODING_HOST: "127.0.0.1",
     PAODING_RECIPES_DIR: recipesDir,
     PAODING_USERDATA_FILE: userFile,
+    PAODING_MAX_JOBS: "0",
     PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL || "http://localhost:11434/v1",
     PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY || "test",
   });
@@ -56,6 +57,12 @@ class MockReq extends EventEmitter {
   }
   destroy() {
     this.destroyed = true;
+  }
+  pipe(dest) {
+    this.on("data", (c) => dest.write(c));
+    this.on("end", () => dest.end());
+    this.on("error", (e) => dest.destroy(e));
+    return dest;
   }
 }
 
@@ -180,6 +187,22 @@ test("parse-url 私网链接 → 400", async () => {
 
 test("parse-text 太短 → 400", async () => {
   assert.equal((await request("/api/parse-text", J({ text: "短" }))).status, 400);
+});
+
+test("parse-file 中等 body 上传返回 jobId", async () => {
+  const body = Buffer.alloc(256 * 1024, 7);
+  const r = await request("/api/parse-file", {
+    method: "POST",
+    headers: { "X-Filename": encodeURIComponent("upload.mp4"), "Content-Type": "application/octet-stream" },
+    body,
+  });
+  assert.equal(r.status, 200);
+  const data = await r.json();
+  assert.match(data.jobId, /^[0-9a-f-]{36}$/);
+  const jobs = await (await request("/api/jobs")).json();
+  const job = jobs.find((x) => x.id === data.jobId);
+  assert.equal(job.status, "queued");
+  assert.equal(job.params.filename, "upload.mp4");
 });
 
 test("nutrition 缓存返回结构化结果，编辑食材后失效", async () => {
