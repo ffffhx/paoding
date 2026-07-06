@@ -63,11 +63,14 @@ export function loadConfig() {
       model: process.env.PAODING_ASR_MODEL || "whisper-1",
       whisperBin: process.env.PAODING_WHISPER_BIN || "whisper-cli",
       whisperModel: process.env.PAODING_WHISPER_MODEL || "",
+      ffmpegBin: process.env.PAODING_FFMPEG_BIN || "ffmpeg",
       lang: process.env.PAODING_ASR_LANG || "zh",
     },
     outDir: process.env.PAODING_OUT_DIR || path.join(process.cwd(), "paoding-out"),
     depth: process.env.PAODING_DEPTH || "balanced",
     ytdlp: {
+      bin: process.env.PAODING_YTDLP_BIN || "yt-dlp",
+      ffmpegBin: process.env.PAODING_FFMPEG_BIN || "ffmpeg",
       // 用浏览器已登录的 cookie 绕过 B站等平台的反爬（412）。留空则不带 cookie。
       cookiesBrowser: process.env.PAODING_COOKIES_FROM_BROWSER || "",
       userAgent:

@@ -41,9 +41,17 @@ export function formatTimedTranscript(segments) {
 }
 
 // ---- 本地 whisper.cpp ----
+function resolveWhisperBin(asr = {}) {
+  return asr.whisperBin || process.env.PAODING_WHISPER_BIN || "whisper-cli";
+}
+
+function resolveFfmpegBin(asr = {}) {
+  return asr.ffmpegBin || process.env.PAODING_FFMPEG_BIN || "ffmpeg";
+}
+
 function transcribeLocal(asr, audioPath, onProgress = () => {}, signal) {
   return new Promise((resolve, reject) => {
-    const bin = asr.whisperBin || "whisper-cli";
+    const bin = resolveWhisperBin(asr);
     if (!asr.whisperModel || !fs.existsSync(asr.whisperModel)) {
       return reject(
         new Error(
@@ -108,7 +116,7 @@ async function transcribeCloud(asr, audioPath, onProgress = () => {}, signal) {
 
   // 超限：切片 → 逐段转写 → 拼接（时间戳平移回全片时间轴）。
   console.warn(`  · 音频约 ${sizeMB.toFixed(1)}MB，超过接口上限，自动按 ${SEG_SECONDS / 60} 分钟分片转写。`);
-  const { chunks, cleanup } = await splitAudio(audioPath, SEG_SECONDS, signal);
+  const { chunks, cleanup } = await splitAudio(asr, audioPath, SEG_SECONDS, signal);
   try {
     const parts = [], segments = [];
     for (let i = 0; i < chunks.length; i++) {
@@ -155,10 +163,11 @@ async function transcribeChunk(asr, filePath, signal, _verbose = true) {
 }
 
 // 用 ffmpeg 按 segSeconds 把音频切成多段 mp3；返回有序分片路径 + 清理函数。
-function splitAudio(audioPath, segSeconds, signal) {
+function splitAudio(asr, audioPath, segSeconds, signal) {
   return new Promise((resolve, reject) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-asr-seg-"));
     const cleanup = () => fs.rmSync(dir, { recursive: true, force: true });
+    const ffmpeg = resolveFfmpegBin(asr);
     const pattern = path.join(dir, "chunk-%03d.mp3");
     const args = [
       "-y", "-i", audioPath,
@@ -166,12 +175,12 @@ function splitAudio(audioPath, segSeconds, signal) {
       "-c", "copy", "-reset_timestamps", "1",
       pattern,
     ];
-    const child = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"], signal });
+    const child = spawn(ffmpeg, args, { stdio: ["ignore", "ignore", "pipe"], signal });
     let err = "";
     child.stderr.on("data", (d) => (err += d));
-    child.on("error", (e) => { cleanup(); reject(new Error(`调用 ffmpeg 切片失败：${e.message}`)); });
+    child.on("error", (e) => { cleanup(); reject(new Error(`调用 ffmpeg（${ffmpeg}）切片失败：${e.message}`)); });
     child.on("close", (code) => {
-      if (code !== 0) { cleanup(); return reject(new Error(`ffmpeg 切片退出码 ${code}：${err.slice(-300)}`)); }
+      if (code !== 0) { cleanup(); return reject(new Error(`ffmpeg（${ffmpeg}）切片退出码 ${code}：${err.slice(-300)}`)); }
       const chunks = fs
         .readdirSync(dir)
         .filter((f) => f.startsWith("chunk-") && f.endsWith(".mp3"))

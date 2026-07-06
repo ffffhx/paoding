@@ -16,19 +16,24 @@ function run(cmd, args, signal, capture = false) {
   });
 }
 
+function resolveFfmpegBin() {
+  return process.env.PAODING_FFMPEG_BIN || "ffmpeg";
+}
+
 // 从视频抽关键帧：优先场景切换、抽不到再退回固定间隔；缩放到 768 宽、限量。返回 base64 jpg 数组。
 export async function extractFrames(videoPath, { max = 20, signal } = {}) {
+  const ffmpeg = resolveFfmpegBin();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-frames-"));
   const pattern = path.join(dir, "f-%04d.jpg");
   const collect = () => fs.readdirSync(dir).filter((f) => f.endsWith(".jpg")).sort();
   try {
     // 场景切换抽帧
-    await run("ffmpeg", ["-y", "-i", videoPath, "-vf", "select='gt(scene,0.3)',scale=768:-1", "-vsync", "vfr", "-frames:v", String(max), pattern], signal).catch(() => {});
+    await run(ffmpeg, ["-y", "-i", videoPath, "-vf", "select='gt(scene,0.3)',scale=768:-1", "-vsync", "vfr", "-frames:v", String(max), pattern], signal).catch(() => {});
     let files = collect();
     if (files.length < 3) {
       // 兜底：每 6 秒一帧
       files.forEach((f) => fs.rmSync(path.join(dir, f), { force: true }));
-      await run("ffmpeg", ["-y", "-i", videoPath, "-vf", "fps=1/6,scale=768:-1", "-frames:v", String(max), pattern], signal);
+      await run(ffmpeg, ["-y", "-i", videoPath, "-vf", "fps=1/6,scale=768:-1", "-frames:v", String(max), pattern], signal);
       files = collect();
     }
     return files.slice(0, max).map((f) => fs.readFileSync(path.join(dir, f)).toString("base64"));
@@ -84,7 +89,7 @@ export function candidateTimes([start, end], duration, n = 4) {
 
 // 在第 tSec 秒抽一帧存为 jpg。-ss 放在 -i 前走快速 seek，抽几十帧也只要几秒。
 export async function extractFrameAt(videoPath, tSec, outPath, signal) {
-  await run("ffmpeg", ["-y", "-ss", String(tSec), "-i", videoPath, "-frames:v", "1", "-vf", `scale=${FRAME_WIDTH}:-2`, "-q:v", "3", outPath], signal);
+  await run(resolveFfmpegBin(), ["-y", "-ss", String(tSec), "-i", videoPath, "-frames:v", "1", "-vf", `scale=${FRAME_WIDTH}:-2`, "-q:v", "3", outPath], signal);
   return fs.existsSync(outPath) && fs.statSync(outPath).size > 0;
 }
 
@@ -250,7 +255,7 @@ export async function extractIngredientImages(vision, videoPath, recipe, { durat
         const box = dim ? clampBbox(r.bbox_2d, dim.width, dim.height) : null;
         let cropped = false;
         if (box) {
-          await run("ffmpeg", ["-y", "-i", frame.file, "-vf", `crop=${box.w}:${box.h}:${box.x}:${box.y}`, "-q:v", "3", outPath], signal).catch(() => {});
+          await run(resolveFfmpegBin(), ["-y", "-i", frame.file, "-vf", `crop=${box.w}:${box.h}:${box.x}:${box.y}`, "-q:v", "3", outPath], signal).catch(() => {});
           cropped = fs.existsSync(outPath) && fs.statSync(outPath).size > 0;
         }
         if (!cropped) fs.copyFileSync(frame.file, outPath);
