@@ -323,6 +323,27 @@ function mergeCookTimeline(recipes, opts = {}) {
     .map(({ recipeOrder, ...a }) => ({ ...a, offsetMin: Math.round((a.offsetMin - minStart) * 10) / 10 }))
     .sort((a, b) => a.offsetMin - b.offsetMin || a.recipeTitle.localeCompare(b.recipeTitle, 'zh-Hans-CN') || a.stepIndex - b.stepIndex);
 }
+function moveItem(list, from, to) {
+  const arr = Array.isArray(list) ? list.slice() : [];
+  const a = Number(from), b = Number(to);
+  if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || a >= arr.length || b < 0 || b >= arr.length || a === b) return arr;
+  const [item] = arr.splice(a, 1);
+  arr.splice(b, 0, item);
+  return arr;
+}
+function insertItem(list, index, item) {
+  const arr = Array.isArray(list) ? list.slice() : [];
+  const at = Math.max(0, Math.min(arr.length, Number.isInteger(Number(index)) ? Number(index) : arr.length));
+  arr.splice(at, 0, item);
+  return arr;
+}
+function removeItem(list, index) {
+  const arr = Array.isArray(list) ? list.slice() : [];
+  const at = Number(index);
+  if (!Number.isInteger(at) || at < 0 || at >= arr.length) return arr;
+  arr.splice(at, 1);
+  return arr;
+}
 function scaleAmount(amt, f) {
   if (!amt || f === 1) return amt;
   const fmt = (v) => String(Math.round(v * 100) / 100); // 最多两位小数
@@ -971,6 +992,32 @@ function showBackendSetupIfNeeded() {
 }
 
 /* ================= 详情页 ================= */
+function parseTagsText(text) {
+  return String(text || '').split(/[,，、\s]+/).map(t => t.trim()).filter(Boolean);
+}
+async function editRecipeTags(r, onSaved) {
+  const ov = openModal(`<h3 style="text-align:left">编辑标签</h3>
+    <input type="text" id="tagEditInput" placeholder="家常, 快手, 下饭" value="${esc((r.tags || []).join('、'))}">
+    <div id="tagEditPreview" class="tags" style="margin-top:10px"></div>
+    <div class="mrow"><button class="btn ghost" id="tagCancel">取消</button><button class="btn" id="tagSave">保存</button></div>`, 'left');
+  const draw = () => {
+    const tags = parseTagsText(ov.querySelector('#tagEditInput').value);
+    ov.querySelector('#tagEditPreview').innerHTML = tags.map(t => `<span class="tag">${esc(t)}</span>`).join('') || '<span style="color:var(--muted);font-size:13px">无标签</span>';
+  };
+  ov.querySelector('#tagEditInput').oninput = draw;
+  draw();
+  ov.querySelector('#tagCancel').onclick = () => ov.remove();
+  ov.querySelector('#tagSave').onclick = async () => {
+    const tags = parseTagsText(ov.querySelector('#tagEditInput').value);
+    try {
+      const res = await F('/api/recipes/' + encodeURIComponent(r.id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags }) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || ('HTTP ' + res.status));
+      ov.remove();
+      onSaved && onSaved(tags);
+      toast('标签已保存');
+    } catch (e) { toast('保存失败：' + e.message); }
+  };
+}
 function openDetail(r, focusStepIndex = null) {
   const m = rmeta(r.id);
   const base = baseServings(r);
@@ -999,6 +1046,7 @@ function openDetail(r, focusStepIndex = null) {
     <div style="display:flex;gap:8px;padding:8px 16px 0;flex-wrap:wrap">
       <button class="btn ghost sm" id="btnOverview">💡 为什么这样设计</button>
       <button class="btn ghost sm" id="btnNutri">🥗 营养估算</button>
+      <button class="btn ghost sm" id="btnTags">🏷 标签</button>
       <button class="btn ghost sm" id="btnExport2">⬇ 导出</button>
     </div>
     ${r.imported ? `<div class="import-note"><span>${importedNeedsWhy ? '外部导入，无原理讲解' : '外部导入，原理讲解已补齐'}</span>${importedNeedsWhy ? '<button class="btn ghost sm" id="btnImportExplain">AI 补讲解</button>' : ''}</div>` : ''}
@@ -1079,6 +1127,12 @@ function openDetail(r, focusStepIndex = null) {
     btn.disabled = false;
   };
   p.querySelector('#btnOverview').onclick = (e) => aiCall(e.currentTarget, () => API.overview(r.id), '💡 为什么这样设计', 'overview');
+  p.querySelector('#btnTags').onclick = () => editRecipeTags(r, (nextTags) => {
+    r.tags = nextTags;
+    recipes = recipes.map(x => x.id === r.id ? { ...x, tags: nextTags } : x);
+    renderRecipes(); renderFilters();
+    close(); openDetail(r);
+  });
   const importExplainBtn = p.querySelector('#btnImportExplain');
   if (importExplainBtn) importExplainBtn.onclick = async (e) => {
     const btn = e.currentTarget;
@@ -1187,13 +1241,17 @@ function openEdit(r) {
       <div style="display:flex;gap:6px;align-items:center" data-i="${idx}">
         <input type="text" class="fName" placeholder="食材" value="${esc(i.name || '')}" style="${fld};flex:2">
         <input type="text" class="fAmt" placeholder="用量" value="${esc(i.amount || '')}" style="${fld};flex:1;min-width:0">
+        <button class="iconbtn fUp" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
+        <button class="iconbtn fDown" title="下移" ${idx === d.ingredients.length - 1 ? 'disabled' : ''}>↓</button>
         <button class="iconbtn fDel" title="删除">🗑</button>
       </div>`).join('') || '<div style="color:var(--muted);font-size:13px">还没有食材，点上面「加一行」</div>';
     box.querySelectorAll('[data-i]').forEach(row => {
       const idx = +row.dataset.i;
       row.querySelector('.fName').oninput = (e) => d.ingredients[idx].name = e.target.value;
       row.querySelector('.fAmt').oninput = (e) => { d.ingredients[idx].amount = e.target.value; delete d.ingredients[idx].qty; delete d.ingredients[idx].unit; };
-      row.querySelector('.fDel').onclick = () => { d.ingredients.splice(idx, 1); renderIng(); };
+      row.querySelector('.fUp').onclick = () => { d.ingredients = moveItem(d.ingredients, idx, idx - 1); renderIng(); };
+      row.querySelector('.fDown').onclick = () => { d.ingredients = moveItem(d.ingredients, idx, idx + 1); renderIng(); };
+      row.querySelector('.fDel').onclick = async () => { if (!(await confirmModal('删除这个食材？', '删除'))) return; d.ingredients = removeItem(d.ingredients, idx); renderIng(); };
     });
   }
   function renderSteps() {
@@ -1223,14 +1281,14 @@ function openEdit(r) {
       row.querySelector('.sHeat').oninput = (e) => (s.params = s.params || {}).heat = e.target.value;
       row.querySelector('.sTime').oninput = (e) => (s.params = s.params || {}).time = e.target.value;
       row.querySelector('.sReason').oninput = (e) => (s.why = s.why || {}).reason = e.target.value;
-      row.querySelector('.sDel').onclick = () => { d.steps.splice(idx, 1); renderSteps(); };
-      row.querySelector('.sUp').onclick = () => { if (idx > 0) { [d.steps[idx - 1], d.steps[idx]] = [d.steps[idx], d.steps[idx - 1]]; renderSteps(); } };
-      row.querySelector('.sDown').onclick = () => { if (idx < d.steps.length - 1) { [d.steps[idx + 1], d.steps[idx]] = [d.steps[idx], d.steps[idx + 1]]; renderSteps(); } };
+      row.querySelector('.sDel').onclick = async () => { if (!(await confirmModal('删除这一步？', '删除'))) return; d.steps = removeItem(d.steps, idx); renderSteps(); };
+      row.querySelector('.sUp').onclick = () => { d.steps = moveItem(d.steps, idx, idx - 1); renderSteps(); };
+      row.querySelector('.sDown').onclick = () => { d.steps = moveItem(d.steps, idx, idx + 1); renderSteps(); };
     });
   }
   renderIng(); renderSteps();
-  p.querySelector('#eAddIng').onclick = () => { d.ingredients.push({ name: '', amount: '', note: '' }); renderIng(); };
-  p.querySelector('#eAddStep').onclick = () => { d.steps.push({ title: '', action: '', params: {}, why: {} }); renderSteps(); };
+  p.querySelector('#eAddIng').onclick = () => { d.ingredients = insertItem(d.ingredients, d.ingredients.length, { name: '', amount: '', note: '' }); renderIng(); };
+  p.querySelector('#eAddStep').onclick = () => { d.steps = insertItem(d.steps, d.steps.length, { title: '', action: '', params: {}, why: {} }); renderSteps(); };
 
   const close = () => p.remove();
   p.querySelector('.back').onclick = () => { close(); openDetail(r); };
@@ -1242,7 +1300,7 @@ function openEdit(r) {
     const tm = parseInt(p.querySelector('#eTime').value, 10); d.total_time_min = Number.isFinite(tm) ? tm : null;
     d.difficulty = p.querySelector('#eDiff').value;
     d.cuisine = p.querySelector('#eCuisine').value.trim() || null;
-    d.tags = p.querySelector('#eTags').value.split(/[,，、\s]+/).map(t => t.trim()).filter(Boolean);
+    d.tags = parseTagsText(p.querySelector('#eTags').value);
     d.ingredients = d.ingredients.filter(i => (i.name || '').trim());
     // 只填了「为什么」而没写标题/做法的步骤也保留，别把用户输入的讲解静默丢掉
     d.steps = d.steps.filter(s => (s.title || s.action || s.why?.reason || s.why?.if_not || s.why?.cue || '').trim());

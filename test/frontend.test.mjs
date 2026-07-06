@@ -110,6 +110,29 @@ test("mergeCookTimeline 单菜退化为原步骤顺序", () => {
   assert.equal(timeline[1].passive, true);
 });
 
+test("moveItem 移动整步对象且不丢附属数据", () => {
+  const steps = [
+    { title: "切菜", source_time: [1, 3], image: "s1.jpg", why: { reason: "更均匀" } },
+    { title: "下锅", source_time: [8, 12], image: "s2.jpg", why: { reason: "先爆香" } },
+  ];
+  const moved = app.moveItem(steps, 0, 1);
+  assert.equal(moved[1], steps[0]);
+  assert.equal(moved[1].image, "s1.jpg");
+  assert.deepEqual(Array.from(moved[1].source_time), [1, 3]);
+  assert.equal(moved[1].why.reason, "更均匀");
+  assert.deepEqual(Array.from(steps.map(x => x.title)), ["切菜", "下锅"]);
+});
+
+test("insertItem/removeItem 返回新数组并支持边界下标", () => {
+  const base = ["a", "c"];
+  const inserted = app.insertItem(base, 1, "b");
+  assert.deepEqual(Array.from(inserted), ["a", "b", "c"]);
+  assert.deepEqual(Array.from(base), ["a", "c"]);
+  assert.deepEqual(Array.from(app.removeItem(inserted, 1)), ["a", "c"]);
+  assert.deepEqual(Array.from(app.insertItem(base, 99, "z")), ["a", "c", "z"]);
+  assert.deepEqual(Array.from(app.removeItem(base, 99)), ["a", "c"]);
+});
+
 test("recipeToCooklang 元数据+结构化食材+步骤", () => {
   const cook = app.recipeToCooklang({ title: "蛋", tags: ["家常"], ingredients: [{ name: "鸡蛋", qty: 3, unit: "个" }, { name: "盐", amount: "适量" }], steps: [{ title: "炒", action: "下锅" }] });
   assert.ok(cook.includes(">> title: 蛋"));
