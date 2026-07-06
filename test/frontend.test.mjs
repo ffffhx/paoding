@@ -64,6 +64,15 @@ test("安装横幅切 en 后使用英文文案", () => {
   app.setLanguage("zh");
 });
 
+test("标签编辑弹窗切 en 后使用英文文案", () => {
+  app.setLanguage("en");
+  assert.equal(app.t("tag.edit.title"), "Edit tags");
+  assert.equal(app.t("tag.edit.placeholder"), "home, quick, weeknight");
+  assert.equal(app.t("tag.edit.empty"), "No tags");
+  assert.equal(app.t("tag.edit.save"), "Save");
+  app.setLanguage("zh");
+});
+
 test("首页/列表文案切 en 后使用英文标签", () => {
   app.setLanguage("en");
   assert.deepEqual(Array.from(app.homeFilterChips(["家常"]).slice(0, 6).map((x) => x[1])), [

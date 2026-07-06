@@ -1190,13 +1190,13 @@ function parseTagsText(text) {
   return String(text || '').split(/[,，、\s]+/).map(t => t.trim()).filter(Boolean);
 }
 async function editRecipeTags(r, onSaved) {
-  const ov = openModal(`<h3 style="text-align:left">编辑标签</h3>
-    <input type="text" id="tagEditInput" placeholder="家常, 快手, 下饭" value="${esc((r.tags || []).join('、'))}">
+  const ov = openModal(`<h3 style="text-align:left">${esc(tr('tag.edit.title'))}</h3>
+    <input type="text" id="tagEditInput" placeholder="${esc(tr('tag.edit.placeholder'))}" value="${esc((r.tags || []).join(settings.lang === 'en' ? ', ' : '、'))}">
     <div id="tagEditPreview" class="tags" style="margin-top:10px"></div>
-    <div class="mrow"><button class="btn ghost" id="tagCancel">取消</button><button class="btn" id="tagSave">保存</button></div>`, 'left');
+    <div class="mrow"><button class="btn ghost" id="tagCancel">${esc(tr('common.cancel'))}</button><button class="btn" id="tagSave">${esc(tr('tag.edit.save'))}</button></div>`, 'left');
   const draw = () => {
     const tags = parseTagsText(ov.querySelector('#tagEditInput').value);
-    ov.querySelector('#tagEditPreview').innerHTML = tags.map(t => `<span class="tag">${esc(t)}</span>`).join('') || '<span style="color:var(--muted);font-size:13px">无标签</span>';
+    ov.querySelector('#tagEditPreview').innerHTML = tags.map(t => `<span class="tag">${esc(t)}</span>`).join('') || `<span style="color:var(--muted);font-size:13px">${esc(tr('tag.edit.empty'))}</span>`;
   };
   ov.querySelector('#tagEditInput').oninput = draw;
   draw();

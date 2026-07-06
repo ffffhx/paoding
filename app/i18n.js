@@ -373,6 +373,10 @@
     'settings.backendSetup.connect': '连接',
     'install.prompt': '把庖丁装到主屏，像 App 一样用',
     'install.action': '安装',
+    'tag.edit.title': '编辑标签',
+    'tag.edit.placeholder': '家常, 快手, 下饭',
+    'tag.edit.empty': '无标签',
+    'tag.edit.save': '保存',
   };
 
   const en = {
@@ -746,6 +750,10 @@
     'settings.backendSetup.connect': 'Connect',
     'install.prompt': 'Install Paoding to your home screen and use it like an app',
     'install.action': 'Install',
+    'tag.edit.title': 'Edit tags',
+    'tag.edit.placeholder': 'home, quick, weeknight',
+    'tag.edit.empty': 'No tags',
+    'tag.edit.save': 'Save',
   };
 
   const dictionaries = { zh, en };
