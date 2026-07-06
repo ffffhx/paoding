@@ -124,12 +124,28 @@ const richText = (t) => highlightInfo(linkifyTerms(t));
 /* ---------- 全局多计时器（跨步骤/后台闹铃）---------- */
 const Timers = {
   list: [], iv: null,
+  // 计时是本机状态，用 _storeSet 存 localStorage、不触发跨设备同步。
+  save() { _storeSet('timers', this.list); },
+  // 启动时恢复：刷新 / PWA 被系统回收 / 自动更新后，计时不再丢失。
+  // 已过期的按 endAt 直接标 done（不补响铃，避免回来时突然乱响），仍在跑的重启 interval。
+  restore() {
+    const saved = store.get('timers', []);
+    if (!Array.isArray(saved) || !saved.length) return;
+    const now = Date.now();
+    // 丢弃很久前(>10 分钟)就结束的计时，只留仍在跑的和刚响过不久的，避免每次启动堆一堆旧的。
+    this.list = saved
+      .map(t => ({ ...t, done: t.done || now >= t.endAt }))
+      .filter(t => !t.done || now - t.endAt < 10 * 60 * 1000);
+    this.save();
+    this.render();
+    if (this.list.some(t => !t.done)) this.start();
+  },
   ensureHUD() { let h = document.getElementById('timerhud'); if (!h) { h = el('<div id="timerhud"></div>'); document.body.appendChild(h); } return h; },
   add(label, seconds) {
     if (!seconds) return;
     if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => { });
     this.list.push({ id: Date.now() + '' + Math.floor(performance.now()), label, endAt: Date.now() + seconds * 1000, done: false });
-    this.render(); this.start(); toast('⏱ 已开始计时：' + label);
+    this.save(); this.render(); this.start(); toast('⏱ 已开始计时：' + label);
   },
   start() { if (this.iv) return; this.iv = setInterval(() => this.tick(), 500); },
   tick() {
@@ -137,6 +153,7 @@ const Timers = {
     for (const t of this.list) {
       if (!t.done && now >= t.endAt) { t.done = true; changed = true; this.ring(t); }
     }
+    if (changed) this.save(); // 有计时到点（done 变化）才落盘，避免每 500ms 写一次
     this.render();
     // 全部倒计时结束（或清空）后停掉空转的 interval；新加计时会在 add() 里重启
     if ((!this.list.length || this.list.every(t => t.done)) && this.iv) { clearInterval(this.iv); this.iv = null; }
@@ -146,7 +163,7 @@ const Timers = {
     speak(t.label + ' 时间到'); toast('⏰ ' + t.label + ' 时间到！');
     try { if ('Notification' in window && Notification.permission === 'granted') new Notification('⏰ 庖丁计时', { body: t.label + ' 时间到！', tag: t.id }); } catch { }
   },
-  remove(id) { this.list = this.list.filter(x => x.id !== id); this.render(); },
+  remove(id) { this.list = this.list.filter(x => x.id !== id); this.save(); this.render(); },
   render() {
     const h = this.ensureHUD(); const now = Date.now();
     if (!this.list.length) { h.innerHTML = ''; return; }
@@ -315,7 +332,8 @@ function openDetail(r) {
         ${r.difficulty ? `<span class="tag diff-${esc(r.difficulty)}">${esc(DIFF[r.difficulty] || r.difficulty)}</span>` : ''}
         ${r.cuisine ? `<span>${esc(r.cuisine)}</span>` : ''}
         ${r.total_time_min ? `<span>⏱ 约${esc(r.total_time_min)}分钟</span>` : ''}
-        <span>📋 ${(r.steps || []).length}步</span></div>
+        <span>📋 ${(r.steps || []).length}步</span>
+        ${/^https?:\/\//.test(r.source || '') ? `<a class="src-link" href="${esc(r.source)}" target="_blank" rel="noopener">▶ 看原视频</a>` : ''}</div>
       ${(r.tags || []).length ? `<div class="tags" style="margin-top:8px">${r.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
     </div>
     ${base ? `<div class="scaler"><span>份量</span><button class="st" data-s="-">－</button><b id="svVal">${base * factor}</b><button class="st" data-s="+">＋</button><span>人份</span></div>` : ''}
@@ -397,6 +415,23 @@ function openDetail(r) {
   $('#app').appendChild(p);
 }
 function riskBadge(r) { return r === 'high' ? ' <span class="badge risk-high">🔴 新手雷区</span>' : r === 'medium' ? ' <span class="badge risk-medium">🟡 需留意</span>' : ''; }
+// 跟做走到最后一步 → 闭环：自动记「做过」，顺手引导打分（做完正是最该沉淀的节点）。
+function finishCook(r) {
+  const m = rmeta(r.id);
+  if (!m.cooked) { m.cooked = true; m.cooked_at = new Date().toISOString(); }
+  saveMeta(); renderRecipes();
+  const stars = [1, 2, 3, 4, 5].map(n => `<span class="rs ${m.rating >= n ? 'on' : ''}" data-r="${n}">★</span>`).join('');
+  const ov = openModal(`<h3>🍜 做好啦，开动！</h3>
+    <p style="color:var(--muted)">已记为「做过」。给这道菜打个分？</p>
+    <div class="rating" style="justify-content:center;font-size:30px;margin:8px 0 2px">${stars}</div>
+    <div class="mrow"><button class="btn ghost" id="finishSkip">先不打分</button></div>`, 'finish');
+  ov.querySelectorAll('.rs').forEach(rs => rs.onclick = () => {
+    m.rating = +rs.dataset.r; saveMeta(); renderRecipes();
+    ov.querySelectorAll('.rs').forEach(x => x.classList.toggle('on', +x.dataset.r <= m.rating));
+    toast('已记录：' + '★'.repeat(m.rating)); setTimeout(() => ov.remove(), 350);
+  });
+  ov.querySelector('#finishSkip').onclick = () => ov.remove();
+}
 
 /* ================= 编辑菜谱（修正 AI 的错误）================= */
 function openEdit(r) {
@@ -596,7 +631,7 @@ async function openCook(r) {
     catch (e) { asks[s.index][asks[s.index].length - 1].a = '没问出来：' + e.message; }
     renderQA(s);
   }
-  function next() { stopSpeak(); if (cur === steps.length - 1) { exit(); toast('做好啦，开动！🍜'); return; } cur++; saveProg(cur); render(); }
+  function next() { stopSpeak(); if (cur === steps.length - 1) { exit(); finishCook(r); return; } cur++; saveProg(cur); render(); }
   async function sosStep(r, s) {
     const problem = await promptModal('🆘 哪里翻车了？', '描述现象，如：粘锅了 / 太咸 / 没熟 / 糊了', '求救'); if (!problem) return;
     (asks[s.index] = asks[s.index] || []).push({ q: '🆘 ' + problem, a: '想办法…' }); renderQA(s);
@@ -744,6 +779,7 @@ function initTabs() {
 }
 function init() {
   applyTheme(); syncDepthChips();
+  Timers.restore(); // 恢复上次未结束的计时（刷新/被系统回收后不丢）
   initTabs();
   $('#depth').onclick = (e) => { const c = e.target.closest('.chip'); if (!c) return; depth = c.dataset.d; syncDepthChips(); };
   $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast('请粘贴 http(s) 视频链接'); return; } doParse(() => API.startUrl(u, depth)); $('#url').value = ''; };
