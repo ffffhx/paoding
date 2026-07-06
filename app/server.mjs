@@ -148,6 +148,20 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { ok: true });
     }
 
+    // ---- 备份恢复：把导出的 {recipes,userdata} 写回（换设备/搬后端/防丢数据）----
+    if (req.method === "POST" && p === "/api/import") {
+      let data; try { data = JSON.parse((await readBody(req)).toString("utf8") || "{}"); }
+      catch { return sendJSON(res, 400, { error: "无效 JSON" }); }
+      let n = 0;
+      for (const r of (Array.isArray(data.recipes) ? data.recipes : [])) {
+        if (!r || !r.title) continue;
+        const id = slug(r.id || r.title); const rr = { ...r }; delete rr.id;
+        fs.writeFileSync(path.join(RECIPES_DIR, `${id}.json`), JSON.stringify(rr, null, 2)); n++;
+      }
+      if (data.userdata && typeof data.userdata === "object") fs.writeFileSync(USERDATA_FILE, JSON.stringify(data.userdata));
+      return sendJSON(res, 200, { ok: true, count: n });
+    }
+
     // ---- 删除 ----
     if (req.method === "DELETE" && p.startsWith("/api/recipes/")) {
       const id = decodeURIComponent(p.slice("/api/recipes/".length));

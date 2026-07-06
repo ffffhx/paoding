@@ -27,7 +27,30 @@ const API = {
   overview: (recipeId) => fetch(api('/api/overview'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
   userdataGet: () => fetch(api('/api/userdata')).then(r => r.json()).catch(() => ({})),
   userdataPut: (data) => fetch(api('/api/userdata'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).catch(() => { }),
+  importAll: (data) => fetch(api('/api/import'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(j),
 };
+async function exportData() {
+  try {
+    const [recipes, userdata] = await Promise.all([API.list(), API.userdataGet()]);
+    const blob = new Blob([JSON.stringify({ app: 'paoding', version: 1, exportedAt: new Date().toISOString(), recipes, userdata }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'paoding-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); toast('已导出备份文件');
+  } catch (e) { toast('导出失败：' + e.message); }
+}
+function importData(file) {
+  const reader = new FileReader();
+  reader.onload = async () => {
+    let data; try { data = JSON.parse(reader.result); } catch { toast('不是有效的备份文件'); return; }
+    if (!(await confirmModal('用这个备份覆盖当前数据？现有菜谱与收藏会被替换。', '恢复'))) return;
+    try {
+      const res = await API.importAll({ recipes: data.recipes, userdata: data.userdata });
+      toast('已恢复 ' + (res.count || 0) + ' 道菜，刷新中…');
+      setTimeout(() => location.reload(), 900);
+    } catch (e) { toast('导入失败：' + e.message); }
+  };
+  reader.readAsText(file);
+}
 async function j(r) { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); return d; }
 
 /* ---------- 状态 ---------- */
@@ -253,6 +276,11 @@ function renderSettings() {
         <span class="chip ${settings.depth === 'advanced' ? 'on' : ''}" data-d="advanced">进阶原理</span></div></div>
     <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">后端地址</div><div class="desc">手机端填电脑的「局域网地址」（启动服务器时会打印）；本机留空即可</div></div>
       <input type="text" id="apiBase" placeholder="如 http://192.168.1.5:4177" value="${esc(settings.apiBase)}" style="margin-top:8px"></div>
+    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">数据备份</div><div class="desc">把全部菜谱与收藏导出成一个文件；换设备或搬后端时可导入恢复</div></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn ghost sm" id="btnExport">⬇ 导出备份</button>
+        <button class="btn ghost sm" id="btnImport">⬆ 导入恢复</button>
+        <input type="file" id="importFile" accept="application/json,.json" class="hidden"></div></div>
     <div style="text-align:center;color:var(--muted);font-size:12px;margin-top:14px">庖丁 · 解剖每一道菜的为什么</div>`;
 
   box.querySelectorAll('[data-k]').forEach(x => { x.previousElementSibling.onclick = () => { const k = x.dataset.k; settings[k] = k === 'theme' ? (settings.theme === 'dark' ? 'light' : 'dark') : !settings[k]; saveSettings(); applyTheme(); renderSettings(); }; });
@@ -260,6 +288,9 @@ function renderSettings() {
   box.querySelectorAll('[data-tr]').forEach(b => b.onclick = () => { settings.ttsRate = Math.min(1.6, Math.max(0.6, settings.ttsRate + (b.dataset.tr === '+' ? 0.1 : -0.1))); saveSettings(); renderSettings(); });
   $('#setDepth').querySelectorAll('.chip').forEach(c => c.onclick = () => { settings.depth = c.dataset.d; depth = c.dataset.d; saveSettings(); renderSettings(); syncDepthChips(); });
   $('#apiBase').onchange = (e) => { settings.apiBase = e.target.value.trim().replace(/\/$/, ''); saveSettings(); toast('已保存后端地址'); refresh(); };
+  $('#btnExport').onclick = exportData;
+  $('#btnImport').onclick = () => $('#importFile').click();
+  $('#importFile').onchange = (e) => { const f = e.target.files[0]; if (f) importData(f); e.target.value = ''; };
 }
 function applyTheme() { document.documentElement.setAttribute('data-theme', settings.theme); document.documentElement.style.setProperty('--fs', (16 * settings.fontScale) + 'px'); }
 
