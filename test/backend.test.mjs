@@ -68,14 +68,25 @@ test("DEPTHS 是三个合法深度", () => {
 test("assertPublicUrl 拒绝本机/私网/链路本地地址", async () => {
   assert.equal(isPrivateAddress("127.0.0.1"), true);
   assert.equal(isPrivateAddress("10.1.2.3"), true);
+  assert.equal(isPrivateAddress("100.64.0.1"), true);
   assert.equal(isPrivateAddress("172.16.0.1"), true);
   assert.equal(isPrivateAddress("192.168.1.9"), true);
   assert.equal(isPrivateAddress("169.254.169.254"), true);
+  assert.equal(isPrivateAddress("198.18.0.1"), true);
+  assert.equal(isPrivateAddress("203.0.113.10"), true);
+  assert.equal(isPrivateAddress("224.0.0.1"), true);
+  assert.equal(isPrivateAddress("255.255.255.255"), true);
   assert.equal(isPrivateAddress("::1"), true);
   assert.equal(isPrivateAddress("::ffff:7f00:1"), true);
+  assert.equal(isPrivateAddress("::ffff:100.64.0.1"), true);
   assert.equal(isPrivateAddress("fc00::1"), true);
   assert.equal(isPrivateAddress("fe80::1"), true);
+  assert.equal(isPrivateAddress("ff02::1"), true);
+  assert.equal(isPrivateAddress("2001:db8::1"), true);
+  assert.equal(isPrivateAddress("93.184.216.34"), false);
+  assert.equal(isPrivateAddress("2606:2800:220:1:248:1893:25c8:1946"), false);
   await assert.rejects(() => assertPublicUrl("http://127.0.0.1:4177/"), /拒绝访问/);
+  await assert.rejects(() => assertPublicUrl("http://100.64.0.1/"), /拒绝访问/);
   await assert.rejects(() => assertPublicUrl("http://[::1]/"), /拒绝访问/);
 });
 
