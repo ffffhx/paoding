@@ -211,6 +211,12 @@ test("parse-file 中等 body 上传返回 jobId", async () => {
   assert.equal(job.params.filename, "upload.mp4");
 });
 
+test("AI ask 菜谱不存在 → 404", async () => {
+  const r = await request("/api/ask", J({ recipeId: "nope", stepIndex: 1, question: "为什么？" }));
+  assert.equal(r.status, 404);
+  assert.deepEqual(await r.json(), { error: "菜谱不存在" });
+});
+
 test("nutrition 缓存返回结构化结果，编辑食材后失效", async () => {
   const id = "营养测试菜";
   fs.writeFileSync(path.join(recipesDir, `${id}.json`), JSON.stringify({

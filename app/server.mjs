@@ -537,6 +537,92 @@ function runJob(id, input, depth, kind = "video", wantVision = false, wantImages
     .catch((e) => finish({ type: "error", error: e.message }));
 }
 
+const AI_ENDPOINTS = {
+  "/api/ask": {
+    recipe: { required: true },
+    prompt: ({ body, r }) => {
+      const { stepIndex, question } = body;
+      const s = (r.steps || []).find((x) => x.index === stepIndex);
+      const ctx = `菜名：${r.title}\n当前步骤：${s ? s.title + " — " + s.action : "（整体）"}\n` +
+        `食材：${(r.ingredients || []).map((i) => i.name + i.amount).join("、")}`;
+      return {
+        system: "你是一位耐心的中餐老师，正在指导用户做这道菜。用简洁、通俗、可操作的中文回答用户对当前步骤的疑问。不确定就说不确定，别编造具体数字。",
+        user: `${ctx}\n\n用户的问题：${question}`,
+      };
+    },
+  },
+  "/api/substitute": {
+    recipe: { required: false },
+    prompt: ({ body, r }) => ({
+      system: "你是经验丰富的中餐厨师，实话实说、不糊弄。用户做某道菜时缺了某种食材/调料，针对性判断：\n" +
+        "- 大多数食材都有可接受的替代——只要有靠谱替代就给1~3个，标出最推荐的，说明用量换算和风味差异（例：白糖可用冰糖或红糖、老抽可用生抽加少量糖色、香醋可用米醋、生粉可用玉米淀粉）。\n" +
+        "- 只有当它是这道菜的灵魂、任何替代都会明显翻车或跑味时，才说「不建议替代」，讲清为什么、硬替会怎样、给务实建议（例：用醋替料酒去腥、用清水替高汤——这类才算不能替）。\n" +
+        "- 别为了凑数硬编烂替代，也别把「有点影响」当成「不能替代」。简洁中文，分点。",
+      user: `菜名：${r ? r.title : "某道菜"}。用户缺的是「${body.ingredient}」，有什么可以替代？若确实没有好替代就直说。`,
+    }),
+  },
+  "/api/term": {
+    prompt: ({ body }) => ({
+      system: "你是食品科学科普作者。用3~4句通俗中文解释这个烹饪术语/原理是什么、为什么重要。",
+      user: `解释一下烹饪里的「${body.term}」。`,
+    }),
+  },
+  "/api/troubleshoot": {
+    recipe: { required: false },
+    prompt: ({ body, r }) => {
+      const s = r && (r.steps || []).find((x) => x.index === body.stepIndex);
+      return {
+        system: "你是经验丰富的中餐师傅。用户做菜翻车了，请冷静给出：1)可能的原因 2)现在还能怎么补救 3)下次怎么避免。简洁中文分点，务实。",
+        user: `菜：${r ? r.title : ""}。当前步骤：${s ? s.title + "—" + s.action : ""}。出现的问题：${body.problem}`,
+      };
+    },
+  },
+  "/api/nutrition": {
+    handle: async ({ recipeId }) => {
+      const r = loadRecipe(recipeId);
+      if (!r) return { code: 404, body: { error: "菜谱不存在" } };
+      if (r.nutrition?.per_serving) return { body: { nutrition: r.nutrition, answer: nutritionText(r.nutrition), cached: true } };
+      const nutrition = await estimateNutrition(r);
+      const fp = recipePath(recipeId);
+      const cur = JSON.parse(fs.readFileSync(fp, "utf8"));
+      cur.nutrition = nutrition;
+      delete cur.id;
+      fs.writeFileSync(fp, JSON.stringify(cur, null, 2));
+      return { body: { nutrition, answer: nutritionText(nutrition), cached: false } };
+    },
+  },
+  "/api/overview": {
+    recipe: { required: true },
+    prompt: ({ r }) => ({
+      system: "你是中餐大厨。用3~5句话讲清这道菜整体「为什么这样设计」：关键在哪、几个决定成败的点、新手最该注意什么。通俗、有洞见。",
+      user: `菜名：${r.title}。步骤概要：${(r.steps || []).map((s) => s.index + "." + s.title).join(" ")}`,
+    }),
+  },
+};
+
+async function handleAiEndpoint(p, req, res) {
+  const def = AI_ENDPOINTS[p];
+  if (req.method !== "POST" || !def) return false;
+  const body = await readJson(req);
+  if (def.handle) {
+    const out = await def.handle(body);
+    sendJSON(res, out.code || 200, out.body);
+    return true;
+  }
+  let r = null;
+  if (def.recipe) {
+    r = loadRecipe(body.recipeId);
+    if (!r && def.recipe.required) {
+      sendJSON(res, 404, { error: "菜谱不存在" });
+      return true;
+    }
+  }
+  const prompt = def.prompt({ body, r });
+  const answer = await chatText(config.llm, prompt);
+  sendJSON(res, 200, { answer });
+  return true;
+}
+
 // ---------- 静态资源 ----------
 const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -731,83 +817,8 @@ export async function handleRequest(req, res) {
       return;
     }
 
-    // ---- AI：对某步追问 ----
-    if (req.method === "POST" && p === "/api/ask") {
-      const { recipeId, stepIndex, question } = await readJson(req);
-      const r = loadRecipe(recipeId);
-      if (!r) return sendJSON(res, 404, { error: "菜谱不存在" });
-      const s = (r.steps || []).find((x) => x.index === stepIndex);
-      const ctx = `菜名：${r.title}\n当前步骤：${s ? s.title + " — " + s.action : "（整体）"}\n` +
-        `食材：${(r.ingredients || []).map((i) => i.name + i.amount).join("、")}`;
-      const answer = await chatText(config.llm, {
-        system: "你是一位耐心的中餐老师，正在指导用户做这道菜。用简洁、通俗、可操作的中文回答用户对当前步骤的疑问。不确定就说不确定，别编造具体数字。",
-        user: `${ctx}\n\n用户的问题：${question}`,
-      });
-      return sendJSON(res, 200, { answer });
-    }
-
-    // ---- AI：食材替代 ----
-    if (req.method === "POST" && p === "/api/substitute") {
-      const { recipeId, ingredient } = await readJson(req);
-      const r = loadRecipe(recipeId);
-      const answer = await chatText(config.llm, {
-        system: "你是经验丰富的中餐厨师，实话实说、不糊弄。用户做某道菜时缺了某种食材/调料，针对性判断：\n" +
-          "- 大多数食材都有可接受的替代——只要有靠谱替代就给1~3个，标出最推荐的，说明用量换算和风味差异（例：白糖可用冰糖或红糖、老抽可用生抽加少量糖色、香醋可用米醋、生粉可用玉米淀粉）。\n" +
-          "- 只有当它是这道菜的灵魂、任何替代都会明显翻车或跑味时，才说「不建议替代」，讲清为什么、硬替会怎样、给务实建议（例：用醋替料酒去腥、用清水替高汤——这类才算不能替）。\n" +
-          "- 别为了凑数硬编烂替代，也别把「有点影响」当成「不能替代」。简洁中文，分点。",
-        user: `菜名：${r ? r.title : "某道菜"}。用户缺的是「${ingredient}」，有什么可以替代？若确实没有好替代就直说。`,
-      });
-      return sendJSON(res, 200, { answer });
-    }
-
-    // ---- AI：术语微科普 ----
-    if (req.method === "POST" && p === "/api/term") {
-      const { term } = await readJson(req);
-      const answer = await chatText(config.llm, {
-        system: "你是食品科学科普作者。用3~4句通俗中文解释这个烹饪术语/原理是什么、为什么重要。",
-        user: `解释一下烹饪里的「${term}」。`,
-      });
-      return sendJSON(res, 200, { answer });
-    }
-
-    // ---- AI：翻车补救 ----
-    if (req.method === "POST" && p === "/api/troubleshoot") {
-      const { recipeId, stepIndex, problem } = await readJson(req);
-      const r = loadRecipe(recipeId);
-      const s = r && (r.steps || []).find((x) => x.index === stepIndex);
-      const answer = await chatText(config.llm, {
-        system: "你是经验丰富的中餐师傅。用户做菜翻车了，请冷静给出：1)可能的原因 2)现在还能怎么补救 3)下次怎么避免。简洁中文分点，务实。",
-        user: `菜：${r ? r.title : ""}。当前步骤：${s ? s.title + "—" + s.action : ""}。出现的问题：${problem}`,
-      });
-      return sendJSON(res, 200, { answer });
-    }
-
-    // ---- AI：每份营养估算 ----
-    if (req.method === "POST" && p === "/api/nutrition") {
-      const { recipeId } = await readJson(req);
-      const r = loadRecipe(recipeId);
-      if (!r) return sendJSON(res, 404, { error: "菜谱不存在" });
-      if (r.nutrition?.per_serving) return sendJSON(res, 200, { nutrition: r.nutrition, answer: nutritionText(r.nutrition), cached: true });
-      const nutrition = await estimateNutrition(r);
-      const fp = recipePath(recipeId);
-      const cur = JSON.parse(fs.readFileSync(fp, "utf8"));
-      cur.nutrition = nutrition;
-      delete cur.id;
-      fs.writeFileSync(fp, JSON.stringify(cur, null, 2));
-      return sendJSON(res, 200, { nutrition, answer: nutritionText(nutrition), cached: false });
-    }
-
-    // ---- AI：这道菜为什么这样设计（总览）----
-    if (req.method === "POST" && p === "/api/overview") {
-      const { recipeId } = await readJson(req);
-      const r = loadRecipe(recipeId);
-      if (!r) return sendJSON(res, 404, { error: "菜谱不存在" });
-      const answer = await chatText(config.llm, {
-        system: "你是中餐大厨。用3~5句话讲清这道菜整体「为什么这样设计」：关键在哪、几个决定成败的点、新手最该注意什么。通俗、有洞见。",
-        user: `菜名：${r.title}。步骤概要：${(r.steps || []).map((s) => s.index + "." + s.title).join(" ")}`,
-      });
-      return sendJSON(res, 200, { answer });
-    }
+    // ---- AI 端点（表驱动：读 JSON → 校验/加载菜谱 → LLM/缓存处理 → 统一返回）----
+    if (await handleAiEndpoint(p, req, res)) return;
 
     // ---- APK 下载（从项目根目录发，不放进 app/ 以免被 Capacitor 打进包里自我膨胀）----
     if (req.method === "GET" && p === "/paoding-debug.apk") {
