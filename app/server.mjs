@@ -242,12 +242,16 @@ const LLM_ENDPOINTS = new Set([
   "/api/parse-url", "/api/parse-text", "/api/parse-file",
   "/api/ask", "/api/substitute", "/api/term", "/api/troubleshoot", "/api/nutrition", "/api/overview", "/api/explain-recipe", "/api/import-recipe",
 ]);
+const LIMITED_READ_ENDPOINTS = new Set([
+  "/api/techniques",
+]);
 function clientIp(req) {
   const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
   return fwd || req.socket.remoteAddress || "unknown";
 }
 function rateLimitOk(req, res, p) {
-  if (req.method !== "POST" || !LLM_ENDPOINTS.has(p)) return true;
+  const shouldLimit = (req.method === "POST" && LLM_ENDPOINTS.has(p)) || (req.method === "GET" && LIMITED_READ_ENDPOINTS.has(p));
+  if (!shouldLimit) return true;
   const hit = llmLimiter.take(clientIp(req));
   if (hit.allowed) return true;
   res.setHeader("Retry-After", String(Math.max(1, Math.ceil(hit.resetMs / 1000))));
