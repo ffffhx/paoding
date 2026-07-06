@@ -171,7 +171,9 @@ const Timers = {
 let ttsVoice = null;
 function pickVoice() {
   const vs = speechSynthesis.getVoices();
-  ttsVoice = vs.find(v => /zh|Chinese|Tingting|Ting-Ting/i.test(v.lang + v.name)) || vs[0] || null;
+  // 只认中文音色；挑不到就留 null，让 speak() 靠 lang='zh-CN' 交给引擎自动选，
+  // 而不是退回 vs[0]（常是英文音色）用英文音色硬念中文。
+  ttsVoice = vs.find(v => /zh|Chinese|Tingting|Ting-Ting/i.test(v.lang + v.name)) || null;
 }
 if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
 function speak(text) {
@@ -811,7 +813,17 @@ function paramsHtml(p) {
   return items.length ? `<div class="params">${items.map(([k, v]) => `<span class="param"><b>${k}</b> ${esc(v)}</span>`).join('')}</div>` : '';
 }
 function timerHtml(p) { const s = parseSeconds(p && p.time); return s ? `<div class="timer"><button class="btn sm" id="timerBtn">⏱ 开始计时（${Math.floor(s / 60) ? Math.floor(s / 60) + '分' : ''}${s % 60 ? (s % 60) + '秒' : ''}）</button></div>` : ''; }
-function beep() { try { const a = new (window.AudioContext || window.webkitAudioContext)(); for (let i = 0; i < 3; i++) { const o = a.createOscillator(), g = a.createGain(); o.connect(g); g.connect(a.destination); o.frequency.value = 880; g.gain.value = .15; o.start(a.currentTime + i * .4); o.stop(a.currentTime + i * .4 + .2); } } catch { } }
+// 复用同一个 AudioContext：浏览器对 AudioContext 数量有上限(~6)且不会及时回收，
+// 每次响铃 new 一个，响几次后就抛异常、静默失败。
+let _actx = null;
+function beep() {
+  try {
+    _actx = _actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (_actx.state === 'suspended') _actx.resume();
+    const a = _actx;
+    for (let i = 0; i < 3; i++) { const o = a.createOscillator(), g = a.createGain(); o.connect(g); g.connect(a.destination); o.frequency.value = 880; g.gain.value = .15; o.start(a.currentTime + i * .4); o.stop(a.currentTime + i * .4 + .2); }
+  } catch { }
+}
 function showVoiceHint() { const h = el('<div class="voice-hint">🎙 说「下一步 / 上一步 / 朗读」</div>'); document.body.appendChild(h); setTimeout(() => h.remove(), 3000); }
 async function showTerm(term) {
   const ov = openModal(`<h3>${esc(term)}</h3><p style="color:var(--muted)">查询中…</p>`);
