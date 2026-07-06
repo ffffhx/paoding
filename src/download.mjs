@@ -34,10 +34,10 @@ async function has(cmd) {
   }
 }
 
-const isUrl = (s) => /^https?:\/\//i.test(s);
+export const isUrl = (s) => /^https?:\/\//i.test(s);
 
 // 反爬相关的 yt-dlp 公共参数：UA + 站点 Referer + 可选浏览器 cookie。
-function ytdlpArgs(input, ytdlp = {}) {
+export function ytdlpArgs(input, ytdlp = {}) {
   const args = ["--no-warnings"];
   if (ytdlp.userAgent) args.push("--user-agent", ytdlp.userAgent);
   try {

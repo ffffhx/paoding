@@ -13,7 +13,7 @@ function run(cmd, args) {
 }
 
 // 从 HTML 里挖可读文字：优先 og:title / og:description（帖子摘要/正文常在这），再兜底扒正文文本。
-function extractFromHtml(html) {
+export function extractFromHtml(html) {
   const pick = (re) => { const m = html.match(re); return m ? m[1].trim() : ""; };
   const ogTitle = pick(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
   const title = ogTitle || pick(/<title[^>]*>([^<]*)<\/title>/i);

@@ -10,9 +10,10 @@ import { chatText } from "../src/llm.mjs";
 import { DEPTHS } from "../src/explain.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const RECIPES_DIR = path.join(HERE, "recipes");
+// 数据目录可被环境变量覆盖（测试用隔离目录，避免污染真实数据）
+const RECIPES_DIR = process.env.PAODING_RECIPES_DIR || path.join(HERE, "recipes");
 // 用户数据（收藏/笔记/评分/购物清单等）跨设备同步用；放项目根、不在 webDir 内，避免被静态服务或打包暴露
-const USERDATA_FILE = path.join(HERE, "..", "paoding-userdata.json");
+const USERDATA_FILE = process.env.PAODING_USERDATA_FILE || path.join(HERE, "..", "paoding-userdata.json");
 const PORT = process.env.PAODING_PORT ? Number(process.env.PAODING_PORT) : 4177;
 const HOST = process.env.PAODING_HOST || "0.0.0.0"; // 默认局域网可达(手机用)；设 127.0.0.1 可锁本机
 const MAX_RUNNING = Number(process.env.PAODING_MAX_JOBS || 2); // 同时解析上限，防资源耗尽

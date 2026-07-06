@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node bin/paoding.mjs",
-    "app": "node app/server.mjs"
+    "app": "node app/server.mjs",
+    "test": "node --test"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.2.1"
