@@ -9,3 +9,20 @@ paoding-out/
 
 # App 里解析出的菜谱=用户数据，不进仓库（App 会自动重建目录）
 app/recipes/
+
+# Node 依赖（Capacitor 打包用）
+node_modules/
+
+# Capacitor 安卓工程的构建产物与本地路径（工程本身可提交）
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/capacitor.settings.gradle
+.gradle/
+
+# 构建出的 APK（体积大，不进仓库）
+paoding-debug.apk
+*.apk

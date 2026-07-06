@@ -10,5 +10,12 @@
   "scripts": {
     "start": "node bin/paoding.mjs",
     "app": "node app/server.mjs"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.1"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/core": "^6.2.1"
   }
 }
