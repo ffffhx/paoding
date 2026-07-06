@@ -1561,9 +1561,12 @@ function shareRecipe(r, factor) {
   else { navigator.clipboard?.writeText(md); toast(tr('export.text.copied')); }
 }
 function recipeToText(r, f) {
-  let s = `【${r.title}】\n`;
+  let s = tr('export.body.title', { title: r.title || '' });
   s += (r.ingredients || []).map(i => `· ${i.name} ${scaledAmount(i, f || 1) || ''}`).join('\n') + '\n\n';
-  (r.steps || []).forEach(x => { s += `${x.index}. ${x.title}：${x.action}\n`; if (x.why?.reason) s += `   为什么：${x.why.reason}\n`; });
+  (r.steps || []).forEach(x => {
+    s += tr(x.title ? 'export.body.step' : 'export.body.stepNoTitle', { index: x.index, title: x.title || '', action: x.action || '' });
+    if (x.why?.reason) s += tr('export.body.why', { reason: x.why.reason });
+  });
   return s;
 }
 // 导出为 Cooklang（.cook，开放的纯文本菜谱标准，可被整个生态消费）
@@ -1580,8 +1583,9 @@ function recipeToCooklang(r) {
     Number.isFinite(i.qty) ? `@${i.name}{${i.qty}%${i.unit || ''}}`
       : (i.amount && !['视频未明确', '适量'].includes(i.amount)) ? `@${i.name}{${i.amount}}` : `@${i.name}{}`
   ).join(', ');
-  const steps = (r.steps || []).map((s, i) => `${i + 1}. ${s.title ? s.title + '：' : ''}${s.action || ''}`).join('\n\n');
-  return `${meta}\n\n-- 食材\n${ings}\n\n-- 做法\n${steps}\n`;
+  const stepSep = tr('export.body.cook.stepTitleSeparator');
+  const steps = (r.steps || []).map((s, i) => `${i + 1}. ${s.title ? s.title + stepSep : ''}${s.action || ''}`).join('\n\n');
+  return `${meta}\n\n-- ${tr('export.body.cook.ingredients')}\n${ings}\n\n-- ${tr('export.body.cook.steps')}\n${steps}\n`;
 }
 // 导出为 schema.org Recipe（JSON-LD，搜索引擎/菜谱工具通用结构化格式）
 function recipeToSchemaOrg(r) {

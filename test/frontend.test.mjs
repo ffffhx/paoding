@@ -224,8 +224,28 @@ test("insertItem/removeItem 返回新数组并支持边界下标", () => {
 test("recipeToCooklang 元数据+结构化食材+步骤", () => {
   const cook = app.recipeToCooklang({ title: "蛋", tags: ["家常"], ingredients: [{ name: "鸡蛋", qty: 3, unit: "个" }, { name: "盐", amount: "适量" }], steps: [{ title: "炒", action: "下锅" }] });
   assert.ok(cook.includes(">> title: 蛋"));
+  assert.ok(cook.includes("-- 食材\n"));
+  assert.ok(cook.includes("-- 做法\n1. 炒：下锅"));
   assert.ok(cook.includes("@鸡蛋{3%个}"));
   assert.ok(cook.includes("下锅"));
+});
+
+test("导出文件正文切 en 后使用英文标题、章节和 why", () => {
+  app.setLanguage("en");
+  const recipe = {
+    title: "Egg",
+    ingredients: [{ name: "egg", qty: 2, unit: "pcs" }],
+    steps: [{ index: 1, title: "Beat", action: "Beat eggs", why: { reason: "Even texture" } }],
+  };
+  const text = app.recipeToText(recipe, 1);
+  assert.ok(text.startsWith("Egg\n"));
+  assert.ok(text.includes("1. Beat: Beat eggs\n"));
+  assert.ok(text.includes("   Why: Even texture\n"));
+
+  const cook = app.recipeToCooklang(recipe);
+  assert.ok(cook.includes("-- Ingredients\n"));
+  assert.ok(cook.includes("-- Steps\n1. Beat: Beat eggs"));
+  app.setLanguage("zh");
 });
 
 test("recipeToSchemaOrg 合法 Recipe JSON-LD", () => {
