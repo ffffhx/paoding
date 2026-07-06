@@ -124,6 +124,12 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
 
+  // CORS：App(Capacitor WebView，源为 capacitor://localhost / http://localhost)跨域访问本机后端时放行
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Filename,X-Depth");
+  if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
+
   try {
     // ---- 列表 ----
     if (req.method === "GET" && p === "/api/recipes") return sendJSON(res, 200, listRecipes());
@@ -213,8 +219,11 @@ const server = http.createServer(async (req, res) => {
       const { recipeId, ingredient } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
       const r = loadRecipe(recipeId);
       const answer = await chatText(config.llm, {
-        system: "你是中餐厨师。用户做菜时缺某种食材/调料，请给出2~3个可行的替代方案，每个说明用量换算和风味差异。简洁中文，分点。",
-        user: `菜名：${r ? r.title : "某道菜"}。缺的是「${ingredient}」，有什么可以替代？`,
+        system: "你是经验丰富的中餐厨师，实话实说、不糊弄。用户做某道菜时缺了某种食材/调料，针对性判断：\n" +
+          "- 大多数食材都有可接受的替代——只要有靠谱替代就给1~3个，标出最推荐的，说明用量换算和风味差异（例：白糖可用冰糖或红糖、老抽可用生抽加少量糖色、香醋可用米醋、生粉可用玉米淀粉）。\n" +
+          "- 只有当它是这道菜的灵魂、任何替代都会明显翻车或跑味时，才说「不建议替代」，讲清为什么、硬替会怎样、给务实建议（例：用醋替料酒去腥、用清水替高汤——这类才算不能替）。\n" +
+          "- 别为了凑数硬编烂替代，也别把「有点影响」当成「不能替代」。简洁中文，分点。",
+        user: `菜名：${r ? r.title : "某道菜"}。用户缺的是「${ingredient}」，有什么可以替代？若确实没有好替代就直说。`,
       });
       return sendJSON(res, 200, { answer });
     }
@@ -263,6 +272,17 @@ const server = http.createServer(async (req, res) => {
         user: `菜名：${r.title}。步骤概要：${(r.steps || []).map((s) => s.index + "." + s.title).join(" ")}`,
       });
       return sendJSON(res, 200, { answer });
+    }
+
+    // ---- APK 下载（从项目根目录发，不放进 app/ 以免被 Capacitor 打进包里自我膨胀）----
+    if (req.method === "GET" && p === "/paoding-debug.apk") {
+      const apk = path.join(HERE, "..", "paoding-debug.apk");
+      if (!fs.existsSync(apk)) { res.writeHead(404); return res.end("APK 未构建"); }
+      res.writeHead(200, {
+        "Content-Type": "application/vnd.android.package-archive",
+        "Content-Disposition": "attachment; filename=paoding.apk",
+      });
+      return res.end(fs.readFileSync(apk));
     }
 
     // ---- 静态 ----
