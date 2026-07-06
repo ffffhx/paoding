@@ -495,13 +495,13 @@ function summarizeMealNutrition(list, factors = 1) {
   return { totals, counted, missing, total: (Array.isArray(list) ? list.length : 0) };
 }
 function nutritionSummaryHtml(summary, { prefix = '', averageBy = 1 } = {}) {
-  if (!summary || (!summary.counted && !summary.missing)) return '<div class="plan-nutri muted">暂无营养信息</div>';
+  if (!summary || (!summary.counted && !summary.missing)) return `<div class="plan-nutri muted">${esc(tr('nutrition.none'))}</div>`;
   const div = normalizeFactor(averageBy);
   const parts = NUTRITION_FIELDS.map(([k, label, unit]) => {
     const v = Math.round((summary.totals[k] || 0) / div * 10) / 10;
     return `${trOr('nutrition.' + k, label)} ${v}${unit}`;
   });
-  const missing = summary.missing ? ` · ${summary.missing} 道菜未估算` : '';
+  const missing = summary.missing ? ` · ${esc(tr('nutrition.missingRecipes', { count: summary.missing }))}` : '';
   return `<div class="plan-nutri">${prefix ? `<b>${esc(prefix)}</b> ` : ''}${parts.join(' · ')}${missing}</div>`;
 }
 function nutritionHtml(r, factor) {
@@ -873,6 +873,16 @@ function renderSkills() {
 
 /* ================= 购物清单（按货架分区 + 同名合并）================= */
 const SHOP_SECTION_ORDER = ['蔬菜水果', '肉禽蛋', '水产', '调味干货', '粮油米面', '乳品豆制品', '冷冻', '其他'];
+const SHOP_SECTION_I18N = {
+  蔬菜水果: 'shopping.section.produce',
+  肉禽蛋: 'shopping.section.meat',
+  水产: 'shopping.section.seafood',
+  调味干货: 'shopping.section.pantry',
+  粮油米面: 'shopping.section.grains',
+  乳品豆制品: 'shopping.section.dairy',
+  冷冻: 'shopping.section.frozen',
+  其他: 'shopping.section.other',
+};
 const SHOP_SECTION_KEYWORDS = {
   蔬菜水果: ['青菜', '白菜', '菠菜', '生菜', '芹菜', '香菜', '韭菜', '葱', '姜', '蒜', '辣椒', '青椒', '尖椒', '番茄', '西红柿', '土豆', '马铃薯', '萝卜', '胡萝卜', '洋葱', '黄瓜', '冬瓜', '南瓜', '丝瓜', '苦瓜', '茄子', '蘑菇', '香菇', '金针菇', '木耳', '笋', '藕', '玉米', '山药', '豆芽', '豆角', '豇豆', '秋葵', '苹果', '香蕉', '柠檬', '橙', '梨', '水果'],
   肉禽蛋: ['猪肉', '牛肉', '羊肉', '鸡肉', '鸡翅', '鸡腿', '鸡胸', '鸭', '鹅', '排骨', '五花', '里脊', '牛腩', '培根', '香肠', '腊肠', '火腿', '午餐肉', '肉末', '肉馅', '鸡蛋', '鸭蛋', '鹌鹑蛋', '蛋'],
@@ -890,6 +900,15 @@ function shopCat(name) {
     if ((SHOP_SECTION_KEYWORDS[section] || []).some(k => n.includes(k))) return section;
   }
   return '其他';
+}
+function shopSectionLabel(section) {
+  const key = SHOP_SECTION_I18N[section];
+  return key ? trOr(key, section) : section;
+}
+function shoppingSourceLabel(src) {
+  return String(src || '').split('、').filter(Boolean).map(part => (
+    part === '手动添加' ? tr('shopping.manualSource') : part
+  )).join(settings.lang === 'en' ? ', ' : '、');
 }
 // 合并同名食材的多个用量：能识别「数字+单位」的按单位求和，其余原样并列
 function mergeAmounts(amts) {
@@ -926,7 +945,7 @@ function groupShoppingItems(list) {
   })).filter(g => g.items.length);
 }
 function shoppingTextBySection(list = shopping) {
-  return groupShoppingItems(list).map(g => `【${g.section}】\n` + g.items.map(it => `${it.checked ? '✓ ' : ''}${it.name}${it.amount ? ' ' + it.amount : ''}`).join('\n')).join('\n\n');
+  return groupShoppingItems(list).map(g => `【${shopSectionLabel(g.section)}】\n` + g.items.map(it => `${it.checked ? '✓ ' : ''}${it.name}${it.amount ? ' ' + it.amount : ''}`).join('\n')).join('\n\n');
 }
 function shopManualAdd() {
   const inp = $('#shopAdd'); if (!inp) return;
@@ -936,8 +955,8 @@ function shopManualAdd() {
 }
 function renderShopping() {
   const box = $('#view-shopping');
-  const head = `<div class="searchrow" style="padding:4px 0 8px;gap:8px"><input type="text" id="shopAdd" placeholder="手动加一项，如 酱油" style="flex:1;min-width:0"><button class="btn sm" id="shopAddBtn">加入</button></div>
-    <div class="searchrow" style="padding:0 0 12px"><button class="btn ghost sm" id="shopCopy">复制文本</button><button class="btn ghost sm" id="shopClear">清除已勾选</button><button class="btn ghost sm" id="shopAll">清空</button></div>`;
+  const head = `<div class="searchrow" style="padding:4px 0 8px;gap:8px"><input type="text" id="shopAdd" placeholder="${esc(tr('shopping.add.placeholder'))}" style="flex:1;min-width:0"><button class="btn sm" id="shopAddBtn">${esc(tr('shopping.add'))}</button></div>
+    <div class="searchrow" style="padding:0 0 12px"><button class="btn ghost sm" id="shopCopy">${esc(tr('shopping.copy'))}</button><button class="btn ghost sm" id="shopClear">${esc(tr('shopping.clearChecked'))}</button><button class="btn ghost sm" id="shopAll">${esc(tr('shopping.clearAll'))}</button></div>`;
   const wireAdd = () => {
     $('#shopAddBtn') && ($('#shopAddBtn').onclick = shopManualAdd);
     $('#shopAdd') && ($('#shopAdd').onkeydown = (e) => { if (e.key === 'Enter') shopManualAdd(); });
@@ -947,14 +966,14 @@ function renderShopping() {
       catch { toast('复制失败'); }
     });
   };
-  if (!shopping.length) { box.innerHTML = head + '<div class="empty">购物清单是空的。<br>在菜谱详情里点「加入购物清单」，或上面手动加一项。</div>'; wireAdd(); return; }
+  if (!shopping.length) { box.innerHTML = head + `<div class="empty">${esc(tr('shopping.empty.title'))}<br>${esc(tr('shopping.empty.help'))}</div>`; wireAdd(); return; }
   let html = head;
   for (const group of groupShoppingItems(shopping)) {
-    html += `<div class="sec-title" style="margin:14px 0 6px 0;padding:0">${esc(group.section)}</div>`;
+    html += `<div class="sec-title" style="margin:14px 0 6px 0;padding:0">${esc(shopSectionLabel(group.section))}</div>`;
     html += group.items.map(m => `
       <div class="shop-item ${m.checked ? 'checked' : ''}" data-idxs="${m.idxs.join(',')}">
         <div class="ck ${m.checked ? 'on' : ''}">${m.checked ? '✓' : ''}</div>
-        <div class="txt">${esc(m.name)}${m.amount ? ` · <span style="color:var(--muted)">${esc(m.amount)}</span>` : ''}<div class="sub">${esc(m.src)}${m.idxs.length > 1 ? ` · 合并自${m.idxs.length}处` : ''}</div></div>
+        <div class="txt">${esc(m.name)}${m.amount ? ` · <span style="color:var(--muted)">${esc(m.amount)}</span>` : ''}<div class="sub">${esc(shoppingSourceLabel(m.src))}${m.idxs.length > 1 ? ` · ${esc(tr('shopping.mergedFrom', { count: m.idxs.length }))}` : ''}</div></div>
       </div>`).join('');
   }
   box.innerHTML = html;
@@ -966,7 +985,7 @@ function renderShopping() {
     store.set('shopping', shopping); renderShopping();
   });
   $('#shopClear') && ($('#shopClear').onclick = () => { shopping = shopping.filter(x => !x.checked); store.set('shopping', shopping); renderShopping(); updateBadges(); });
-  $('#shopAll') && ($('#shopAll').onclick = async () => { if (!(await confirmModal('清空整个购物清单？', '清空'))) return; shopping = []; store.set('shopping', shopping); renderShopping(); updateBadges(); });
+  $('#shopAll') && ($('#shopAll').onclick = async () => { if (!(await confirmModal(tr('shopping.clearAll.confirm'), tr('shopping.clearAll')))) return; shopping = []; store.set('shopping', shopping); renderShopping(); updateBadges(); });
 }
 function addToShoppingItems(r, factor) {
   const names = new Set(shopping.map(x => x.name + '|' + x.from));
@@ -980,11 +999,11 @@ function addToShopping(r, factor) { addToShoppingItems(r, factor); store.set('sh
 /* ================= 本周计划（膳食计划）================= */
 function weekDays() {
   const now = new Date(); now.setHours(0, 0, 0, 0);
-  const wd = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const wd = ['plan.weekday.sun', 'plan.weekday.mon', 'plan.weekday.tue', 'plan.weekday.wed', 'plan.weekday.thu', 'plan.weekday.fri', 'plan.weekday.sat'];
   const days = [];
   for (let i = 0; i < 7; i++) {
     const dt = new Date(now); dt.setDate(now.getDate() + i);
-    days.push({ key: `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`, label: i === 0 ? '今天' : i === 1 ? '明天' : wd[dt.getDay()], date: `${dt.getMonth() + 1}/${dt.getDate()}` });
+    days.push({ key: `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`, label: i === 0 ? tr('plan.today') : i === 1 ? tr('plan.tomorrow') : tr(wd[dt.getDay()]), date: `${dt.getMonth() + 1}/${dt.getDate()}` });
   }
   return days;
 }
@@ -996,17 +1015,17 @@ function renderPlan() {
   const planned = days.reduce((n, d) => n + (mealPlan[d.key] || []).length, 0);
   const weeklySummary = summarizeMealNutrition(days.flatMap(d => (mealPlan[d.key] || []).map(id => byId[id]).filter(Boolean)), factorFor);
   let html = `<div class="searchrow" style="padding:4px 0 10px;gap:8px">
-    <button class="btn sm" id="planToShop" ${planned ? '' : 'disabled'}>🛒 这周的菜加入购物清单</button>
-    ${planned ? `<button class="btn ghost sm" id="planClear">清空计划</button>` : ''}</div>
-    <div class="plan-week">${nutritionSummaryHtml(weeklySummary, { prefix: '本周日均', averageBy: 7 })}</div>`;
+    <button class="btn sm" id="planToShop" ${planned ? '' : 'disabled'}>${esc(tr('plan.toShopping'))}</button>
+    ${planned ? `<button class="btn ghost sm" id="planClear">${esc(tr('plan.clear'))}</button>` : ''}</div>
+    <div class="plan-week">${nutritionSummaryHtml(weeklySummary, { prefix: tr('plan.weekAverage'), averageBy: 7 })}</div>`;
   html += days.map(day => {
     const items = (mealPlan[day.key] || []).map(id => byId[id]).filter(Boolean);
     const summary = summarizeMealNutrition(items, factorFor);
-    const timelineBtn = items.length >= 2 ? `<button class="act plantimeline" data-key="${day.key}">同做时间线</button>` : '';
+    const timelineBtn = items.length >= 2 ? `<button class="act plantimeline" data-key="${day.key}">${esc(tr('plan.timeline'))}</button>` : '';
     return `<div class="planday">
-      <div class="planhd"><b>${day.label}</b> <span style="color:var(--muted);font-size:13px">${day.date}</span> ${timelineBtn}<button class="act planadd" data-key="${day.key}">＋ 加菜</button></div>
-      ${items.length ? items.map(r => `<div class="planitem" data-key="${day.key}" data-id="${esc(r.id)}"><span class="pmore">${esc(r.title)}</span><button class="prm" title="移除">✕</button></div>`).join('') : '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px">还没排菜</div>'}
-      ${items.length ? nutritionSummaryHtml(summary, { prefix: '当日合计' }) : ''}
+      <div class="planhd"><b>${esc(day.label)}</b> <span style="color:var(--muted);font-size:13px">${day.date}</span> ${timelineBtn}<button class="act planadd" data-key="${day.key}">${esc(tr('plan.addRecipe'))}</button></div>
+      ${items.length ? items.map(r => `<div class="planitem" data-key="${day.key}" data-id="${esc(r.id)}"><span class="pmore">${esc(r.title)}</span><button class="prm" title="${esc(tr('plan.remove'))}">✕</button></div>`).join('') : `<div style="color:var(--muted);font-size:13px;padding:6px 0 2px">${esc(tr('plan.emptyDay'))}</div>`}
+      ${items.length ? nutritionSummaryHtml(summary, { prefix: tr('plan.dayTotal') }) : ''}
     </div>`;
   }).join('');
   box.innerHTML = html;
@@ -1024,7 +1043,7 @@ function renderPlan() {
     let n = 0; ids.forEach(id => { const r = byId[id]; if (r) { addToShoppingItems(r, 1); n++; } });
     if (n) { store.set('shopping', shopping); updateBadges(); toast(`已把 ${n} 道菜的食材加入购物清单`); } else toast('这周还没排菜');
   });
-  $('#planClear') && ($('#planClear').onclick = async () => { if (!(await confirmModal('清空本周计划？', '清空'))) return; days.forEach(d => delete mealPlan[d.key]); saveMealPlan(); renderPlan(); });
+  $('#planClear') && ($('#planClear').onclick = async () => { if (!(await confirmModal(tr('plan.clear.confirm'), tr('shopping.clearAll')))) return; days.forEach(d => delete mealPlan[d.key]); saveMealPlan(); renderPlan(); });
 }
 function timelineOffsetText(v) {
   return Number.isInteger(v) ? String(v) : String(Math.round(v * 10) / 10);
@@ -1032,19 +1051,19 @@ function timelineOffsetText(v) {
 function showCookTimeline(key, dayRecipes) {
   const day = weekDays().find(d => d.key === key);
   const selected = new Set((dayRecipes || []).map(r => r.id));
-  const ov = openModal(`<h3 style="text-align:left">${esc(day?.label || '')}同做时间线</h3>
+  const ov = openModal(`<h3 style="text-align:left">${esc(tr('plan.timeline.title', { day: day?.label || '' }))}</h3>
     <div id="tlPick" class="tl-pick"></div>
     <div id="tlList" class="timeline-list"></div>
-    <div class="mrow"><button class="btn" id="tlClose">关闭</button></div>`, 'left');
+    <div class="mrow"><button class="btn" id="tlClose">${esc(tr('common.close'))}</button></div>`, 'left');
   const draw = () => {
     const chosen = (dayRecipes || []).filter(r => selected.has(r.id));
     ov.querySelector('#tlPick').innerHTML = (dayRecipes || []).map(r => `<label class="tl-check"><input type="checkbox" data-id="${esc(r.id)}" ${selected.has(r.id) ? 'checked' : ''}> ${esc(r.title || '')}</label>`).join('');
     const actions = mergeCookTimeline(chosen);
     ov.querySelector('#tlList').innerHTML = actions.length ? actions.map(a => `
       <div class="tlitem ${a.passive ? 'passive' : ''}">
-        <div><b>第 ${timelineOffsetText(a.offsetMin)} 分钟</b><span>${a.passive ? '⏳ ' : ''}${esc(a.recipeTitle)} · 第 ${esc(a.stepIndex)} 步</span></div>
-        <p>${esc(a.text)}${a.estimated ? '<em>约 3 分钟</em>' : ''}</p>
-      </div>`).join('') : '<div class="empty" style="padding:20px 8px">至少选择一道菜</div>';
+        <div><b>${esc(tr('plan.timeline.offset', { minute: timelineOffsetText(a.offsetMin) }))}</b><span>${a.passive ? '⏳ ' : ''}${esc(tr('plan.timeline.step', { recipe: a.recipeTitle, step: a.stepIndex }))}</span></div>
+        <p>${esc(a.text)}${a.estimated ? `<em>${esc(tr('plan.timeline.estimated', { minutes: 3 }))}</em>` : ''}</p>
+      </div>`).join('') : `<div class="empty" style="padding:20px 8px">${esc(tr('plan.timeline.empty'))}</div>`;
     ov.querySelectorAll('#tlPick input').forEach(input => {
       input.onchange = () => { input.checked ? selected.add(input.dataset.id) : selected.delete(input.dataset.id); draw(); };
     });
@@ -1055,13 +1074,13 @@ function showCookTimeline(key, dayRecipes) {
 function pickRecipeForDay(key) {
   if (!recipes.length) { toast('还没有菜谱，先解析一道'); return; }
   const day = weekDays().find(d => d.key === key);
-  const ov = openModal(`<h3 style="text-align:left">排到「${day ? day.label : ''}」</h3>
-    <input type="text" id="pickSearch" placeholder="搜菜名" style="margin:8px 0 0">
+  const ov = openModal(`<h3 style="text-align:left">${esc(tr('plan.pick.title', { day: day ? day.label : '' }))}</h3>
+    <input type="text" id="pickSearch" placeholder="${esc(tr('plan.pick.search'))}" style="margin:8px 0 0">
     <div id="pickList" style="max-height:46vh;overflow:auto;margin-top:8px"></div>
-    <div class="mrow"><button class="btn" id="pkClose">关闭</button></div>`, 'left');
+    <div class="mrow"><button class="btn" id="pkClose">${esc(tr('common.close'))}</button></div>`, 'left');
   const draw = (q) => {
     ov.querySelector('#pickList').innerHTML = recipes.filter(r => !q || (r.title || '').includes(q)).map(r =>
-      `<div class="pickrow" data-id="${esc(r.id)}" style="padding:11px 6px;border-bottom:1px solid var(--line);cursor:pointer">${esc(r.title)}</div>`).join('') || '<div style="color:var(--muted);padding:10px 6px">没有匹配的菜</div>';
+      `<div class="pickrow" data-id="${esc(r.id)}" style="padding:11px 6px;border-bottom:1px solid var(--line);cursor:pointer">${esc(r.title)}</div>`).join('') || `<div style="color:var(--muted);padding:10px 6px">${esc(tr('plan.pick.noMatch'))}</div>`;
     ov.querySelectorAll('.pickrow').forEach(row => row.onclick = () => {
       mealPlan[key] = mealPlan[key] || []; if (!mealPlan[key].includes(row.dataset.id)) mealPlan[key].push(row.dataset.id);
       saveMealPlan(); ov.remove(); renderPlan(); toast('已排入');

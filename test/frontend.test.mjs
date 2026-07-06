@@ -359,6 +359,28 @@ test("groupShoppingItems 按货架分区、同名合并且已购沉底", () => {
   assert.ok(text.includes("【调味干货】\n✓ 酱油 1勺"));
 });
 
+test("购物清单和计划摘要切 en 后输出英文 UI 文案", () => {
+  app.setLanguage("en");
+  const text = app.shoppingTextBySection([
+    { name: "牛肉", amount: "300克", from: "B", checked: false },
+    { name: "酱油", amount: "1勺", from: "A", checked: true },
+  ]);
+  assert.ok(text.includes("【Meat & Eggs】\n牛肉 300克"));
+  assert.ok(text.includes("【Pantry & Seasonings】\n✓ 酱油 1勺"));
+
+  const summary = app.summarizeMealNutrition([
+    { id: "a", nutrition: { per_serving: { calories_kcal: 700, protein_g: 70, fat_g: 35, carbs_g: 140, sodium_mg: 700 } } },
+    { id: "b" },
+  ]);
+  const html = app.nutritionSummaryHtml(summary, { prefix: app.t("plan.weekAverage"), averageBy: 7 });
+  assert.ok(html.includes("Weekly daily avg"));
+  assert.ok(html.includes("Calories 100kcal"));
+  assert.ok(html.includes("1 not estimated"));
+  assert.equal(app.weekDays()[0].label, "Today");
+  assert.equal(app.weekDays()[1].label, "Tomorrow");
+  app.setLanguage("zh");
+});
+
 test("mergeUserDataConflict 按字段合并跨设备数据", () => {
   const merged = app.mergeUserDataConflict({
     rev: 3,
