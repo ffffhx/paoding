@@ -287,6 +287,7 @@ test("限流维度包含用户", async () => {
 });
 
 test("import 写入→列表可见→分享页→删除", async () => {
+  await request("/api/recipes"); // 预热列表缓存，导入后必须失效/刷新
   const imp = await (await request("/api/import", J({ recipes: [{ title: "测试菜X", steps: [{ index: 1, title: "a", action: "下锅翻炒" }], ingredients: [{ name: "盐", amount: "1勺" }] }] }))).json();
   assert.equal(imp.count, 1);
   const list = await (await request("/api/recipes")).json();
@@ -325,6 +326,27 @@ test("import-recipe 导入 schema.org JSON-LD 且不生成 why", async () => {
   assert.equal(saved.steps[0].why, undefined);
   assert.ok((await (await request("/api/recipes")).json()).some((r) => r.id === data.id));
   assert.equal((await request("/api/recipes/" + encodeURIComponent(data.id), { method: "DELETE" })).status, 200);
+});
+
+test("recipes 列表缓存感知新增、mtime 修改和删除", async () => {
+  const id = "缓存测试菜";
+  const fp = path.join(recipesDir, `${id}.json`);
+  fs.rmSync(fp, { force: true });
+
+  await request("/api/recipes"); // 预热空/旧缓存
+  fs.writeFileSync(fp, JSON.stringify({ title: id, created_at: "2026-07-01T00:00:00.000Z" }, null, 2));
+  let list = await (await request("/api/recipes")).json();
+  assert.equal(list.find((r) => r.id === id)?.title, id);
+
+  fs.writeFileSync(fp, JSON.stringify({ title: "缓存测试菜-已更新", created_at: "2026-07-02T00:00:00.000Z" }, null, 2));
+  const future = new Date(Date.now() + 2000);
+  fs.utimesSync(fp, future, future);
+  list = await (await request("/api/recipes")).json();
+  assert.equal(list.find((r) => r.id === id)?.title, "缓存测试菜-已更新");
+
+  fs.rmSync(fp, { force: true });
+  list = await (await request("/api/recipes")).json();
+  assert.equal(list.some((r) => r.id === id), false);
 });
 
 test("techniques 聚合全部菜谱步骤和 why", async () => {

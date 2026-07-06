@@ -143,10 +143,35 @@ ${ings ? `<h2>食材</h2><ul class="ings">${ings}</ul>` : ""}
 </div></body></html>`;
 }
 
-function listRecipes() {
-  return fs
+let recipeListCache = { signature: "", recipes: null };
+function recipeListIndex() {
+  const files = fs
     .readdirSync(RECIPES_DIR)
     .filter((f) => f.endsWith(".json"))
+    .sort();
+  const signature = files.map((f) => {
+    try {
+      const st = fs.statSync(path.join(RECIPES_DIR, f));
+      return `${f}:${st.size}:${st.mtimeMs}`;
+    } catch {
+      return `${f}:missing`;
+    }
+  }).join("|");
+  return { files, signature };
+}
+function invalidateRecipeListCache() {
+  recipeListCache = { signature: "", recipes: null };
+}
+function writeRecipeFile(id, recipe) {
+  const saved = { ...recipe };
+  delete saved.id;
+  fs.writeFileSync(recipePath(id), JSON.stringify(saved, null, 2));
+  invalidateRecipeListCache();
+}
+function listRecipes() {
+  const { files, signature } = recipeListIndex();
+  if (recipeListCache.recipes && recipeListCache.signature === signature) return recipeListCache.recipes;
+  const recipes = files
     .map((f) => {
       try {
         const r = JSON.parse(fs.readFileSync(path.join(RECIPES_DIR, f), "utf8"));
@@ -158,6 +183,8 @@ function listRecipes() {
     })
     .filter(Boolean)
     .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  recipeListCache = { signature, recipes };
+  return recipes;
 }
 function loadRecipe(id) {
   if (!id || typeof id !== "string") return null; // 缺 recipeId 时返回 null，避免 path.basename(undefined) 抛错→500
@@ -563,6 +590,7 @@ function finishJob(id, ev) {
   const j = jobs.get(id);
   if (!j || TERMINAL_JOB_STATUSES.has(j.status)) return;
   if (ev.type === "done") {
+    invalidateRecipeListCache();
     j.status = "done";
     j.recipe = ev.recipe;
     j.result_recipe_id = recipeResultId(ev.recipe);
@@ -688,7 +716,7 @@ const AI_ENDPOINTS = {
       const cur = JSON.parse(fs.readFileSync(fp, "utf8"));
       cur.nutrition = nutrition;
       delete cur.id;
-      fs.writeFileSync(fp, JSON.stringify(cur, null, 2));
+      writeRecipeFile(recipeId, cur);
       return { body: { nutrition, answer: nutritionText(nutrition), cached: false } };
     },
   },
@@ -708,8 +736,7 @@ const AI_ENDPOINTS = {
       await explainSteps(config.llm, next, DEPTHS.includes(depth) ? depth : config.depth);
       const id = path.basename(recipeId);
       const saved = { ...next };
-      delete saved.id;
-      fs.writeFileSync(recipePath(id), JSON.stringify(saved, null, 2));
+      writeRecipeFile(id, saved);
       return { body: { ok: true, recipe: { ...saved, id }, answer: "已补齐每步原理讲解" } };
     },
   },
@@ -827,8 +854,7 @@ export async function handleRequest(req, res) {
       catch (e) { return sendJSON(res, e.statusCode || 400, { error: e.message }); }
       const id = uniqueRecipeId(recipe.title);
       const saved = { ...recipe };
-      delete saved.id;
-      fs.writeFileSync(recipePath(id), JSON.stringify(saved, null, 2));
+      writeRecipeFile(id, saved);
       return sendJSON(res, 200, { ok: true, id, recipe: { ...saved, id } });
     }
 
@@ -843,7 +869,7 @@ export async function handleRequest(req, res) {
         // 只接受带字符串标题的对象，跳过脏数据，避免把垃圾写进 recipes/。
         if (!r || typeof r !== "object" || typeof r.title !== "string" || !r.title.trim()) { skipped++; continue; }
         const id = slug(r.id || r.title); const rr = { ...r }; delete rr.id;
-        fs.writeFileSync(path.join(RECIPES_DIR, `${id}.json`), JSON.stringify(rr, null, 2)); n++;
+        writeRecipeFile(id, rr); n++;
       }
       if (data.userdata && typeof data.userdata === "object" && !Array.isArray(data.userdata)) writeUserData(data.userdata, currentUser(req));
       return sendJSON(res, 200, { ok: true, count: n, skipped });
@@ -872,6 +898,7 @@ export async function handleRequest(req, res) {
       // 连图片目录一起删（bid 非空且不等于 RECIPES_DIR 本身，防误删整个库）
       const dir = path.join(RECIPES_DIR, bid);
       if (bid && dir !== RECIPES_DIR) fs.rmSync(dir, { recursive: true, force: true });
+      invalidateRecipeListCache();
       return sendJSON(res, 200, { ok: true });
     }
 
@@ -886,8 +913,7 @@ export async function handleRequest(req, res) {
       const nutritionTouched = ("ingredients" in patch && JSON.stringify(patch.ingredients) !== JSON.stringify(cur.ingredients))
         || ("servings" in patch && patch.servings !== cur.servings);
       if (nutritionTouched) delete next.nutrition;
-      delete next.id;
-      fs.writeFileSync(fp, JSON.stringify(next, null, 2));
+      writeRecipeFile(id, next);
       return sendJSON(res, 200, { ok: true });
     }
 
