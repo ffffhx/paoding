@@ -31,8 +31,9 @@
     </div>
     <label class="vischk"><input type="checkbox" id="visChk"> 🔎 读画面字幕 <span class="muted">（视频没口播/字幕多时开，会下整段视频、较慢）</span></label>
     <label class="vischk"><input type="checkbox" id="imgChk" checked> 📸 提取画面截图 <span class="muted">（每步状态图 + 食材图，需服务端配视觉模型，会下整段视频、较慢）</span></label>
-    <div class="hint">也可以 <button id="fileBtn" class="linklike">上传本地视频</button> 或 <button id="textBtn" class="linklike">粘贴文字菜谱</button>（小红书图文/公众号适用）· 解析约 1–3 分钟</div>
+    <div class="hint">也可以 <button id="fileBtn" class="linklike">上传本地视频</button>、<button id="imageBtn" class="linklike">拍照/图片导入</button> 或 <button id="textBtn" class="linklike">粘贴文字菜谱</button>（菜谱书/手写菜谱/小红书图文适用）· 解析约 1–3 分钟</div>
     <input id="file" type="file" accept="video/*,audio/*" class="hidden" />
+    <input id="imageFile" type="file" accept="image/*" capture="environment" multiple class="hidden" />
   </div>
 
   <div class="tabs" role="tablist">

@@ -6,7 +6,7 @@ import { structureRecipe, clampStepTimes } from "./chef.mjs";
 import { explainSteps } from "./explain.mjs";
 import { toMarkdown } from "./render.mjs";
 import { fetchArticleText } from "./fetchText.mjs";
-import { extractFrames, visionTranscript, probeDuration, extractStepImages, extractIngredientImages } from "./vision.mjs";
+import { extractFrames, visionTranscript, probeDuration, extractStepImages, extractIngredientImages, transcribeRecipeImage } from "./vision.mjs";
 
 const slug = (s) =>
   (s || "recipe")
@@ -145,6 +145,57 @@ export async function processText(input, config, { onProgress = () => {}, signal
   recipe.created_at = new Date().toISOString();
   fs.mkdirSync(config.outDir, { recursive: true });
   const base = path.join(config.outDir, slug(recipe.title || title));
+  fs.writeFileSync(`${base}.json`, JSON.stringify(recipe, null, 2));
+  fs.writeFileSync(`${base}.md`, toMarkdown(recipe, recipe.source));
+  emit("done", 100, "完成");
+  return { recipe, files: { json: `${base}.json`, md: `${base}.md` } };
+}
+
+function usableImageTranscript(text) {
+  const cleaned = String(text || "")
+    .replace(/（?未识别到菜谱内容）?/g, "")
+    .replace(/没有可识别的菜谱内容/g, "")
+    .replace(/\s+/g, "");
+  return cleaned.length >= 10;
+}
+
+// 图片管线：拍照/截图 → 视觉模型转录 → 结构化 → 逐步讲解 → 落盘。
+// 图片来源没有可靠视频时间轴，所有步骤都不保留 source_time。
+export async function processImages(paths, config, { onProgress = () => {}, signal } = {}) {
+  const emit = (stage, pct, message) => onProgress({ stage, pct: Math.round(pct), message });
+  const files = Array.isArray(paths) ? paths : [];
+  if (!config.vision) throw new Error("需配置视觉模型后才能拍照/图片导入。");
+  if (!files.length) throw new Error("请至少提供一张菜谱图片。");
+
+  const parts = [];
+  for (let i = 0; i < files.length; i++) {
+    emit("vision", 5 + (i / files.length) * 35, `识别第 ${i + 1}/${files.length} 张图片…`);
+    const text = await transcribeRecipeImage(config.vision, files[i], { index: i + 1, total: files.length, signal });
+    if (usableImageTranscript(text)) parts.push(`【第 ${i + 1} 张图】\n${text.trim()}`);
+  }
+  const transcript = parts.join("\n\n").trim();
+  if (!usableImageTranscript(transcript)) throw new Error("图片中未识别到菜谱内容。");
+
+  emit("structure", 50, "整理成步骤…");
+  const recipe = await structureRecipe(config.llm, {
+    transcript,
+    meta: { title: "图片导入菜谱", description: transcript.slice(0, 2000) },
+    signal,
+  });
+  for (const step of recipe.steps || []) delete step.source_time;
+  emit("structure", 68, "步骤已生成");
+
+  emit("explain", 72, "逐步生成「为什么」…");
+  await explainSteps(config.llm, recipe, config.depth, signal);
+  emit("explain", 96, "讲解已生成");
+
+  recipe.source = "（图片导入）";
+  recipe.source_type = "image";
+  recipe.imported = true;
+  recipe.created_at = new Date().toISOString();
+
+  fs.mkdirSync(config.outDir, { recursive: true });
+  const base = path.join(config.outDir, slug(recipe.title || "图片导入菜谱"));
   fs.writeFileSync(`${base}.json`, JSON.stringify(recipe, null, 2));
   fs.writeFileSync(`${base}.md`, toMarkdown(recipe, recipe.source));
   emit("done", 100, "完成");

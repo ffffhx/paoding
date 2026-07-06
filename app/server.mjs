@@ -5,7 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { loadConfig, loadEnvFiles } from "../src/config.mjs";
-import { processVideo, processText } from "../src/pipeline.mjs";
+import { processVideo, processText, processImages } from "../src/pipeline.mjs";
 import { chatJSON, chatText } from "../src/llm.mjs";
 import { DEPTHS, explainSteps } from "../src/explain.mjs";
 import { assertPublicUrl } from "../src/urlSafety.mjs";
@@ -29,6 +29,8 @@ const BASE_PATH = normalizeBasePath(process.env.PAODING_BASE_PATH || "/paoding")
 const MAX_RUNNING = Number(process.env.PAODING_MAX_JOBS || 2); // 同时解析上限，防资源耗尽
 const MAX_QUEUE = Math.max(0, Number(process.env.PAODING_MAX_QUEUE || 10)); // 等待队列上限，超出才返回 429
 const MAX_IMPORT_RECIPES = Number(process.env.PAODING_MAX_IMPORT || 5000); // 单次导入菜谱上限，防脏/超大备份写爆磁盘
+const MAX_IMPORT_IMAGES = Math.max(1, Math.floor(Number(process.env.PAODING_IMAGE_MAX_COUNT || 6)));
+const MAX_IMPORT_IMAGE_MB = Math.max(1, Number(process.env.PAODING_IMAGE_MAX_MB || 8));
 const BACKUP_INTERVAL_H = Number.isFinite(Number(process.env.PAODING_BACKUP_INTERVAL_H))
   ? Number(process.env.PAODING_BACKUP_INTERVAL_H)
   : 24;
@@ -387,6 +389,7 @@ const llmLimiter = createSlidingWindowRateLimiter({
 });
 const LLM_ENDPOINTS = new Set([
   "/api/parse-url", "/api/parse-text", "/api/parse-file",
+  "/api/parse-images",
   "/api/ask", "/api/substitute", "/api/term", "/api/troubleshoot", "/api/nutrition", "/api/overview", "/api/explain-recipe", "/api/import-recipe",
 ]);
 const LIMITED_READ_ENDPOINTS = new Set([
@@ -409,8 +412,8 @@ function rateLimitOk(req, res, p) {
   return false;
 }
 // 读并解析 JSON 请求体；畸形 JSON 抛 400（而非落到外层 catch 变 500）。
-async function readJson(req) {
-  const text = (await readBody(req)).toString("utf8") || "{}";
+async function readJson(req, limitMB = 800) {
+  const text = (await readBody(req, limitMB)).toString("utf8") || "{}";
   try { return JSON.parse(text); }
   catch { throw Object.assign(new Error("请求体不是合法 JSON"), { statusCode: 400 }); }
 }
@@ -662,6 +665,19 @@ function scheduleTmpCleanup(id, tmp) {
       clearInterval(iv);
     }
   }, 3000);
+  iv.unref?.();
+}
+function scheduleTmpDirCleanup(id, dir) {
+  const j = jobs.get(id);
+  let ticks = 0;
+  const iv = setInterval(() => {
+    const cur = jobs.get(id) || j;
+    if (!cur || cur.status !== "running" || ++ticks > 1200) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      clearInterval(iv);
+    }
+  }, 3000);
+  iv.unref?.();
 }
 function recipeResultId(recipe) {
   return recipe?.id || slug(recipe?.title || "");
@@ -717,6 +733,8 @@ function runJob(id, input, depth, kind = "video", wantVision = false, wantImages
   let run;
   if (kind === "text") {
     run = processText(input, cfg, { onProgress, signal });
+  } else if (kind === "images") {
+    run = processImages(input, cfg, { onProgress, signal });
   } else {
     // 视频路径；URL 视频抓不到（如小红书无抽取器）时自动改按文字帖尝试
     run = processVideo(input, cfg, { onProgress, signal }).catch((e) => {
@@ -862,6 +880,31 @@ function serveStatic(res, pathname) {
   if (rel === "sw.js" || ext === ".webmanifest") headers["Cache-Control"] = "no-cache";
   res.writeHead(200, headers);
   res.end(fs.readFileSync(abs));
+}
+
+function imageExt(name = "", type = "") {
+  const t = String(type || "").toLowerCase();
+  if (t === "image/png") return ".png";
+  if (t === "image/webp") return ".webp";
+  if (t === "image/jpeg" || t === "image/jpg") return ".jpg";
+  const ext = path.extname(String(name || "")).toLowerCase();
+  return [".jpg", ".jpeg", ".png", ".webp"].includes(ext) ? (ext === ".jpeg" ? ".jpg" : ext) : "";
+}
+function decodeImageUpload(item, index) {
+  const data = typeof item === "string" ? item : (item?.data || item?.base64 || "");
+  const name = typeof item === "object" ? String(item.name || `image-${index + 1}`) : `image-${index + 1}`;
+  const type = typeof item === "object" ? String(item.type || "") : "";
+  const m = String(data || "").match(/^data:([^;,]+);base64,(.*)$/s);
+  const mime = (m ? m[1] : type).toLowerCase();
+  const ext = imageExt(name, mime);
+  if (!ext || (mime && !mime.startsWith("image/"))) throw Object.assign(new Error("只支持 JPEG/PNG/WebP 图片"), { statusCode: 400 });
+  const raw = (m ? m[2] : String(data || "")).replace(/\s+/g, "");
+  if (!raw) throw Object.assign(new Error("图片数据为空"), { statusCode: 400 });
+  const buf = Buffer.from(raw, "base64");
+  if (!buf.length) throw Object.assign(new Error("图片数据为空"), { statusCode: 400 });
+  const maxBytes = MAX_IMPORT_IMAGE_MB * 1024 * 1024;
+  if (buf.length > maxBytes) throw Object.assign(new Error(`单张图片不能超过 ${MAX_IMPORT_IMAGE_MB}MB`), { statusCode: 413 });
+  return { name, ext, buf };
 }
 
 export async function handleRequest(req, res) {
@@ -1024,6 +1067,44 @@ export async function handleRequest(req, res) {
         depth: body.depth || null,
       }), (id) => runJob(id, input, body.depth, "text"));
       if (!queued.ok) return sendJSON(res, 429, { error: "解析任务繁忙，队列已满，请稍后再试" });
+      return sendJSON(res, 200, { jobId: queued.id });
+    }
+    // ---- 图片解析：拍菜谱书/手写菜谱/截图 → 视觉转录 → 结构化菜谱 ----
+    if (req.method === "POST" && p === "/api/parse-images") {
+      if (!config.vision) return sendJSON(res, 400, { error: "需配置视觉模型后才能拍照/图片导入。" });
+      let body;
+      try { body = await readJson(req, Math.ceil(MAX_IMPORT_IMAGES * MAX_IMPORT_IMAGE_MB * 1.5 + 1)); }
+      catch (e) { return sendJSON(res, e.statusCode || 400, { error: e.message }); }
+      const images = Array.isArray(body.images) ? body.images : [];
+      if (!images.length) return sendJSON(res, 400, { error: "请至少上传一张菜谱图片" });
+      if (images.length > MAX_IMPORT_IMAGES) return sendJSON(res, 400, { error: `一次最多上传 ${MAX_IMPORT_IMAGES} 张图片` });
+
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-img-"));
+      const paths = [];
+      try {
+        images.forEach((img, i) => {
+          const decoded = decodeImageUpload(img, i);
+          const fp = path.join(dir, `${String(i + 1).padStart(2, "0")}-${slug(decoded.name)}${decoded.ext}`);
+          fs.writeFileSync(fp, decoded.buf);
+          paths.push(fp);
+        });
+      } catch (e) {
+        fs.rmSync(dir, { recursive: true, force: true });
+        return sendJSON(res, e.statusCode || 400, { error: e.message });
+      }
+
+      const queued = submitParseJob("images", withJobUser(req, {
+        count: paths.length,
+        depth: body.depth || null,
+        filenames: images.map((img, i) => typeof img === "object" ? String(img.name || `image-${i + 1}`) : `image-${i + 1}`),
+      }), (id) => {
+        runJob(id, paths, body.depth, "images");
+        scheduleTmpDirCleanup(id, dir);
+      });
+      if (!queued.ok) {
+        fs.rmSync(dir, { recursive: true, force: true });
+        return sendJSON(res, 429, { error: "解析任务繁忙，队列已满，请稍后再试" });
+      }
       return sendJSON(res, 200, { jobId: queued.id });
     }
     if (req.method === "POST" && p === "/api/parse-file") {

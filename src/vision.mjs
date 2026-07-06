@@ -124,6 +124,24 @@ export function clampBbox(bbox, width, height, padRatio = 0.08) {
 
 const b64 = (p) => fs.readFileSync(p).toString("base64");
 
+function imageMime(file) {
+  const ext = path.extname(file).toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".webp") return "image/webp";
+  return "image/jpeg";
+}
+
+// 拍照/截图导入：只做 OCR/转录，绝不把看不清的内容补全成菜谱。
+export async function transcribeRecipeImage(vision, imagePath, { index = 1, total = 1, signal } = {}) {
+  return chatVision(vision, {
+    system: "你是菜谱图片转录助手。请只根据图片中真实可见的文字和版面，原样转录菜谱相关内容：标题、食材、用量、步骤、火候、时间、备注。不要把看不清或没有出现的信息补全，不要创作新菜谱。若图片中没有可识别的菜谱内容，只输出「（未识别到菜谱内容）」。",
+    user: `这是第 ${index}/${total} 张菜谱图片。按阅读顺序转录可见菜谱文字；多余广告、水印、无关评论可省略。`,
+    images: [{ b64: b64(imagePath), mime: imageMime(imagePath) }],
+    temperature: 0.1,
+    signal,
+  });
+}
+
 // 对每个带 source_time 的步骤：段内抽多张候选帧 → 视觉模型挑最能体现该步状态的一张 → 存为 step-<index>.jpg。
 // 单步失败只跳过该步，绝不让截图问题毁掉整趟解析。
 export async function extractStepImages(vision, videoPath, recipe, { duration, imagesDir, onProgress = () => {}, signal } = {}) {

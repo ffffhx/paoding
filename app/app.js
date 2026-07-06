@@ -25,6 +25,7 @@ const API = {
   startUrl: (url, depth, vision, images) => F('/api/parse-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth, vision: !!vision, images: !!images }) }).then(j),
   startFile: (file, depth, vision, images) => F('/api/parse-file', { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth, 'X-Vision': vision ? '1' : '0', 'X-Images': images ? '1' : '0' }, body: file }).then(j),
   startText: (text, depth) => F('/api/parse-text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, depth }) }).then(j),
+  startImages: async (files, depth) => F('/api/parse-images', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ depth, images: await imageFilesPayload(files) }) }).then(j),
   jobs: () => F('/api/jobs?limit=8').then(r => r.json()).catch(() => []),
   ask: (recipeId, stepIndex, question) => F('/api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, question }) }).then(j),
   substitute: (recipeId, ingredient) => F('/api/substitute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, ingredient }) }).then(j),
@@ -85,6 +86,21 @@ function importRecipeJsonFile(file) {
   reader.readAsText(file);
 }
 async function j(r) { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); return d; }
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.readAsDataURL(file);
+  });
+}
+async function imageFilesPayload(files) {
+  return Promise.all(Array.from(files || []).map(async (file) => ({
+    name: file.name || 'image',
+    type: file.type || 'image/jpeg',
+    data: await readAsDataUrl(file),
+  })));
+}
 
 /* ---------- 状态 ---------- */
 let recipes = [];
@@ -645,7 +661,7 @@ function renderRecentJobs(box) {
     const map = { queued: '排队中', running: '解析中', done: '已完成', error: '失败', interrupted: '已中断' };
     return map[j.status] || j.status || '未知';
   };
-  const type = (j) => ({ url: '链接', text: '文字', file: '文件' }[j.type] || '任务');
+  const type = (j) => ({ url: '链接', text: '文字', file: '文件', images: '图片' }[j.type] || '任务');
   const title = (j) => j.params?.filename || j.params?.url || (j.params?.input ? '粘贴文字' : type(j));
   const rows = list.map(j => `<div class="job-row ${esc(j.status || '')}">
     <div><b>${esc(type(j))}</b><span>${esc(title(j))}</span></div>
@@ -1610,7 +1626,7 @@ async function doParse(starter) {
   } catch (e) { cleanup(); refresh(); toast('解析失败：' + e.message); }
 }
 function stageLabel(stage, message) {
-  const map = { acquire: '下载 & 抽取音频', transcribe: '语音转文字', vision: '看画面读字幕', structure: '整理成步骤', explain: '逐步生成「为什么」', images: '截取步骤/食材画面', done: '完成' };
+  const map = { acquire: '下载 & 抽取音频', transcribe: '语音转文字', vision: '识别图片/画面', structure: '整理成步骤', explain: '逐步生成「为什么」', images: '截取步骤/食材画面', done: '完成' };
   return map[stage] || message || '处理中…';
 }
 
@@ -1660,12 +1676,18 @@ function init() {
   $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast('请粘贴 http(s) 视频链接'); return; } const vision = $('#visChk')?.checked, images = $('#imgChk')?.checked; doParse(() => API.startUrl(u, depth, vision, images)); $('#url').value = ''; };
   $('#url').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#parseUrl').click(); } });
   $('#fileBtn').onclick = () => $('#file').click();
+  $('#imageBtn').onclick = () => $('#imageFile').click();
   $('#textBtn').onclick = async () => {
     const t = await promptModal('粘贴文字菜谱', '把小红书图文 / 公众号 / 任意帖子的做菜文字粘进来，AI 直接整理成分步骤 + 讲透为什么', '解析');
     if (t && t.length >= 10) doParse(() => API.startText(t, depth));
     else if (t) toast('文字太短了，多粘一点');
   };
   $('#file').onchange = (e) => { const f = e.target.files[0]; if (f) doParse(() => API.startFile(f, depth, $('#visChk')?.checked, $('#imgChk')?.checked)); e.target.value = ''; };
+  $('#imageFile').onchange = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length) doParse(() => API.startImages(files, depth));
+    e.target.value = '';
+  };
   $('#search').oninput = (e) => { filter.q = e.target.value.trim(); renderRecipes(); };
   $('#ingredientFilter').oninput = (e) => { filter.ingredients = e.target.value.trim(); renderRecipes(); };
   $('#sortRecipe').onchange = (e) => { filter.sort = e.target.value || 'recent'; renderRecipes(); };

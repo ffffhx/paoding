@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { processText, processVideo } from "../src/pipeline.mjs";
+import { processImages, processText, processVideo } from "../src/pipeline.mjs";
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const BIN_DIR = path.join(TEST_DIR, "fixtures", "bin");
@@ -82,7 +82,7 @@ function stubExplanations() {
   };
 }
 
-async function startLlmStub({ malformedFirst = false } = {}) {
+async function startLlmStub({ malformedFirst = false, imageText = "" } = {}) {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   const requests = [];
@@ -100,6 +100,8 @@ async function startLlmStub({ malformedFirst = false } = {}) {
     let content;
     if (malformedFirst && calls === 1) {
       content = "这不是 JSON";
+    } else if (system.includes("菜谱图片转录助手")) {
+      content = imageText || "标题：集成测试番茄炒蛋\n食材：鸡蛋3个，番茄2个\n步骤：1. 打散鸡蛋。2. 炒番茄出汁。3. 合炒调味。";
     } else if (system.includes("专业中餐厨师兼菜谱编辑")) {
       content = JSON.stringify(stubRecipe());
     } else if (system.includes("食品科学")) {
@@ -124,6 +126,16 @@ async function startLlmStub({ malformedFirst = false } = {}) {
       globalThis.fetch = originalFetch;
     },
   };
+}
+
+function addVision(config, baseUrl) {
+  config.vision = {
+    baseUrl,
+    apiKey: "test-key",
+    model: "stub-vision",
+    maxFrames: 4,
+  };
+  return config;
 }
 
 function createConfig(root, llmBaseUrl) {
@@ -281,6 +293,51 @@ test("LLM 首次返回非法 JSON 时会重试并成功", async () => {
       assert.equal(recipe.title, "集成测试番茄炒蛋");
       assert.ok(llm.calls >= 3);
       assert.ok(llm.requests[1].messages[0].content.includes("上一次输出不是合法 JSON"));
+    });
+  } finally {
+    await llm.close();
+  }
+});
+
+test("processImages 走视觉转录并生成图片来源菜谱", async () => {
+  const llm = await startLlmStub({
+    imageText: "标题：集成测试番茄炒蛋\n食材：鸡蛋3个、番茄2个\n步骤：打蛋；炒蛋；炒番茄后合炒。",
+  });
+  try {
+    await withIsolatedTmp(async (root) => {
+      const config = addVision(createConfig(root, llm.url), llm.url);
+      const img1 = path.join(root, "page-1.jpg");
+      const img2 = path.join(root, "page-2.png");
+      fs.writeFileSync(img1, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+      fs.writeFileSync(img2, Buffer.from("fake png"));
+
+      const { recipe, files } = await processImages([img1, img2], config);
+
+      assert.equal(recipe.title, "集成测试番茄炒蛋");
+      assert.equal(recipe.source_type, "image");
+      assert.equal(recipe.imported, true);
+      assert.equal(recipe.source, "（图片导入）");
+      assert.ok(recipe.steps.every((s) => !("source_time" in s)));
+      assert.ok(recipe.steps.every((s) => s.why?.reason));
+      assert.ok(fs.existsSync(files.json));
+      assert.ok(fs.existsSync(files.md));
+    });
+  } finally {
+    await llm.close();
+  }
+});
+
+test("processImages 在视觉读不出菜谱内容时明确报错", async () => {
+  const llm = await startLlmStub({ imageText: "（未识别到菜谱内容）" });
+  try {
+    await withIsolatedTmp(async (root) => {
+      const config = addVision(createConfig(root, llm.url), llm.url);
+      const img = path.join(root, "blank.jpg");
+      fs.writeFileSync(img, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+      await assert.rejects(
+        () => processImages([img], config),
+        /图片中未识别到菜谱内容/,
+      );
     });
   } finally {
     await llm.close();

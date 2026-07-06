@@ -69,9 +69,17 @@ export async function chatText(llm, { system, user, temperature = 0.5, signal })
 
 // 视觉对话：把若干截图（base64 jpg）连同提示喂给视觉模型，读屏上文字与画面观察。
 export async function chatVision(vision, { system, user, images = [], temperature = 0.2, signal }) {
+  const imageUrl = (img) => {
+    if (img && typeof img === "object") {
+      const mime = img.mime || "image/jpeg";
+      const b64 = img.b64 || img.base64 || "";
+      return `data:${mime};base64,${b64}`;
+    }
+    return `data:image/jpeg;base64,${img}`;
+  };
   const content = [
     { type: "text", text: user },
-    ...images.map((b64) => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } })),
+    ...images.map((img) => ({ type: "image_url", image_url: { url: imageUrl(img) } })),
   ];
   const res = await fetchWithRetry(`${vision.baseUrl}/chat/completions`, {
     method: "POST",

@@ -42,6 +42,7 @@ before(async () => {
     PAODING_API_TOKENS: "",
     PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL || "http://localhost:11434/v1",
     PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY || "test",
+    PAODING_VISION_MODEL: "",
   });
   ({ handleRequest } = await import(`../app/server.mjs?test=${Date.now()}`));
 });
@@ -427,6 +428,14 @@ test("parse-url 私网链接 → 400", async () => {
 
 test("parse-text 太短 → 400", async () => {
   assert.equal((await request("/api/parse-text", J({ text: "短" }))).status, 400);
+});
+
+test("parse-images 未配置视觉模型 → 400", async () => {
+  const r = await request("/api/parse-images", J({
+    images: [{ name: "recipe.jpg", type: "image/jpeg", data: "data:image/jpeg;base64,/9j/2Q==" }],
+  }));
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /需配置视觉模型/);
 });
 
 test("parse-file 中等 body 上传返回 jobId", async () => {
