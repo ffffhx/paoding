@@ -46,11 +46,15 @@ test("mergeAmounts 同单位求和，异单位并列", () => {
   assert.ok(app.mergeAmounts(["三勺", "四勺"]).includes("三勺"));
 });
 
-test("shopCat 品类归类", () => {
-  assert.equal(app.shopCat("猪肉"), "🥩 肉蛋水产");
-  assert.equal(app.shopCat("西红柿"), "🥬 蔬菜菌菇");
-  assert.equal(app.shopCat("酱油"), "🧂 调料");
-  assert.equal(app.shopCat("某种没见过的东西"), "🧺 其他");
+test("shopCat 货架分区映射", () => {
+  assert.equal(app.shopCat("苹果"), "蔬菜水果");
+  assert.equal(app.shopCat("鸡蛋"), "肉禽蛋");
+  assert.equal(app.shopCat("鲜虾"), "水产");
+  assert.equal(app.shopCat("酱油"), "调味干货");
+  assert.equal(app.shopCat("面条"), "粮油米面");
+  assert.equal(app.shopCat("豆腐"), "乳品豆制品");
+  assert.equal(app.shopCat("冷冻水饺"), "冷冻");
+  assert.equal(app.shopCat("某种没见过的东西"), "其他");
 });
 
 test("parseSeconds 中文时长解析", () => {
@@ -96,6 +100,28 @@ test("sourceSegmentUrl 按平台生成原视频时间戳链接", () => {
   assert.equal(app.sourceSegmentUrl("https://www.douyin.com/video/123", [8, 18]), "https://www.douyin.com/video/123");
   assert.equal(app.sourceSegmentUrl("https://www.bilibili.com/video/BV1xx", null), "");
   assert.equal(app.sourceSegmentUrl("", [1, 2]), "");
+});
+
+test("groupShoppingItems 按货架分区、同名合并且已购沉底", () => {
+  const groups = app.groupShoppingItems([
+    { name: "酱油", amount: "1勺", from: "A", checked: true },
+    { name: "西红柿", amount: "2个", from: "A", checked: true },
+    { name: "牛肉", amount: "300克", from: "B", checked: false },
+    { name: "西红柿", amount: "1个", from: "B", checked: false },
+    { name: "冻虾仁", amount: "200克", from: "C", checked: false },
+  ]);
+  const sections = Array.from(groups).map((g) => g.section);
+  assert.deepEqual(sections, ["蔬菜水果", "肉禽蛋", "调味干货", "冷冻"]);
+  const veg = groups.find((g) => g.section === "蔬菜水果");
+  assert.equal(veg.items[0].name, "西红柿");
+  assert.equal(veg.items[0].amount, "3个");
+  assert.equal(veg.items[0].checked, false);
+  const text = app.shoppingTextBySection([
+    { name: "牛肉", amount: "300克", from: "B", checked: false },
+    { name: "酱油", amount: "1勺", from: "A", checked: true },
+  ]);
+  assert.ok(text.includes("【肉禽蛋】\n牛肉 300克"));
+  assert.ok(text.includes("【调味干货】\n✓ 酱油 1勺"));
 });
 
 test("mergeUserDataConflict 按字段合并跨设备数据", () => {

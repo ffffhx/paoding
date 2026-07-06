@@ -419,14 +419,26 @@ function renderSkills() {
   });
 }
 
-/* ================= 购物清单（按品类归类 + 同名合并）================= */
-const SHOP_CATS = [
-  ['🥩 肉蛋水产', /猪|牛|羊|鸡|鸭|鹅|鱼|虾|蟹|肉|排骨|培根|香肠|腊肠|火腿|蛋|贝|鱿|蛤|蛏|海鲜|五花|里脊|通脊|牛腩|鸡胸|鸡腿/],
-  ['🥬 蔬菜菌菇', /菜|葱|姜|蒜|辣椒|青椒|尖椒|瓜|茄|菇|笋|藕|萝卜|土豆|马铃薯|番茄|西红柿|洋葱|韭|芹|菠|生菜|白菜|菌|木耳|香菜|豆芽|苗|莲|玉米|山药|冬瓜|南瓜|豆角|豇豆|秋葵/],
-  ['🍚 主食豆制', /米|面(?!酱)|粉丝|粉条|馒头|花卷|饼|包子|馄饨|饺|年糕|河粉|米线|豆腐|腐竹|豆皮|千张|素鸡|油条/],
-  ['🧂 调料', /盐|糖|酱油|生抽|老抽|蚝油|耗油|醋|油|料酒|味精|鸡精|胡椒|八角|桂皮|花椒|孜然|五香|十三香|13香|芝麻|蜂蜜|淀粉|豆瓣|豆豉|番茄酱|香油|辣椒油|蒜蓉|调料|香料|盐巴|白糖|冰糖|生粉/],
-];
-function shopCat(name) { for (const [c, re] of SHOP_CATS) if (re.test(name)) return c; return '🧺 其他'; }
+/* ================= 购物清单（按货架分区 + 同名合并）================= */
+const SHOP_SECTION_ORDER = ['蔬菜水果', '肉禽蛋', '水产', '调味干货', '粮油米面', '乳品豆制品', '冷冻', '其他'];
+const SHOP_SECTION_KEYWORDS = {
+  蔬菜水果: ['青菜', '白菜', '菠菜', '生菜', '芹菜', '香菜', '韭菜', '葱', '姜', '蒜', '辣椒', '青椒', '尖椒', '番茄', '西红柿', '土豆', '马铃薯', '萝卜', '胡萝卜', '洋葱', '黄瓜', '冬瓜', '南瓜', '丝瓜', '苦瓜', '茄子', '蘑菇', '香菇', '金针菇', '木耳', '笋', '藕', '玉米', '山药', '豆芽', '豆角', '豇豆', '秋葵', '苹果', '香蕉', '柠檬', '橙', '梨', '水果'],
+  肉禽蛋: ['猪肉', '牛肉', '羊肉', '鸡肉', '鸡翅', '鸡腿', '鸡胸', '鸭', '鹅', '排骨', '五花', '里脊', '牛腩', '培根', '香肠', '腊肠', '火腿', '午餐肉', '肉末', '肉馅', '鸡蛋', '鸭蛋', '鹌鹑蛋', '蛋'],
+  水产: ['鱼', '虾', '蟹', '贝', '蛤', '蛏', '鱿鱼', '海鲜', '水产', '三文鱼', '鳕鱼', '鲈鱼', '带鱼', '黄鱼', '鲫鱼', '鲤鱼'],
+  调味干货: ['盐', '糖', '白糖', '冰糖', '酱油', '生抽', '老抽', '蚝油', '耗油', '醋', '料酒', '味精', '鸡精', '胡椒', '八角', '桂皮', '花椒', '孜然', '五香', '十三香', '13香', '芝麻', '蜂蜜', '淀粉', '生粉', '豆瓣', '豆豉', '番茄酱', '香油', '辣椒油', '干辣椒', '辣椒面', '香叶', '陈皮', '调料', '香料', '酱'],
+  粮油米面: ['大米', '米饭', '糯米', '小米', '面粉', '面条', '挂面', '意面', '米线', '河粉', '粉丝', '粉条', '年糕', '馒头', '花卷', '饼', '包子', '饺子', '馄饨', '面包糠', '食用油', '花生油', '菜籽油', '玉米油', '橄榄油'],
+  乳品豆制品: ['牛奶', '奶油', '黄油', '芝士', '奶酪', '酸奶', '炼乳', '豆腐', '腐竹', '豆皮', '千张', '豆干', '香干', '素鸡', '豆浆'],
+  冷冻: ['冷冻', '速冻', '冻', '冰鲜', '丸子', '汤圆'],
+};
+function shopCat(name) {
+  const n = String(name || '');
+  if (SHOP_SECTION_KEYWORDS.冷冻.some(k => n.includes(k))) return '冷冻';
+  for (const section of SHOP_SECTION_ORDER) {
+    if (section === '冷冻' || section === '其他') continue;
+    if ((SHOP_SECTION_KEYWORDS[section] || []).some(k => n.includes(k))) return section;
+  }
+  return '其他';
+}
 // 合并同名食材的多个用量：能识别「数字+单位」的按单位求和，其余原样并列
 function mergeAmounts(amts) {
   const byUnit = {}, others = [];
@@ -438,6 +450,32 @@ function mergeAmounts(amts) {
   const parts = Object.entries(byUnit).map(([u, v]) => (Math.round(v * 100) / 100) + u);
   return [...parts, ...others].join(' + ');
 }
+function groupShoppingItems(list) {
+  const groups = {};
+  (Array.isArray(list) ? list : []).forEach((it, i) => {
+    if (!it || !it.name) return;
+    const g = groups[it.name] = groups[it.name] || { name: it.name, section: shopCat(it.name), amounts: [], froms: new Set(), idxs: [] };
+    if (it.amount) g.amounts.push(it.amount);
+    if (it.from) g.froms.add(it.from);
+    g.idxs.push(i);
+  });
+  const bySection = {};
+  Object.values(groups).forEach(g => {
+    const item = {
+      name: g.name, section: g.section, idxs: g.idxs,
+      amount: mergeAmounts(g.amounts), src: [...g.froms].join('、'),
+      checked: g.idxs.every(i => list[i].checked),
+    };
+    (bySection[g.section] = bySection[g.section] || []).push(item);
+  });
+  return SHOP_SECTION_ORDER.map(section => ({
+    section,
+    items: (bySection[section] || []).sort((a, b) => Number(a.checked) - Number(b.checked) || a.name.localeCompare(b.name, 'zh-CN')),
+  })).filter(g => g.items.length);
+}
+function shoppingTextBySection(list = shopping) {
+  return groupShoppingItems(list).map(g => `【${g.section}】\n` + g.items.map(it => `${it.checked ? '✓ ' : ''}${it.name}${it.amount ? ' ' + it.amount : ''}`).join('\n')).join('\n\n');
+}
 function shopManualAdd() {
   const inp = $('#shopAdd'); if (!inp) return;
   const v = inp.value.trim(); if (!v) return;
@@ -447,32 +485,21 @@ function shopManualAdd() {
 function renderShopping() {
   const box = $('#view-shopping');
   const head = `<div class="searchrow" style="padding:4px 0 8px;gap:8px"><input type="text" id="shopAdd" placeholder="手动加一项，如 酱油" style="flex:1;min-width:0"><button class="btn sm" id="shopAddBtn">加入</button></div>
-    <div class="searchrow" style="padding:0 0 12px"><button class="btn ghost sm" id="shopClear">清除已勾选</button><button class="btn ghost sm" id="shopAll">清空</button></div>`;
+    <div class="searchrow" style="padding:0 0 12px"><button class="btn ghost sm" id="shopCopy">复制文本</button><button class="btn ghost sm" id="shopClear">清除已勾选</button><button class="btn ghost sm" id="shopAll">清空</button></div>`;
   const wireAdd = () => {
     $('#shopAddBtn') && ($('#shopAddBtn').onclick = shopManualAdd);
     $('#shopAdd') && ($('#shopAdd').onkeydown = (e) => { if (e.key === 'Enter') shopManualAdd(); });
+    $('#shopCopy') && ($('#shopCopy').onclick = async () => {
+      const text = shoppingTextBySection();
+      try { if (!navigator.clipboard?.writeText) throw new Error('clipboard'); await navigator.clipboard.writeText(text); toast('已复制购物清单'); }
+      catch { toast('复制失败'); }
+    });
   };
   if (!shopping.length) { box.innerHTML = head + '<div class="empty">购物清单是空的。<br>在菜谱详情里点「加入购物清单」，或上面手动加一项。</div>'; wireAdd(); return; }
-  // 同名合并：记录每个名字对应的原始下标（用于勾选/删除），累积用量与来源
-  const groups = {};
-  shopping.forEach((it, i) => {
-    const g = groups[it.name] = groups[it.name] || { name: it.name, cat: shopCat(it.name), amounts: [], froms: new Set(), idxs: [] };
-    if (it.amount) g.amounts.push(it.amount);
-    if (it.from) g.froms.add(it.from);
-    g.idxs.push(i);
-  });
-  const merged = Object.values(groups).map(g => ({
-    name: g.name, cat: g.cat, idxs: g.idxs,
-    amount: mergeAmounts(g.amounts), src: [...g.froms].join('、'),
-    checked: g.idxs.every(i => shopping[i].checked),
-  }));
-  const byCat = {}; merged.forEach(m => (byCat[m.cat] = byCat[m.cat] || []).push(m));
-  const order = ['🥩 肉蛋水产', '🥬 蔬菜菌菇', '🍚 主食豆制', '🧂 调料', '🧺 其他'];
   let html = head;
-  for (const cat of order) {
-    const items = byCat[cat]; if (!items || !items.length) continue;
-    html += `<div class="sec-title" style="margin:14px 0 6px 0;padding:0">${cat}</div>`;
-    html += items.map(m => `
+  for (const group of groupShoppingItems(shopping)) {
+    html += `<div class="sec-title" style="margin:14px 0 6px 0;padding:0">${esc(group.section)}</div>`;
+    html += group.items.map(m => `
       <div class="shop-item ${m.checked ? 'checked' : ''}" data-idxs="${m.idxs.join(',')}">
         <div class="ck ${m.checked ? 'on' : ''}">${m.checked ? '✓' : ''}</div>
         <div class="txt">${esc(m.name)}${m.amount ? ` · <span style="color:var(--muted)">${esc(m.amount)}</span>` : ''}<div class="sub">${esc(m.src)}${m.idxs.length > 1 ? ` · 合并自${m.idxs.length}处` : ''}</div></div>
