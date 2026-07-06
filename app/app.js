@@ -233,6 +233,96 @@ function parseDurationMinutes(v) {
   const sec = parseSeconds(s);
   return sec ? Math.round(sec / 6) / 10 : null;
 }
+const PASSIVE_STEP_RE = /炖|焖|腌|腌制|烤|蒸|煮|静置|发酵|晾|浸泡/;
+function stepText(s) {
+  return [s?.title, s?.action, s?.params?.time, s?.params?.cue, s?.why?.reason, s?.why?.cue].filter(Boolean).join(' ');
+}
+function stepDurationInfo(s, fallbackMin = 3) {
+  const candidates = [
+    s?.duration_min,
+    s?.durationMin,
+    s?.duration,
+    s?.params?.duration,
+    s?.params?.time,
+    s?.time,
+    s?.why?.cue,
+    s?.action,
+  ];
+  for (const v of candidates) {
+    const min = parseDurationMinutes(v);
+    if (min && min > 0) return { minutes: min, estimated: false };
+  }
+  return { minutes: fallbackMin, estimated: true };
+}
+function normalizeTimelineStep(recipe, step, idx, fallbackMin) {
+  const dur = stepDurationInfo(step, fallbackMin);
+  const text = `${step?.title ? step.title + '：' : ''}${step?.action || ''}`.trim() || `第 ${idx + 1} 步`;
+  return {
+    recipeTitle: recipe?.title || '未命名',
+    stepIndex: Number.isFinite(Number(step?.index)) ? Number(step.index) : idx + 1,
+    text,
+    durationMin: dur.minutes,
+    estimated: dur.estimated,
+    passive: PASSIVE_STEP_RE.test(stepText(step)),
+  };
+}
+function mergeCookTimeline(recipes, opts = {}) {
+  const fallbackMin = Number.isFinite(Number(opts.fallbackMin)) && Number(opts.fallbackMin) > 0 ? Number(opts.fallbackMin) : 3;
+  const states = (Array.isArray(recipes) ? recipes : [])
+    .map((recipe, recipeOrder) => ({
+      recipeOrder,
+      cursor: 0,
+      idx: Array.isArray(recipe?.steps) ? recipe.steps.length - 1 : -1,
+      steps: (Array.isArray(recipe?.steps) ? recipe.steps : []).map((s, i) => normalizeTimelineStep(recipe, s, i, fallbackMin)),
+    }))
+    .filter(s => s.idx >= 0);
+  const actions = [];
+  let handCursor = 0;
+  const remainingDuration = (st) => st.steps.slice(0, st.idx + 1).reduce((n, x) => n + x.durationMin, 0);
+  const pushAction = (st, step, start) => actions.push({
+    offsetMin: start,
+    recipeTitle: step.recipeTitle,
+    stepIndex: step.stepIndex,
+    text: step.text,
+    passive: step.passive,
+    estimated: step.estimated,
+    durationMin: step.durationMin,
+    recipeOrder: st.recipeOrder,
+  });
+  while (states.some(st => st.idx >= 0)) {
+    let movedPassive = false;
+    for (const st of states.slice().sort((a, b) => b.cursor - a.cursor || a.recipeOrder - b.recipeOrder)) {
+      while (st.idx >= 0 && st.steps[st.idx].passive) {
+        const step = st.steps[st.idx];
+        const start = st.cursor - step.durationMin;
+        pushAction(st, step, start);
+        st.cursor = start;
+        st.idx -= 1;
+        movedPassive = true;
+      }
+    }
+    if (movedPassive) continue;
+    const candidates = states.filter(st => st.idx >= 0);
+    if (!candidates.length) break;
+    candidates.sort((a, b) => {
+      const ae = Math.min(a.cursor, handCursor), be = Math.min(b.cursor, handCursor);
+      if (be !== ae) return be - ae;
+      const br = remainingDuration(b), ar = remainingDuration(a);
+      return br - ar || a.recipeOrder - b.recipeOrder;
+    });
+    const st = candidates[0], step = st.steps[st.idx];
+    const end = Math.min(st.cursor, handCursor);
+    const start = end - step.durationMin;
+    pushAction(st, step, start);
+    st.cursor = start;
+    st.idx -= 1;
+    handCursor = start;
+  }
+  const minStart = actions.reduce((m, a) => Math.min(m, a.offsetMin), 0);
+  return actions
+    .map(({ recipeOrder, ...a }) => ({ ...a, offsetMin: Math.round((a.offsetMin - minStart) * 10) / 10 }))
+    .sort((a, b) => a.offsetMin - b.offsetMin || a.recipeTitle.localeCompare(b.recipeTitle, 'zh-Hans-CN') || a.stepIndex - b.stepIndex);
+}
 function scaleAmount(amt, f) {
   if (!amt || f === 1) return amt;
   const fmt = (v) => String(Math.round(v * 100) / 100); // 最多两位小数
@@ -737,14 +827,19 @@ function renderPlan() {
   html += days.map(day => {
     const items = (mealPlan[day.key] || []).map(id => byId[id]).filter(Boolean);
     const summary = summarizeMealNutrition(items, factorFor);
+    const timelineBtn = items.length >= 2 ? `<button class="act plantimeline" data-key="${day.key}">同做时间线</button>` : '';
     return `<div class="planday">
-      <div class="planhd"><b>${day.label}</b> <span style="color:var(--muted);font-size:13px">${day.date}</span> <button class="act planadd" data-key="${day.key}">＋ 加菜</button></div>
+      <div class="planhd"><b>${day.label}</b> <span style="color:var(--muted);font-size:13px">${day.date}</span> ${timelineBtn}<button class="act planadd" data-key="${day.key}">＋ 加菜</button></div>
       ${items.length ? items.map(r => `<div class="planitem" data-key="${day.key}" data-id="${esc(r.id)}"><span class="pmore">${esc(r.title)}</span><button class="prm" title="移除">✕</button></div>`).join('') : '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px">还没排菜</div>'}
       ${items.length ? nutritionSummaryHtml(summary, { prefix: '当日合计' }) : ''}
     </div>`;
   }).join('');
   box.innerHTML = html;
   box.querySelectorAll('.planadd').forEach(b => b.onclick = () => pickRecipeForDay(b.dataset.key));
+  box.querySelectorAll('.plantimeline').forEach(b => b.onclick = () => {
+    const items = (mealPlan[b.dataset.key] || []).map(id => byId[id]).filter(Boolean);
+    showCookTimeline(b.dataset.key, items);
+  });
   box.querySelectorAll('.planitem').forEach(it => {
     it.querySelector('.pmore').onclick = () => { const r = byId[it.dataset.id]; if (r) openDetail(r); };
     it.querySelector('.prm').onclick = () => { mealPlan[it.dataset.key] = (mealPlan[it.dataset.key] || []).filter(x => x !== it.dataset.id); saveMealPlan(); renderPlan(); };
@@ -755,6 +850,32 @@ function renderPlan() {
     if (n) { store.set('shopping', shopping); updateBadges(); toast(`已把 ${n} 道菜的食材加入购物清单`); } else toast('这周还没排菜');
   });
   $('#planClear') && ($('#planClear').onclick = async () => { if (!(await confirmModal('清空本周计划？', '清空'))) return; days.forEach(d => delete mealPlan[d.key]); saveMealPlan(); renderPlan(); });
+}
+function timelineOffsetText(v) {
+  return Number.isInteger(v) ? String(v) : String(Math.round(v * 10) / 10);
+}
+function showCookTimeline(key, dayRecipes) {
+  const day = weekDays().find(d => d.key === key);
+  const selected = new Set((dayRecipes || []).map(r => r.id));
+  const ov = openModal(`<h3 style="text-align:left">${esc(day?.label || '')}同做时间线</h3>
+    <div id="tlPick" class="tl-pick"></div>
+    <div id="tlList" class="timeline-list"></div>
+    <div class="mrow"><button class="btn" id="tlClose">关闭</button></div>`, 'left');
+  const draw = () => {
+    const chosen = (dayRecipes || []).filter(r => selected.has(r.id));
+    ov.querySelector('#tlPick').innerHTML = (dayRecipes || []).map(r => `<label class="tl-check"><input type="checkbox" data-id="${esc(r.id)}" ${selected.has(r.id) ? 'checked' : ''}> ${esc(r.title || '')}</label>`).join('');
+    const actions = mergeCookTimeline(chosen);
+    ov.querySelector('#tlList').innerHTML = actions.length ? actions.map(a => `
+      <div class="tlitem ${a.passive ? 'passive' : ''}">
+        <div><b>第 ${timelineOffsetText(a.offsetMin)} 分钟</b><span>${a.passive ? '⏳ ' : ''}${esc(a.recipeTitle)} · 第 ${esc(a.stepIndex)} 步</span></div>
+        <p>${esc(a.text)}${a.estimated ? '<em>约 3 分钟</em>' : ''}</p>
+      </div>`).join('') : '<div class="empty" style="padding:20px 8px">至少选择一道菜</div>';
+    ov.querySelectorAll('#tlPick input').forEach(input => {
+      input.onchange = () => { input.checked ? selected.add(input.dataset.id) : selected.delete(input.dataset.id); draw(); };
+    });
+  };
+  draw();
+  ov.querySelector('#tlClose').onclick = () => ov.remove();
 }
 function pickRecipeForDay(key) {
   if (!recipes.length) { toast('还没有菜谱，先解析一道'); return; }

@@ -64,6 +64,52 @@ test("parseSeconds 中文时长解析", () => {
   assert.equal(app.parseSeconds(""), 0);
 });
 
+test("mergeCookTimeline 将被动等待窗口让给另一道菜", () => {
+  const timeline = app.mergeCookTimeline([
+    {
+      title: "红烧肉",
+      steps: [
+        { index: 1, title: "煸炒", action: "五花肉煸炒出油", params: { time: "5分钟" } },
+        { index: 2, title: "炖煮", action: "加水小火炖煮", params: { time: "20分钟" } },
+        { index: 3, title: "收汁", action: "大火收汁", params: { time: "2分钟" } },
+      ],
+    },
+    {
+      title: "清炒青菜",
+      steps: [
+        { index: 1, title: "洗菜", action: "青菜洗净沥干", params: { time: "4分钟" } },
+        { index: 2, title: "快炒", action: "大火快炒", params: { time: "5分钟" } },
+      ],
+    },
+  ]);
+  const wait = timeline.find(x => x.recipeTitle === "红烧肉" && x.stepIndex === 2);
+  const greens = timeline.filter(x => x.recipeTitle === "清炒青菜");
+  const finish = timeline.find(x => x.recipeTitle === "红烧肉" && x.stepIndex === 3);
+  assert.equal(wait.passive, true);
+  assert.ok(greens.every(x => x.offsetMin > wait.offsetMin && x.offsetMin < finish.offsetMin));
+});
+
+test("mergeCookTimeline 无时长步骤使用 3 分钟估算", () => {
+  const timeline = app.mergeCookTimeline([{ title: "凉拌黄瓜", steps: [{ index: 1, title: "拌", action: "拌匀装盘" }] }]);
+  assert.equal(timeline[0].offsetMin, 0);
+  assert.equal(timeline[0].durationMin, 3);
+  assert.equal(timeline[0].estimated, true);
+});
+
+test("mergeCookTimeline 单菜退化为原步骤顺序", () => {
+  const timeline = app.mergeCookTimeline([{
+    title: "蒸蛋",
+    steps: [
+      { index: 1, title: "打蛋", action: "鸡蛋打散", params: { time: "2分钟" } },
+      { index: 2, title: "蒸", action: "上锅蒸", params: { time: "8分钟" } },
+      { index: 3, title: "调味", action: "淋生抽", params: { time: "1分钟" } },
+    ],
+  }]);
+  assert.deepEqual(Array.from(timeline.map(x => x.stepIndex)), [1, 2, 3]);
+  assert.deepEqual(Array.from(timeline.map(x => x.offsetMin)), [0, 2, 10]);
+  assert.equal(timeline[1].passive, true);
+});
+
 test("recipeToCooklang 元数据+结构化食材+步骤", () => {
   const cook = app.recipeToCooklang({ title: "蛋", tags: ["家常"], ingredients: [{ name: "鸡蛋", qty: 3, unit: "个" }, { name: "盐", amount: "适量" }], steps: [{ title: "炒", action: "下锅" }] });
   assert.ok(cook.includes(">> title: 蛋"));
