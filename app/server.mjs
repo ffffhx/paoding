@@ -112,6 +112,33 @@ try {
 
 const slug = (s) => (s || "recipe").replace(/[\/\\:*?"<>|]/g, "").replace(/\s+/g, "-").slice(0, 40) || "recipe";
 const escHtml = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function schemaOrgRecipe(r) {
+  const undef = (v) => (v == null || v === "" ? undefined : v);
+  const n = r.nutrition?.per_serving;
+  return {
+    "@context": "https://schema.org",
+    "@type": "Recipe",
+    name: r.title,
+    recipeCuisine: undef(r.cuisine),
+    keywords: undef((r.tags || []).join(", ")),
+    recipeYield: undef(r.servings),
+    totalTime: r.total_time_min ? `PT${r.total_time_min}M` : undefined,
+    recipeIngredient: (r.ingredients || []).map((i) => `${i.name || ""} ${i.amount || ""}`.trim()).filter(Boolean),
+    recipeInstructions: (r.steps || []).map((s) => ({ "@type": "HowToStep", name: undef(s.title), text: s.action || "" })),
+    nutrition: n ? {
+      "@type": "NutritionInformation",
+      calories: Number.isFinite(n.calories_kcal) ? `${n.calories_kcal} kcal` : undefined,
+      proteinContent: Number.isFinite(n.protein_g) ? `${n.protein_g} g` : undefined,
+      fatContent: Number.isFinite(n.fat_g) ? `${n.fat_g} g` : undefined,
+      carbohydrateContent: Number.isFinite(n.carbs_g) ? `${n.carbs_g} g` : undefined,
+      sodiumContent: Number.isFinite(n.sodium_mg) ? `${n.sodium_mg} mg` : undefined,
+    } : undefined,
+    url: r.source && /^https?:/.test(r.source) ? r.source : undefined,
+  };
+}
+function scriptJSON(obj) {
+  return JSON.stringify(obj, null, 2).replace(/<\//g, "<\\/");
+}
 
 // 只读分享页：任何人打开链接即可看整份菜谱（含每步为什么），无需 App。自包含 HTML。
 function shareHTML(r) {
@@ -119,23 +146,44 @@ function shareHTML(r) {
   // 图片走公开的图片路由（onerror 移除：备份导入的菜谱可能没带图）
   const imgSrc = (file) => `${BASE_PATH}/api/recipes/${encodeURIComponent(r.id)}/images/${encodeURIComponent(file)}`;
   const meta = [r.difficulty && DIFF[r.difficulty], r.cuisine, r.total_time_min && `约${r.total_time_min}分钟`, `${(r.steps || []).length}步`].filter(Boolean).join(" · ");
+  const jsonld = schemaOrgRecipe(r);
+  const techHits = extractTechniques(r);
+  const techByStep = new Map();
+  for (const hit of techHits) {
+    if (!techByStep.has(hit.stepIndex)) techByStep.set(hit.stepIndex, []);
+    if (!techByStep.get(hit.stepIndex).includes(hit.technique)) techByStep.get(hit.stepIndex).push(hit.technique);
+  }
+  const techList = [...new Set(techHits.map((h) => h.technique))];
+  const n = r.nutrition?.per_serving;
+  const nutrition = n ? `<div class="nutrition"><div class="nt">每份营养 <span>AI 估算，仅供参考</span></div><div class="ng">
+    ${Number.isFinite(n.calories_kcal) ? `<div><span>热量</span><b>${escHtml(n.calories_kcal)} kcal</b></div>` : ""}
+    ${Number.isFinite(n.protein_g) ? `<div><span>蛋白质</span><b>${escHtml(n.protein_g)} g</b></div>` : ""}
+    ${Number.isFinite(n.fat_g) ? `<div><span>脂肪</span><b>${escHtml(n.fat_g)} g</b></div>` : ""}
+    ${Number.isFinite(n.carbs_g) ? `<div><span>碳水</span><b>${escHtml(n.carbs_g)} g</b></div>` : ""}
+    ${Number.isFinite(n.sodium_mg) ? `<div><span>钠</span><b>${escHtml(n.sodium_mg)} mg</b></div>` : ""}
+  </div>${r.nutrition?.disclaimer ? `<p>${escHtml(r.nutrition.disclaimer)}</p>` : ""}</div>` : "";
   const ings = (r.ingredients || []).map((i) => `<li><span>${i.image ? `<img class="ith" src="${imgSrc(i.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}${escHtml(i.name)}${i.note ? `（${escHtml(i.note)}）` : ""}</span><span class="amt">${escHtml(i.amount || "")}</span></li>`).join("");
   const steps = (r.steps || []).map((s) => {
     const w = s.why || {};
     const why = [w.reason && `<p><b>为什么</b> ${escHtml(w.reason)}</p>`, w.if_not && `<p><b>不这么做</b> ${escHtml(w.if_not)}</p>`, w.cue && `<p class="g"><b>判断到位</b> ${escHtml(w.cue)}</p>`].filter(Boolean).join("");
     const pic = s.image ? `<img class="simg" src="${imgSrc(s.image)}" alt="" loading="lazy" onerror="this.remove()">` : "";
-    return `<li><div class="st">${escHtml(s.title || "")}</div><div class="ac">${escHtml(s.action || "")}</div>${pic}${why ? `<div class="why">${why}</div>` : ""}</li>`;
+    const techs = (techByStep.get(Number(s.index)) || []).map((t) => `<span class="tech">${escHtml(t)}</span>`).join("");
+    return `<li><div class="st">${escHtml(s.title || "")}</div>${techs ? `<div class="techs">${techs}</div>` : ""}<div class="ac">${escHtml(s.action || "")}</div>${pic}${why ? `<div class="why">${why}</div>` : ""}</li>`;
   }).join("");
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(r.title)} · 庖丁</title>
+<script type="application/ld+json" id="jsonld">${scriptJSON(jsonld)}</script>
 <style>
 :root{--bg:#FBF7F0;--card:#fff;--ink:#2A2724;--muted:#8A817A;--line:#EAE2D6;--tomato:#E4572E;--herb:#6A8D3F}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif}
 .wrap{max-width:680px;margin:0 auto;padding:28px 18px 60px}
 h1{font-family:Georgia,"Songti SC",serif;font-size:30px;margin:0 0 6px}.meta{color:var(--muted);font-size:14px;margin-bottom:18px}
+.sharebar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:16px 0}.sharebar button{border:0;border-radius:10px;background:var(--tomato);color:#fff;font-weight:700;padding:9px 12px}.sharebar span{color:var(--muted);font-size:13px}
 h2{font-size:14px;color:var(--muted);letter-spacing:1px;margin:26px 0 10px}
 ul.ings{list-style:none;padding:0;margin:0;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
 ul.ings li{display:flex;justify-content:space-between;gap:12px;padding:11px 15px;border-bottom:1px solid var(--line)}ul.ings li:last-child{border:none}.amt{color:var(--muted)}
+.nutrition{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:16px}.nt{font-weight:700}.nt span,.nutrition p{color:var(--muted);font-size:12px;font-weight:400}.ng{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:8px;margin-top:10px}.ng div{background:var(--bg);border-radius:10px;padding:9px}.ng span{display:block;color:var(--muted);font-size:12px}.ng b{font-size:15px}.nutrition p{margin:10px 0 0}
+.tech-summary{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 0}.tech,.tech-summary span{display:inline-flex;background:#EEF4E8;color:var(--herb);border-radius:999px;padding:2px 8px;font-size:12px;font-weight:700}.techs{display:flex;gap:6px;flex-wrap:wrap;margin:3px 0 5px}
 ol.steps{list-style:none;counter-reset:s;padding:0;margin:0}
 ol.steps li{counter-increment:s;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px 16px 14px 46px;margin-bottom:12px;position:relative}
 ol.steps li::before{content:counter(s);position:absolute;left:14px;top:15px;width:24px;height:24px;border-radius:50%;background:var(--ink);color:var(--bg);display:flex;align-items:center;justify-content:center;font-size:14px}
@@ -146,10 +194,23 @@ ol.steps li::before{content:counter(s);position:absolute;left:14px;top:15px;widt
 footer{margin-top:30px;text-align:center;color:var(--muted);font-size:13px}footer a{color:var(--tomato);text-decoration:none}
 </style></head><body><div class="wrap">
 <h1>${escHtml(r.title)}</h1><div class="meta">${escHtml(meta)}</div>
+<div class="sharebar"><button id="exportJsonld">导出 JSON-LD</button><span>复制到自己的庖丁：下载后，在自己实例的设置页导入外部菜谱。</span></div>
+${nutrition}
+${techList.length ? `<h2>技法标注</h2><div class="tech-summary">${techList.map((t) => `<span>${escHtml(t)}</span>`).join("")}</div>` : ""}
 ${ings ? `<h2>食材</h2><ul class="ings">${ings}</ul>` : ""}
 <h2>步骤</h2><ol class="steps">${steps}</ol>
 <footer>由 <b>庖丁</b> 解析 · 把每道菜讲透「为什么」</footer>
-</div></body></html>`;
+<script>
+document.getElementById('exportJsonld').onclick = function () {
+  var text = document.getElementById('jsonld').textContent;
+  var blob = new Blob([text], { type: 'application/ld+json;charset=utf-8' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = ${JSON.stringify(`${slug(r.title || "recipe")}.jsonld`)};
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+};
+</script></div></body></html>`;
 }
 
 let recipeListCache = { signature: "", recipes: null };

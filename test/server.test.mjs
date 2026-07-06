@@ -350,6 +350,42 @@ test("import 写入→列表可见→分享页→删除", async () => {
   assert.ok(!(await (await request("/api/recipes")).json()).some((r) => r.title === "测试菜X"));
 });
 
+test("分享页包含 JSON-LD、营养卡片和技法标注", async () => {
+  const id = "分享互通菜";
+  const fp = path.join(recipesDir, `${id}.json`);
+  fs.writeFileSync(fp, JSON.stringify({
+    title: id,
+    cuisine: "家常菜",
+    total_time_min: 12,
+    servings: "2人份",
+    ingredients: [{ name: "鸡蛋", amount: "2个" }],
+    nutrition: {
+      per_serving: { calories_kcal: 120, protein_g: 9, fat_g: 7, carbs_g: 2, sodium_mg: 300 },
+      disclaimer: "AI 估算，仅供参考。",
+    },
+    steps: [{ index: 1, title: "快炒", action: "大火翻炒到断生。", why: { reason: "快速受热。" } }],
+  }, null, 2));
+  try {
+    const share = await request("/r/" + encodeURIComponent(id));
+    assert.equal(share.status, 200);
+    const html = await share.text();
+    assert.match(html, /type="application\/ld\+json"/);
+    assert.match(html, /导出 JSON-LD/);
+    assert.match(html, /复制到自己的庖丁/);
+    assert.match(html, /每份营养/);
+    assert.match(html, /<span class="tech">翻炒<\/span>/);
+
+    const match = html.match(/<script type="application\/ld\+json" id="jsonld">([\s\S]*?)<\/script>/);
+    assert.ok(match);
+    const jsonld = JSON.parse(match[1]);
+    assert.equal(jsonld["@type"], "Recipe");
+    assert.equal(jsonld.name, id);
+    assert.equal(jsonld.nutrition.calories, "120 kcal");
+  } finally {
+    fs.rmSync(fp, { force: true });
+  }
+});
+
 test("import-recipe 导入 schema.org JSON-LD 且不生成 why", async () => {
   const jsonld = {
     "@context": "https://schema.org",
