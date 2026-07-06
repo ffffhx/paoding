@@ -178,6 +178,11 @@ input:focus,textarea:focus{outline:none;border-color:var(--tomato)}
 .planday{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px}
 .planhd{display:flex;align-items:center;gap:8px}
 .planhd .act{margin-left:auto;color:var(--tomato);font-size:13px;font-weight:600}
+.plan-week{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:0 0 10px}
+.plan-nutri{color:var(--muted);font-size:12px;line-height:1.55;margin-top:8px}
+.plan-nutri b{color:var(--ink);font-weight:700}
+.plan-week .plan-nutri{margin-top:0}
+.plan-nutri.muted{color:var(--muted)}
 .planitem{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--line);margin-top:8px}
 .planitem:first-of-type{border-top:none;margin-top:6px}
 .planitem .pmore{flex:1;cursor:pointer;font-size:15px}

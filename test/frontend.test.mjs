@@ -93,6 +93,35 @@ test("nutritionHtml 按份量系数缩放显示", () => {
   assert.ok(html.includes("AI 估算"));
 });
 
+test("summarizeMealNutrition 按每道菜份量系数汇总并统计缺失", () => {
+  const summary = app.summarizeMealNutrition([
+    { id: "a", nutrition: { per_serving: { calories_kcal: 100, protein_g: 8, fat_g: 3, carbs_g: 12, sodium_mg: 200 } } },
+    { id: "b", nutrition: { per_serving: { calories_kcal: 50, protein_g: 2, fat_g: 1, carbs_g: 9, sodium_mg: 80 } } },
+    { id: "c" },
+  ], { a: 1.5, b: 2 });
+  assert.equal(summary.counted, 2);
+  assert.equal(summary.missing, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(summary.totals)), {
+    calories_kcal: 250,
+    protein_g: 16,
+    fat_g: 6.5,
+    carbs_g: 36,
+    sodium_mg: 460,
+  });
+});
+
+test("nutritionSummaryHtml 支持周日均和未估算提示", () => {
+  const summary = app.summarizeMealNutrition([
+    { id: "a", nutrition: { per_serving: { calories_kcal: 700, protein_g: 70, fat_g: 35, carbs_g: 140, sodium_mg: 700 } } },
+    { id: "b" },
+  ]);
+  const html = app.nutritionSummaryHtml(summary, { prefix: "本周日均", averageBy: 7 });
+  assert.ok(html.includes("本周日均"));
+  assert.ok(html.includes("热量 100kcal"));
+  assert.ok(html.includes("蛋白质 10g"));
+  assert.ok(html.includes("1 道菜未估算"));
+});
+
 test("sourceSegmentUrl 按平台生成原视频时间戳链接", () => {
   assert.equal(app.sourceSegmentUrl("https://www.bilibili.com/video/BV1xx?p=2", [83.9, 120]), "https://www.bilibili.com/video/BV1xx?p=2&t=83");
   assert.equal(app.sourceSegmentUrl("https://www.youtube.com/watch?v=abc", [65, 90]), "https://www.youtube.com/watch?v=abc&t=65s");

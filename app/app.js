@@ -214,6 +214,43 @@ function scaledAmount(i, f) {
 function scaledNutritionValue(v, f) {
   return Number.isFinite(v) ? Math.round(v * (f || 1) * 10) / 10 : null;
 }
+const NUTRITION_FIELDS = [
+  ['calories_kcal', '热量', 'kcal'],
+  ['protein_g', '蛋白质', 'g'],
+  ['fat_g', '脂肪', 'g'],
+  ['carbs_g', '碳水', 'g'],
+  ['sodium_mg', '钠', 'mg'],
+];
+function normalizeFactor(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+function summarizeMealNutrition(list, factors = 1) {
+  const totals = Object.fromEntries(NUTRITION_FIELDS.map(([k]) => [k, 0]));
+  let counted = 0, missing = 0;
+  for (const r of Array.isArray(list) ? list : []) {
+    const p = r && r.nutrition && r.nutrition.per_serving;
+    if (!p) { missing++; continue; }
+    const factor = typeof factors === 'function' ? normalizeFactor(factors(r)) : normalizeFactor((factors && typeof factors === 'object') ? factors[r.id] : factors);
+    counted++;
+    for (const [k] of NUTRITION_FIELDS) {
+      const n = Number(p[k]);
+      if (Number.isFinite(n)) totals[k] += n * factor;
+    }
+  }
+  for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k] * 10) / 10;
+  return { totals, counted, missing, total: (Array.isArray(list) ? list.length : 0) };
+}
+function nutritionSummaryHtml(summary, { prefix = '', averageBy = 1 } = {}) {
+  if (!summary || (!summary.counted && !summary.missing)) return '<div class="plan-nutri muted">暂无营养信息</div>';
+  const div = normalizeFactor(averageBy);
+  const parts = NUTRITION_FIELDS.map(([k, label, unit]) => {
+    const v = Math.round((summary.totals[k] || 0) / div * 10) / 10;
+    return `${label} ${v}${unit}`;
+  });
+  const missing = summary.missing ? ` · ${summary.missing} 道菜未估算` : '';
+  return `<div class="plan-nutri">${prefix ? `<b>${esc(prefix)}</b> ` : ''}${parts.join(' · ')}${missing}</div>`;
+}
 function nutritionHtml(r, factor) {
   const n = r && r.nutrition;
   const p = n && n.per_serving;
@@ -540,15 +577,20 @@ function renderPlan() {
   const box = $('#view-plan');
   const days = weekDays();
   const byId = Object.fromEntries(recipes.map(r => [r.id, r]));
+  const factorFor = (r) => rmeta(r.id).servingsFactor || 1;
   const planned = days.reduce((n, d) => n + (mealPlan[d.key] || []).length, 0);
+  const weeklySummary = summarizeMealNutrition(days.flatMap(d => (mealPlan[d.key] || []).map(id => byId[id]).filter(Boolean)), factorFor);
   let html = `<div class="searchrow" style="padding:4px 0 10px;gap:8px">
     <button class="btn sm" id="planToShop" ${planned ? '' : 'disabled'}>🛒 这周的菜加入购物清单</button>
-    ${planned ? `<button class="btn ghost sm" id="planClear">清空计划</button>` : ''}</div>`;
+    ${planned ? `<button class="btn ghost sm" id="planClear">清空计划</button>` : ''}</div>
+    <div class="plan-week">${nutritionSummaryHtml(weeklySummary, { prefix: '本周日均', averageBy: 7 })}</div>`;
   html += days.map(day => {
     const items = (mealPlan[day.key] || []).map(id => byId[id]).filter(Boolean);
+    const summary = summarizeMealNutrition(items, factorFor);
     return `<div class="planday">
       <div class="planhd"><b>${day.label}</b> <span style="color:var(--muted);font-size:13px">${day.date}</span> <button class="act planadd" data-key="${day.key}">＋ 加菜</button></div>
       ${items.length ? items.map(r => `<div class="planitem" data-key="${day.key}" data-id="${esc(r.id)}"><span class="pmore">${esc(r.title)}</span><button class="prm" title="移除">✕</button></div>`).join('') : '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px">还没排菜</div>'}
+      ${items.length ? nutritionSummaryHtml(summary, { prefix: '当日合计' }) : ''}
     </div>`;
   }).join('');
   box.innerHTML = html;
