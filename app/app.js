@@ -6,7 +6,20 @@ const store = {
   get(k, d) { try { const v = JSON.parse(localStorage.getItem('paoding.' + k)); return v ?? d; } catch { return d; } },
   set(k, v) { localStorage.setItem('paoding.' + k, JSON.stringify(v)); },
 };
-const settings = Object.assign({ theme: 'light', fontScale: 1, tts: true, ttsRate: 1, apiBase: '', apiToken: '', depth: 'balanced' }, store.get('settings', {}));
+const I18N = window.PaodingI18n || {
+  normalizeLang: (v) => (String(v || 'zh').toLowerCase() === 'en' ? 'en' : 'zh'),
+  setLang: (v) => (String(v || 'zh').toLowerCase() === 'en' ? 'en' : 'zh'),
+  t: (key) => key,
+};
+const normalizeUiLang = (v) => I18N.normalizeLang ? I18N.normalizeLang(v) : (String(v || 'zh').toLowerCase() === 'en' ? 'en' : 'zh');
+const tr = (key, params) => I18N.t ? I18N.t(key, params) : key;
+const settings = Object.assign({ theme: 'light', fontScale: 1, tts: true, ttsRate: 1, apiBase: '', apiToken: '', depth: 'balanced', lang: 'zh' }, store.get('settings', {}));
+function setLanguage(lang) {
+  settings.lang = normalizeUiLang(lang);
+  if (I18N.setLang) I18N.setLang(settings.lang);
+  return settings.lang;
+}
+setLanguage(settings.lang);
 function saveSettings() { store.set('settings', settings); }
 
 /* ---------- API ---------- */
@@ -129,10 +142,16 @@ const stepKey = (id, i) => id + '#' + i;
    收藏/技巧/购物清单/笔记评分等原本只存在各设备的 localStorage，手机和电脑不通。
    这里拦截对这些键的写入 → 防抖后回传后端；启动时先从后端拉一份，实现多端共享。 */
 const _storeSet = store.set.bind(store);
-const SYNC_KEYS = new Set(['favRecipes', 'favSteps', 'shopping', 'meta', 'mealPlan']);
+const SYNC_KEYS = new Set(['favRecipes', 'favSteps', 'shopping', 'meta', 'mealPlan', 'settings']);
 let syncT = null;
 function revOf(d) { const n = Number(d && d.rev); return Number.isInteger(n) && n >= 0 ? n : 0; }
-function localUserData() { return { rev: userdataRev, favRecipes, favSteps, shopping, meta, mealPlan }; }
+function syncSettingsFrom(value) {
+  const out = {};
+  if (value && typeof value === 'object' && !Array.isArray(value) && value.lang != null) out.lang = normalizeUiLang(value.lang);
+  return out;
+}
+function currentSyncSettings() { return { lang: settings.lang }; }
+function localUserData() { return { rev: userdataRev, favRecipes, favSteps, shopping, meta, mealPlan, settings: currentSyncSettings() }; }
 function uniqList(a, b, keyFn = (x) => JSON.stringify(x)) {
   const out = [], seen = new Set();
   for (const x of [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]) {
@@ -171,6 +190,11 @@ function mergeMealPlan(remote, local) {
   for (const [day, ids] of Object.entries(loc)) out[day] = uniqList(out[day], ids, String);
   return out;
 }
+function mergeSyncSettings(remote, local) {
+  const r = syncSettingsFrom(remote);
+  const l = syncSettingsFrom(local);
+  return { ...r, ...l, lang: normalizeUiLang(l.lang || r.lang || settings.lang) };
+}
 function mergeUserDataConflict(remote, local) {
   return {
     rev: revOf(remote),
@@ -179,6 +203,7 @@ function mergeUserDataConflict(remote, local) {
     shopping: mergeShopping(remote?.shopping, local?.shopping),
     meta: mergeMeta(remote?.meta, local?.meta),
     mealPlan: mergeMealPlan(remote?.mealPlan, local?.mealPlan),
+    settings: mergeSyncSettings(remote?.settings, local?.settings),
   };
 }
 function applyUserData(d) {
@@ -188,6 +213,8 @@ function applyUserData(d) {
   shopping = Array.isArray(d.shopping) ? d.shopping : [];
   meta = d.meta && typeof d.meta === 'object' && !Array.isArray(d.meta) ? d.meta : {};
   mealPlan = d.mealPlan && typeof d.mealPlan === 'object' && !Array.isArray(d.mealPlan) ? d.mealPlan : {};
+  const syncedSettings = syncSettingsFrom(d.settings);
+  if (syncedSettings.lang) { setLanguage(syncedSettings.lang); _storeSet('settings', settings); }
   _storeSet('favRecipes', favRecipes); _storeSet('favSteps', favSteps); _storeSet('shopping', shopping); _storeSet('meta', meta); _storeSet('mealPlan', mealPlan);
 }
 async function syncUserDataNow(retry = true) {
@@ -221,6 +248,13 @@ async function loadUserData() {
   shopping = merge(d.shopping, shopping); _storeSet('shopping', shopping);
   meta = merge(d.meta, meta); _storeSet('meta', meta);
   mealPlan = merge(d.mealPlan, mealPlan); _storeSet('mealPlan', mealPlan);
+  const remoteSettings = syncSettingsFrom(d.settings);
+  if (remoteSettings.lang) {
+    setLanguage(remoteSettings.lang);
+    _storeSet('settings', settings);
+  } else if (settings.lang !== 'zh') {
+    needPush = true;
+  }
   if (needPush) syncUp(); // 把后端缺的本地数据推上去，避免下次又被空值覆盖
 }
 
@@ -1006,12 +1040,20 @@ function pickRecipeForDay(key) {
 }
 
 /* ================= 设置 ================= */
+function settingsLanguageRowHtml() {
+  return `<div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">${esc(tr('settings.language.label'))}</div><div class="desc">${esc(tr('settings.language.desc'))}</div></div>
+      <select id="uiLang" aria-label="${esc(tr('settings.language.label'))}" style="margin-top:8px">
+        <option value="zh" ${settings.lang === 'zh' ? 'selected' : ''}>${esc(tr('settings.language.zh'))}</option>
+        <option value="en" ${settings.lang === 'en' ? 'selected' : ''}>${esc(tr('settings.language.en'))}</option>
+      </select></div>`;
+}
 function renderSettings() {
   const box = $('#view-settings');
   const sw = (on) => `<div class="switch ${on ? 'on' : ''}"></div>`;
   box.innerHTML = `
     <div class="setrow"><div><div class="lbl">暗色模式</div><div class="desc">厨房夜间/护眼</div></div>${sw(settings.theme === 'dark')}<span class="hidden" data-k="theme"></span></div>
     <div class="setrow"><div><div class="lbl">朗读步骤（TTS）</div><div class="desc">跟做时可语音念出当前步骤</div></div>${sw(settings.tts)}<span class="hidden" data-k="tts"></span></div>
+    ${settingsLanguageRowHtml()}
     <div class="setrow"><div style="flex:1"><div class="lbl">字号</div><div class="desc">当前 ${Math.round(settings.fontScale * 100)}%</div></div>
       <button class="iconbtn" data-fs="-">A－</button><button class="iconbtn" data-fs="+">A＋</button></div>
     <div class="setrow"><div style="flex:1"><div class="lbl">朗读语速</div><div class="desc">${settings.ttsRate.toFixed(1)}×</div></div>
@@ -1042,6 +1084,7 @@ function renderSettings() {
   box.querySelectorAll('[data-fs]').forEach(b => b.onclick = () => { settings.fontScale = Math.min(1.5, Math.max(0.85, settings.fontScale + (b.dataset.fs === '+' ? 0.1 : -0.1))); saveSettings(); applyTheme(); renderSettings(); });
   box.querySelectorAll('[data-tr]').forEach(b => b.onclick = () => { settings.ttsRate = Math.min(1.6, Math.max(0.6, settings.ttsRate + (b.dataset.tr === '+' ? 0.1 : -0.1))); saveSettings(); renderSettings(); });
   $('#setDepth').querySelectorAll('.chip').forEach(c => c.onclick = () => { settings.depth = c.dataset.d; depth = c.dataset.d; saveSettings(); renderSettings(); syncDepthChips(); });
+  $('#uiLang').onchange = (e) => { setLanguage(e.target.value); saveSettings(); renderAll(); renderSettings(); toast(tr('settings.language.saved')); };
   $('#apiBase').onchange = (e) => { settings.apiBase = e.target.value.trim().replace(/\/$/, ''); saveSettings(); toast('已保存后端地址'); refresh(); };
   $('#apiToken').onchange = (e) => { settings.apiToken = e.target.value.trim(); saveSettings(); toast('已保存 API Token'); refresh(); };
   $('#btnExport').onclick = exportData;

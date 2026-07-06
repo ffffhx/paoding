@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const i18nCode = fs.readFileSync(path.join(HERE, "../app/i18n.js"), "utf8");
 const code = fs.readFileSync(path.join(HERE, "../app/app.js"), "utf8");
 
 // app.js 是经典脚本、满是浏览器 API。造一套最小桩，在 vm 里跑起来，取出里面定义的纯函数来测。
@@ -27,11 +28,31 @@ function loadApp() {
   ctx.window = ctx;
   ctx.globalThis = ctx;
   vm.createContext(ctx);
+  vm.runInContext(i18nCode, ctx, { filename: "i18n.js" });
   vm.runInContext(code, ctx, { filename: "app.js" });
   return ctx;
 }
 
 const app = loadApp();
+
+test("i18n t 回退 en→zh→key，并支持参数替换", () => {
+  app.PaodingI18n.en["test.hello"] = "Hello {name}";
+  app.PaodingI18n.zh["test.onlyZh"] = "只有 {name}";
+  app.PaodingI18n.setLang("en");
+  assert.equal(app.t("test.hello", { name: "Ada" }), "Hello Ada");
+  assert.equal(app.t("test.onlyZh", { name: "庖丁" }), "只有 庖丁");
+  assert.equal(app.t("test.missing"), "test.missing");
+  app.setLanguage("zh");
+});
+
+test("settingsLanguageRowHtml 切 en 后关键 UI 字符串是英文", () => {
+  app.setLanguage("en");
+  const html = app.settingsLanguageRowHtml();
+  assert.ok(html.includes("Language"));
+  assert.ok(html.includes("Switch the interface language"));
+  assert.ok(html.includes("Chinese"));
+  app.setLanguage("zh");
+});
 
 test("scaledAmount 结构化优先，文本兜底", () => {
   assert.equal(app.scaledAmount({ qty: 3, unit: "个" }, 2), "6个");
@@ -294,12 +315,14 @@ test("mergeUserDataConflict 按字段合并跨设备数据", () => {
     shopping: [{ name: "盐", amount: "1勺", from: "A", checked: false }],
     meta: { a: { notes: "旧", ingChecked: [1], cooked: true, cooked_at: "2026-01-01T00:00:00.000Z" } },
     mealPlan: { "2026-01-01": ["a"] },
+    settings: { lang: "zh" },
   }, {
     favRecipes: ["b", "a"],
     favSteps: [{ key: "b#1", title: "B" }, { key: "a#1", title: "A2" }],
     shopping: [{ name: "盐", amount: "1勺", from: "A", checked: true }, { name: "糖", amount: "2勺", from: "B" }],
     meta: { a: { notes: "新", ingChecked: [2], cooked_at: "2026-01-02T00:00:00.000Z" } },
     mealPlan: { "2026-01-01": ["b", "a"] },
+    settings: { lang: "en" },
   });
   assert.equal(merged.rev, 3);
   assert.deepEqual(Array.from(merged.favRecipes), ["a", "b"]);
@@ -311,4 +334,5 @@ test("mergeUserDataConflict 按字段合并跨设备数据", () => {
   assert.equal(merged.meta.a.cooked, true);
   assert.equal(merged.meta.a.cooked_at, "2026-01-02T00:00:00.000Z");
   assert.deepEqual(Array.from(merged.mealPlan["2026-01-01"]), ["a", "b"]);
+  assert.equal(merged.settings.lang, "en");
 });
