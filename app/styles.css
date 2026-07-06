@@ -151,6 +151,14 @@ input:focus,textarea:focus{outline:none;border-color:var(--tomato)}
 .skill p{margin:6px 0 0;font-size:14px;line-height:1.6;color:var(--muted)}
 .skill .lbl{color:var(--tomato);font-weight:600}
 
+.planday{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px}
+.planhd{display:flex;align-items:center;gap:8px}
+.planhd .act{margin-left:auto;color:var(--tomato);font-size:13px;font-weight:600}
+.planitem{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--line);margin-top:8px}
+.planitem:first-of-type{border-top:none;margin-top:6px}
+.planitem .pmore{flex:1;cursor:pointer;font-size:15px}
+.planitem .prm{color:var(--muted);padding:2px 8px}
+.pickrow:active{background:var(--line)}
 .shop-item{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px}
 .shop-item.checked .txt{text-decoration:line-through;opacity:.5}
 .shop-item .txt{flex:1}.shop-item .sub{color:var(--muted);font-size:12px}

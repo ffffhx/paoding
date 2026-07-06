@@ -59,6 +59,8 @@ let recipes = [];
 let favRecipes = store.get('favRecipes', []);
 let favSteps = store.get('favSteps', []);
 let shopping = store.get('shopping', []);
+let mealPlan = store.get('mealPlan', {}); // { 'YYYY-MM-DD': [recipeId,...] }
+function saveMealPlan() { store.set('mealPlan', mealPlan); }
 let meta = store.get('meta', {}); // {recipeId:{cooked,cooked_at,rating,notes,ingChecked:[]}}
 let depth = settings.depth;
 let curTab = 'recipes';
@@ -71,18 +73,19 @@ const stepKey = (id, i) => id + '#' + i;
    收藏/技巧/购物清单/笔记评分等原本只存在各设备的 localStorage，手机和电脑不通。
    这里拦截对这些键的写入 → 防抖后回传后端；启动时先从后端拉一份，实现多端共享。 */
 const _storeSet = store.set.bind(store);
-const SYNC_KEYS = new Set(['favRecipes', 'favSteps', 'shopping', 'meta']);
+const SYNC_KEYS = new Set(['favRecipes', 'favSteps', 'shopping', 'meta', 'mealPlan']);
 let syncT = null;
-function syncUp() { clearTimeout(syncT); syncT = setTimeout(() => API.userdataPut({ favRecipes, favSteps, shopping, meta }), 800); }
+function syncUp() { clearTimeout(syncT); syncT = setTimeout(() => API.userdataPut({ favRecipes, favSteps, shopping, meta, mealPlan }), 800); }
 store.set = (k, v) => { _storeSet(k, v); if (SYNC_KEYS.has(k)) syncUp(); };
 async function loadUserData() {
   let d = null;
   try { d = await API.userdataGet(); } catch { }
-  if (d && (d.favRecipes || d.favSteps || d.shopping || d.meta)) {
+  if (d && (d.favRecipes || d.favSteps || d.shopping || d.meta || d.mealPlan)) {
     if (Array.isArray(d.favRecipes)) { favRecipes = d.favRecipes; _storeSet('favRecipes', favRecipes); }
     if (Array.isArray(d.favSteps)) { favSteps = d.favSteps; _storeSet('favSteps', favSteps); }
     if (Array.isArray(d.shopping)) { shopping = d.shopping; _storeSet('shopping', shopping); }
     if (d.meta && typeof d.meta === 'object') { meta = d.meta; _storeSet('meta', meta); }
+    if (d.mealPlan && typeof d.mealPlan === 'object') { mealPlan = d.mealPlan; _storeSet('mealPlan', mealPlan); }
   } else {
     syncUp(); // 后端还没有数据 → 用本设备现有数据播种
   }
@@ -299,13 +302,72 @@ function renderShopping() {
   $('#shopClear') && ($('#shopClear').onclick = () => { shopping = shopping.filter(x => !x.checked); store.set('shopping', shopping); renderShopping(); updateBadges(); });
   $('#shopAll') && ($('#shopAll').onclick = async () => { if (!(await confirmModal('清空整个购物清单？', '清空'))) return; shopping = []; store.set('shopping', shopping); renderShopping(); updateBadges(); });
 }
-function addToShopping(r, factor) {
+function addToShoppingItems(r, factor) {
   const names = new Set(shopping.map(x => x.name + '|' + x.from));
   (r.ingredients || []).forEach(i => {
     const key = i.name + '|' + r.title;
     if (!names.has(key)) shopping.push({ name: i.name, amount: scaledAmount(i, factor || 1), from: r.title, checked: false });
   });
-  store.set('shopping', shopping); updateBadges(); toast('已加入购物清单');
+}
+function addToShopping(r, factor) { addToShoppingItems(r, factor); store.set('shopping', shopping); updateBadges(); toast('已加入购物清单'); }
+
+/* ================= 本周计划（膳食计划）================= */
+function weekDays() {
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const wd = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const dt = new Date(now); dt.setDate(now.getDate() + i);
+    days.push({ key: `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`, label: i === 0 ? '今天' : i === 1 ? '明天' : wd[dt.getDay()], date: `${dt.getMonth() + 1}/${dt.getDate()}` });
+  }
+  return days;
+}
+function renderPlan() {
+  const box = $('#view-plan');
+  const days = weekDays();
+  const byId = Object.fromEntries(recipes.map(r => [r.id, r]));
+  const planned = days.reduce((n, d) => n + (mealPlan[d.key] || []).length, 0);
+  let html = `<div class="searchrow" style="padding:4px 0 10px;gap:8px">
+    <button class="btn sm" id="planToShop" ${planned ? '' : 'disabled'}>🛒 这周的菜加入购物清单</button>
+    ${planned ? `<button class="btn ghost sm" id="planClear">清空计划</button>` : ''}</div>`;
+  html += days.map(day => {
+    const items = (mealPlan[day.key] || []).map(id => byId[id]).filter(Boolean);
+    return `<div class="planday">
+      <div class="planhd"><b>${day.label}</b> <span style="color:var(--muted);font-size:13px">${day.date}</span> <button class="act planadd" data-key="${day.key}">＋ 加菜</button></div>
+      ${items.length ? items.map(r => `<div class="planitem" data-key="${day.key}" data-id="${esc(r.id)}"><span class="pmore">${esc(r.title)}</span><button class="prm" title="移除">✕</button></div>`).join('') : '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px">还没排菜</div>'}
+    </div>`;
+  }).join('');
+  box.innerHTML = html;
+  box.querySelectorAll('.planadd').forEach(b => b.onclick = () => pickRecipeForDay(b.dataset.key));
+  box.querySelectorAll('.planitem').forEach(it => {
+    it.querySelector('.pmore').onclick = () => { const r = byId[it.dataset.id]; if (r) openDetail(r); };
+    it.querySelector('.prm').onclick = () => { mealPlan[it.dataset.key] = (mealPlan[it.dataset.key] || []).filter(x => x !== it.dataset.id); saveMealPlan(); renderPlan(); };
+  });
+  $('#planToShop') && ($('#planToShop').onclick = () => {
+    const ids = new Set(); days.forEach(d => (mealPlan[d.key] || []).forEach(id => ids.add(id)));
+    let n = 0; ids.forEach(id => { const r = byId[id]; if (r) { addToShoppingItems(r, 1); n++; } });
+    if (n) { store.set('shopping', shopping); updateBadges(); toast(`已把 ${n} 道菜的食材加入购物清单`); } else toast('这周还没排菜');
+  });
+  $('#planClear') && ($('#planClear').onclick = async () => { if (!(await confirmModal('清空本周计划？', '清空'))) return; days.forEach(d => delete mealPlan[d.key]); saveMealPlan(); renderPlan(); });
+}
+function pickRecipeForDay(key) {
+  if (!recipes.length) { toast('还没有菜谱，先解析一道'); return; }
+  const day = weekDays().find(d => d.key === key);
+  const ov = openModal(`<h3 style="text-align:left">排到「${day ? day.label : ''}」</h3>
+    <input type="text" id="pickSearch" placeholder="搜菜名" style="margin:8px 0 0">
+    <div id="pickList" style="max-height:46vh;overflow:auto;margin-top:8px"></div>
+    <div class="mrow"><button class="btn" id="pkClose">关闭</button></div>`, 'left');
+  const draw = (q) => {
+    ov.querySelector('#pickList').innerHTML = recipes.filter(r => !q || (r.title || '').includes(q)).map(r =>
+      `<div class="pickrow" data-id="${esc(r.id)}" style="padding:11px 6px;border-bottom:1px solid var(--line);cursor:pointer">${esc(r.title)}</div>`).join('') || '<div style="color:var(--muted);padding:10px 6px">没有匹配的菜</div>';
+    ov.querySelectorAll('.pickrow').forEach(row => row.onclick = () => {
+      mealPlan[key] = mealPlan[key] || []; if (!mealPlan[key].includes(row.dataset.id)) mealPlan[key].push(row.dataset.id);
+      saveMealPlan(); ov.remove(); renderPlan(); toast('已排入');
+    });
+  };
+  draw('');
+  ov.querySelector('#pickSearch').oninput = (e) => draw(e.target.value.trim());
+  ov.querySelector('#pkClose').onclick = () => ov.remove();
 }
 
 /* ================= 设置 ================= */
@@ -843,10 +905,10 @@ function initTabs() {
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     curTab = t.dataset.tab;
     document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
-    ['recipes', 'skills', 'shopping', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== curTab));
+    ['recipes', 'plan', 'skills', 'shopping', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== curTab));
     const showSearch = curTab === 'recipes';
     $('#searchrow').classList.toggle('hidden', !showSearch); $('#filters').classList.toggle('hidden', !showSearch);
-    if (curTab === 'skills') renderSkills(); if (curTab === 'shopping') renderShopping(); if (curTab === 'settings') renderSettings();
+    if (curTab === 'skills') renderSkills(); if (curTab === 'shopping') renderShopping(); if (curTab === 'settings') renderSettings(); if (curTab === 'plan') renderPlan();
   });
 }
 function init() {
