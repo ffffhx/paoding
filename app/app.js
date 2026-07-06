@@ -109,9 +109,12 @@ function parseSeconds(t) {
 }
 function scaleAmount(amt, f) {
   if (!amt || f === 1) return amt;
-  return String(amt).replace(/(\d+(?:\.\d+)?)/g, (n) => {
-    let v = +n * f; v = Math.round(v * 10) / 10; return String(v);
-  });
+  const fmt = (v) => String(Math.round(v * 100) / 100); // 最多两位小数、去掉多余的 0
+  // 先整体处理分数 a/b（否则 1/2 会被拆成 1 和 2 各自缩放，得到荒谬的 2/4）；再处理独立数字。
+  return String(amt).replace(/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)/g,
+    (m, fnum, fden, whole) =>
+      fden !== undefined ? fmt((+fnum / +fden) * f) : fmt(+whole * f),
+  );
 }
 // 优先用结构化 qty/unit 精确缩放（新菜谱有）；没有就回退到对 amount 文本的数字缩放（旧菜谱兼容）
 function scaledAmount(i, f) {
