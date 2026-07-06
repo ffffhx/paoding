@@ -162,6 +162,5 @@ The test suite uses Node's built-in test runner and local fakes/stubs for extern
 ## Roadmap Snapshot
 
 - Done: text posts, video fallback, Android/PWA shell, sync and backup, editing, quantity scaling, shopping lists, Cooklang/schema.org export, optional visual OCR, step screenshots, weekly meal planning, multi-dish timelines, household isolation, Docker/Compose, source timestamp jumps, nutrition estimates, technique library, public share pages, print/PDF, Chinese-unit references, and frontend i18n infrastructure.
-- i18n status: `app/i18n.js`, `t()` fallback, zh/en dictionaries, the settings-page language selector, and userdata sync are in place. English UI coverage now includes the language setting, home/list views, recipe detail, cook-along mode, shopping/planning, techniques, toasts, and error prompts.
-- In progress: remaining hard-coded Chinese in secondary settings rows, the install banner, tag-edit modal, exported recipe text, and date/number localization.
-- Next: more real-world video prompt tuning, broader technique vocabulary, and higher-quality technique matching.
+- i18n status: `app/i18n.js`, `t()` fallback, zh/en dictionaries, the settings-page language selector, and userdata sync are in place. English UI coverage now includes settings, home/list views, recipe detail, cook-along mode, shopping/planning, techniques, the install banner, tag-edit modal, exported recipe text, toasts, and error prompts. Date and number formatting are intentionally not localized yet.
+- Next: date/number localization, more real-world video prompt tuning, broader technique vocabulary, and higher-quality technique matching.
