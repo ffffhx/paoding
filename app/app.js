@@ -327,6 +327,7 @@ function openDetail(r) {
     <div style="display:flex;gap:8px;padding:8px 16px 0;flex-wrap:wrap">
       <button class="btn ghost sm" id="btnOverview">💡 为什么这样设计</button>
       <button class="btn ghost sm" id="btnNutri">🥗 营养估算</button>
+      <button class="btn ghost sm" id="btnExport2">⬇ 导出</button>
     </div>
     <div id="aiBox" style="margin:8px 16px 0"></div>
     <div class="sec-title">食材 <span class="act" id="addShop">＋ 加入购物清单</span></div>
@@ -393,6 +394,7 @@ function openDetail(r) {
   };
   p.querySelector('#btnOverview').onclick = (e) => aiCall(e.currentTarget, () => API.overview(r.id), '💡 为什么这样设计', 'overview');
   p.querySelector('#btnNutri').onclick = (e) => aiCall(e.currentTarget, () => API.nutrition(r.id), '🥗 每份营养估算（粗略）', 'nutri');
+  p.querySelector('#btnExport2').onclick = () => openExport(r, factor);
   p.querySelector('#btnCook').onclick = () => { close(); openCook(r); };
   p.querySelector('#notes').oninput = (e) => { m.notes = e.target.value; saveMeta(); };
   p.querySelector('#cookedBtn').onclick = (e) => { m.cooked = !m.cooked; if (m.cooked) m.cooked_at = new Date().toISOString(); saveMeta(); e.target.className = 'btn sm ' + (m.cooked ? '' : 'ghost'); e.target.textContent = m.cooked ? '✓ 已做过' : '标记做过'; renderRecipes(); };
@@ -539,6 +541,55 @@ function recipeToText(r, f) {
   s += (r.ingredients || []).map(i => `· ${i.name} ${scaledAmount(i, f || 1) || ''}`).join('\n') + '\n\n';
   (r.steps || []).forEach(x => { s += `${x.index}. ${x.title}：${x.action}\n`; if (x.why?.reason) s += `   为什么：${x.why.reason}\n`; });
   return s;
+}
+// 导出为 Cooklang（.cook，开放的纯文本菜谱标准，可被整个生态消费）
+function recipeToCooklang(r) {
+  const meta = [
+    `>> title: ${r.title || ''}`,
+    r.servings ? `>> servings: ${r.servings}` : '',
+    r.total_time_min ? `>> time: ${r.total_time_min} min` : '',
+    r.cuisine ? `>> cuisine: ${r.cuisine}` : '',
+    (r.tags && r.tags.length) ? `>> tags: ${r.tags.join(', ')}` : '',
+    r.source ? `>> source: ${r.source}` : '',
+  ].filter(Boolean).join('\n');
+  const ings = (r.ingredients || []).map(i =>
+    Number.isFinite(i.qty) ? `@${i.name}{${i.qty}%${i.unit || ''}}`
+      : (i.amount && !['视频未明确', '适量'].includes(i.amount)) ? `@${i.name}{${i.amount}}` : `@${i.name}{}`
+  ).join(', ');
+  const steps = (r.steps || []).map((s, i) => `${i + 1}. ${s.title ? s.title + '：' : ''}${s.action || ''}`).join('\n\n');
+  return `${meta}\n\n-- 食材\n${ings}\n\n-- 做法\n${steps}\n`;
+}
+// 导出为 schema.org Recipe（JSON-LD，搜索引擎/菜谱工具通用结构化格式）
+function recipeToSchemaOrg(r) {
+  const undef = (v) => (v == null || v === '' ? undefined : v);
+  return {
+    '@context': 'https://schema.org', '@type': 'Recipe',
+    name: r.title, recipeCuisine: undef(r.cuisine), keywords: undef((r.tags || []).join(', ')),
+    recipeYield: undef(r.servings), totalTime: r.total_time_min ? `PT${r.total_time_min}M` : undefined,
+    recipeIngredient: (r.ingredients || []).map(i => `${i.name} ${i.amount || ''}`.trim()),
+    recipeInstructions: (r.steps || []).map(s => ({ '@type': 'HowToStep', name: undef(s.title), text: s.action || '' })),
+    url: r.source && /^https?:/.test(r.source) ? r.source : undefined,
+  };
+}
+function downloadFile(name, content, type) {
+  const blob = new Blob([content], { type: type || 'text/plain;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function openExport(r, factor) {
+  const safe = (r.title || 'recipe').replace(/[\/\\:*?"<>|]/g, '');
+  const ov = openModal(`<h3 style="text-align:left">导出「${esc(r.title || '')}」</h3>
+    <p style="color:var(--muted);font-size:13px;text-align:left;margin:0 0 12px">选一种格式</p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn ghost" id="xMd">📋 复制文字（含每步为什么）</button>
+      <button class="btn ghost" id="xCook">⬇ 下载 .cook（Cooklang 标准）</button>
+      <button class="btn ghost" id="xJson">⬇ 下载 schema.org JSON-LD</button>
+    </div>
+    <div class="mrow"><button class="btn" id="xClose">关闭</button></div>`, 'left');
+  ov.querySelector('#xMd').onclick = () => { navigator.clipboard?.writeText(recipeToText(r, factor)); toast('已复制菜谱文字'); };
+  ov.querySelector('#xCook').onclick = () => { downloadFile(safe + '.cook', recipeToCooklang(r), 'text/plain;charset=utf-8'); toast('已下载 .cook'); };
+  ov.querySelector('#xJson').onclick = () => { downloadFile(safe + '.jsonld', JSON.stringify(recipeToSchemaOrg(r), null, 2), 'application/ld+json'); toast('已下载 JSON-LD'); };
+  ov.querySelector('#xClose').onclick = () => ov.remove();
 }
 
 /* ================= 跟做模式 ================= */
