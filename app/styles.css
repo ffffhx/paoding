@@ -40,6 +40,9 @@ input:focus,textarea:focus{outline:none;border-color:var(--tomato)}
 .depth-lbl{color:var(--muted);font-size:12px;margin-right:2px}
 .chip{border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:13px;color:var(--muted);background:var(--card)}
 .chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.vischk{display:flex;align-items:center;gap:7px;margin-top:10px;font-size:13px;cursor:pointer}
+.vischk input{width:16px;height:16px;accent-color:var(--tomato)}
+.vischk .muted{color:var(--muted)}
 
 .searchrow{display:flex;gap:8px;padding:10px 16px 2px}
 .filters{display:flex;gap:6px;padding:8px 16px 2px;overflow-x:auto;-webkit-overflow-scrolling:touch}

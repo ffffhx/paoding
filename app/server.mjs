@@ -119,10 +119,11 @@ function pushJob(id, ev) {
   if (!j) return;
   for (const res of j.listeners) res.write(`data: ${JSON.stringify(ev)}\n\n`);
 }
-function runJob(id, input, depth, kind = "video") {
+function runJob(id, input, depth, kind = "video", wantVision = false) {
   const j = jobs.get(id);
   // 非法/缺省的 depth 归一到配置默认值，避免前端传错值时静默按 balanced 生成。
-  const cfg = { ...config, depth: DEPTHS.includes(depth) ? depth : config.depth };
+  // 视觉按次开关：仅当本次请求要且服务端配置了视觉模型时才启用。
+  const cfg = { ...config, depth: DEPTHS.includes(depth) ? depth : config.depth, vision: wantVision ? config.vision : null };
   const onProgress = (p) => { j.progress = p; pushJob(id, { type: "progress", ...p }); };
   let run;
   if (kind === "text") {
@@ -178,7 +179,7 @@ const server = http.createServer(async (req, res) => {
   // CORS：App(Capacitor WebView，源为 capacitor://localhost / http://localhost)跨域访问本机后端时放行
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Filename,X-Depth");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Filename,X-Depth,X-Vision");
   if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
 
   try {
@@ -239,7 +240,7 @@ const server = http.createServer(async (req, res) => {
       if (!/^https?:\/\//.test(body.url || "")) return sendJSON(res, 400, { error: "请提供 http(s) 链接" });
       if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
       const id = newJob();
-      runJob(id, body.url, body.depth);
+      runJob(id, body.url, body.depth, "video", !!body.vision);
       return sendJSON(res, 200, { jobId: id });
     }
     // ---- 文字解析：粘贴的文字，或图文/文字帖链接（小红书/公众号/下厨房等无音频来源）----
@@ -256,13 +257,14 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && p === "/api/parse-file") {
       const filename = decodeURIComponent(req.headers["x-filename"] || "video.mp4");
       const depth = req.headers["x-depth"];
+      const wantVision = req.headers["x-vision"] === "1";
       if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
       const buf = await readBody(req);
       if (!buf.length) return sendJSON(res, 400, { error: "空文件" });
       const tmp = path.join(os.tmpdir(), `paoding-up-${Date.now()}-${slug(filename)}`);
       fs.writeFileSync(tmp, buf);
       const id = newJob();
-      runJob(id, tmp, depth);
+      runJob(id, tmp, depth, "video", wantVision);
       const j = jobs.get(id);
       // 任务结束(或超 1 小时兜底)后清理临时文件，避免卡死时泄漏
       let ticks = 0;

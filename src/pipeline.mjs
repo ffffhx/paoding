@@ -6,6 +6,7 @@ import { structureRecipe } from "./chef.mjs";
 import { explainSteps } from "./explain.mjs";
 import { toMarkdown } from "./render.mjs";
 import { fetchArticleText } from "./fetchText.mjs";
+import { extractFrames, visionTranscript } from "./vision.mjs";
 
 const slug = (s) =>
   (s || "recipe")
@@ -19,18 +20,34 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
   const step = (n, msg) => console.log(`\x1b[36m[${n}/5]\x1b[0m ${msg}`);
   const emit = (stage, pct, message) => onProgress({ stage, pct: Math.round(pct), message });
 
-  step(1, "获取视频并抽取音频…");
+  const useVision = !!config.vision;
+  step(1, useVision ? "下载视频并抽取音频…" : "获取视频并抽取音频…");
   emit("acquire", 2, "准备中…");
-  const { audioPath, meta, cleanup } = await acquire(input, config.ytdlp, (p) =>
-    emit("acquire", p.pct * 0.3, p.message),
+  const { audioPath, videoPath, meta, cleanup } = await acquire(input, config.ytdlp, (p) =>
+    emit("acquire", p.pct * 0.25, p.message), { wantVideo: useVision },
   );
 
   try {
     step(2, "语音转文字（ASR）…");
-    emit("transcribe", 30, "语音转文字…");
-    const transcript = await transcribe(config.asr, audioPath, (p) =>
-      emit("transcribe", 30 + p.pct * 0.35, p.message),
+    emit("transcribe", 25, "语音转文字…");
+    let transcript = await transcribe(config.asr, audioPath, (p) =>
+      emit("transcribe", 25 + p.pct * 0.2, p.message),
     );
+
+    // 视觉：抽帧 + 读屏上字幕/画面观察，融合进转写（兜住没口播、只有字幕的视频）
+    if (useVision && videoPath) {
+      step(2.5, "看画面读字幕（视觉）…");
+      emit("vision", 46, "看画面读字幕…");
+      try {
+        const frames = await extractFrames(videoPath, { max: config.vision.maxFrames });
+        const visual = await visionTranscript(config.vision, frames, (p) =>
+          emit("vision", 46 + p.pct * 0.2, p.message),
+        );
+        if (visual) transcript = `${transcript || ""}\n\n【画面观察 / 屏上文字】\n${visual}`.trim();
+      } catch (e) {
+        console.warn(`  · 视觉解析失败（跳过，仅用口播）：${e.message}`);
+      }
+    }
 
     step(3, "整理成结构化菜谱…");
     emit("structure", 68, "整理成步骤…");

@@ -17,8 +17,8 @@ const api = (p) => (settings.apiBase || BASE) + p;
 const API = {
   list: () => fetch(api('/api/recipes')).then(r => r.json()),
   del: (id) => fetch(api('/api/recipes/' + encodeURIComponent(id)), { method: 'DELETE' }),
-  startUrl: (url, depth) => fetch(api('/api/parse-url'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth }) }).then(j),
-  startFile: (file, depth) => fetch(api('/api/parse-file'), { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth }, body: file }).then(j),
+  startUrl: (url, depth, vision) => fetch(api('/api/parse-url'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth, vision: !!vision }) }).then(j),
+  startFile: (file, depth, vision) => fetch(api('/api/parse-file'), { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth, 'X-Vision': vision ? '1' : '0' }, body: file }).then(j),
   startText: (text, depth) => fetch(api('/api/parse-text'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, depth }) }).then(j),
   ask: (recipeId, stepIndex, question) => fetch(api('/api/ask'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, question }) }).then(j),
   substitute: (recipeId, ingredient) => fetch(api('/api/substitute'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, ingredient }) }).then(j),
@@ -901,7 +901,7 @@ async function doParse(starter) {
   } catch (e) { cleanup(); toast('解析失败：' + e.message); }
 }
 function stageLabel(stage, message) {
-  const map = { acquire: '下载 & 抽取音频', transcribe: '语音转文字', structure: '整理成步骤', explain: '逐步生成「为什么」', done: '完成' };
+  const map = { acquire: '下载 & 抽取音频', transcribe: '语音转文字', vision: '看画面读字幕', structure: '整理成步骤', explain: '逐步生成「为什么」', done: '完成' };
   return map[stage] || message || '处理中…';
 }
 
@@ -929,7 +929,7 @@ function init() {
   applyTheme(); syncDepthChips();
   initTabs();
   $('#depth').onclick = (e) => { const c = e.target.closest('.chip'); if (!c) return; depth = c.dataset.d; syncDepthChips(); };
-  $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast('请粘贴 http(s) 视频链接'); return; } doParse(() => API.startUrl(u, depth)); $('#url').value = ''; };
+  $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast('请粘贴 http(s) 视频链接'); return; } const vision = $('#visChk')?.checked; doParse(() => API.startUrl(u, depth, vision)); $('#url').value = ''; };
   $('#url').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#parseUrl').click(); } });
   $('#fileBtn').onclick = () => $('#file').click();
   $('#textBtn').onclick = async () => {
@@ -937,7 +937,7 @@ function init() {
     if (t && t.length >= 10) doParse(() => API.startText(t, depth));
     else if (t) toast('文字太短了，多粘一点');
   };
-  $('#file').onchange = (e) => { const f = e.target.files[0]; if (f) doParse(() => API.startFile(f, depth)); e.target.value = ''; };
+  $('#file').onchange = (e) => { const f = e.target.files[0]; if (f) doParse(() => API.startFile(f, depth, $('#visChk')?.checked)); e.target.value = ''; };
   $('#search').oninput = (e) => { filter.q = e.target.value.trim(); renderRecipes(); };
   // 系统分享导入：从别的 App 分享 B站/YouTube 链接进庖丁 → 自动填入并解析
   try {

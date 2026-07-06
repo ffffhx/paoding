@@ -38,8 +38,17 @@ export function loadConfig() {
     );
   }
 
+  const visionModel = process.env.PAODING_VISION_MODEL || "";
+
   return {
     llm: { baseUrl: llmBase, apiKey: llmKey, model: llmModel },
+    // 视觉模型（可选）：设了 PAODING_VISION_MODEL 才开启抽帧读屏，兜住「没口播只有字幕」的视频
+    vision: visionModel ? {
+      baseUrl: (process.env.PAODING_VISION_BASE_URL || llmBase).replace(/\/$/, ""),
+      apiKey: process.env.PAODING_VISION_API_KEY || llmKey,
+      model: visionModel,
+      maxFrames: Number(process.env.PAODING_VISION_MAX_FRAMES || 20),
+    } : null,
     asr: {
       // local = 本地 whisper.cpp；openai = 云端 OpenAI 兼容接口
       provider: (process.env.PAODING_ASR_PROVIDER || "openai").toLowerCase(),

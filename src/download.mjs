@@ -49,7 +49,8 @@ function ytdlpArgs(input, ytdlp = {}) {
 }
 
 // 输入：URL 或本地视频路径。onProgress({pct,message}) 报告 0~100 的获取进度。
-export async function acquire(input, ytdlp = {}, onProgress = () => {}) {
+// wantVideo=true 时下载/保留视频文件（供视觉抽帧），并在返回里带 videoPath。
+export async function acquire(input, ytdlp = {}, onProgress = () => {}, { wantVideo = false } = {}) {
   if (!(await has("ffmpeg"))) {
     throw new Error("未找到 ffmpeg，请先安装：brew install ffmpeg");
   }
@@ -58,7 +59,7 @@ export async function acquire(input, ytdlp = {}, onProgress = () => {}) {
   const cleanup = () => fs.rmSync(workDir, { recursive: true, force: true });
 
   let meta = { title: "", description: "", duration: null };
-  let sourceMedia;
+  let sourceMedia, videoPath = null;
 
   try {
   if (isUrl(input)) {
@@ -75,15 +76,23 @@ export async function acquire(input, ytdlp = {}, onProgress = () => {}) {
     } catch (e) {
       console.warn(`  · 元数据抓取失败（继续）：${e.message}`);
     }
-    onProgress({ pct: 8, message: `下载音频${meta.title ? "：" + meta.title : ""}` });
-    const tmpl = path.join(workDir, "audio.%(ext)s");
-    await run("yt-dlp", ["-x", "--audio-format", "mp3", "--no-playlist", ...common, "-o", tmpl, input], {
-      onData: (s) => {
-        const m = s.match(/(\d+(?:\.\d+)?)%\s+of/);
-        if (m) onProgress({ pct: 8 + Math.min(90, +m[1]) * 0.8, message: "下载音频…" }); // 8→80
-      },
-    });
-    sourceMedia = path.join(workDir, "audio.mp3");
+    if (wantVideo) {
+      onProgress({ pct: 8, message: `下载视频${meta.title ? "：" + meta.title : ""}` });
+      const tmpl = path.join(workDir, "video.%(ext)s");
+      await run("yt-dlp", ["-f", "bv*[height<=720]+ba/b[height<=720]/best", "--merge-output-format", "mp4", "--no-playlist", ...common, "-o", tmpl, input], {
+        onData: (s) => { const m = s.match(/(\d+(?:\.\d+)?)%\s+of/); if (m) onProgress({ pct: 8 + Math.min(90, +m[1]) * 0.6, message: "下载视频…" }); },
+      });
+      const vf = fs.readdirSync(workDir).find((f) => f.startsWith("video."));
+      if (!vf) { cleanup(); throw new Error("视频下载失败"); }
+      sourceMedia = path.join(workDir, vf); videoPath = sourceMedia;
+    } else {
+      onProgress({ pct: 8, message: `下载音频${meta.title ? "：" + meta.title : ""}` });
+      const tmpl = path.join(workDir, "audio.%(ext)s");
+      await run("yt-dlp", ["-x", "--audio-format", "mp3", "--no-playlist", ...common, "-o", tmpl, input], {
+        onData: (s) => { const m = s.match(/(\d+(?:\.\d+)?)%\s+of/); if (m) onProgress({ pct: 8 + Math.min(90, +m[1]) * 0.8, message: "下载音频…" }); },
+      });
+      sourceMedia = path.join(workDir, "audio.mp3");
+    }
   } else {
     const abs = path.resolve(input);
     if (!fs.existsSync(abs)) {
@@ -92,6 +101,7 @@ export async function acquire(input, ytdlp = {}, onProgress = () => {}) {
     }
     meta.title = path.basename(abs).replace(/\.[^.]+$/, "");
     sourceMedia = abs;
+    if (wantVideo) videoPath = abs;
     onProgress({ pct: 40, message: "读取本地文件…" });
   }
 
@@ -100,7 +110,7 @@ export async function acquire(input, ytdlp = {}, onProgress = () => {}) {
   await run("ffmpeg", ["-y", "-i", sourceMedia, "-ac", "1", "-ar", "16000", "-b:a", "64k", "-vn", audioPath]);
   onProgress({ pct: 100, message: "音频就绪" });
 
-  return { audioPath, meta, cleanup };
+  return { audioPath, videoPath, meta, cleanup };
   } catch (e) {
     cleanup(); // 下载/抽音轨失败也清理临时目录，避免泄漏
     throw e;
