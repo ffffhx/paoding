@@ -731,7 +731,7 @@ function openTechnique(t) {
         <div><b>什么时候用</b><p>${esc(s.when || '')}</p></div>
         <div><b>关键判断</b><p>${esc(s.keys || '')}</p></div>
         <div><b>常见翻车点</b><p>${esc(s.pitfalls || '')}</p></div>
-        <div class="meta">${data.cached ? '已读取缓存' : '已生成归纳'}</div>`;
+        <div class="meta">AI 归纳，仅供参考 · ${data.cached ? '已读取缓存' : '已生成归纳'}</div>`;
     } catch (e) {
       summaryBox.classList.add('hidden');
       toast('技法归纳失败：' + e.message);
