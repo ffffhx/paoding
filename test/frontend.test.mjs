@@ -73,6 +73,16 @@ test("首页/列表文案切 en 后使用英文标签", () => {
   app.setLanguage("zh");
 });
 
+test("toast 和错误提示切 en 后输出英文文案", () => {
+  app.setLanguage("en");
+  assert.equal(app.stageLabel("vision"), "Read images/video frames");
+  assert.equal(app.stageLabel("unknown", "Custom stage"), "Custom stage");
+  assert.equal(app.t("backup.restored", { count: 2 }), "Restored 2 recipes. Refreshing…");
+  assert.equal(app.t("parse.failed", { message: "boom" }), "Parse failed: boom");
+  assert.equal(app.t("timer.notification.body", { label: "Egg" }), "Egg is done!");
+  app.setLanguage("zh");
+});
+
 test("scaledAmount 结构化优先，文本兜底", () => {
   assert.equal(app.scaledAmount({ qty: 3, unit: "个" }, 2), "6个");
   assert.equal(app.scaledAmount({ qty: 1, unit: "勺" }, 1.5), "1.5勺");

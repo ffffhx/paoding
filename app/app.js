@@ -59,7 +59,7 @@ const API = {
   importRecipe: (jsonld) => F('/api/import-recipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonld }) }).then(j),
 };
 function normalizeRecipeListPayload(data) {
-  if (!Array.isArray(data)) throw new Error(data?.error || '菜谱列表格式错误');
+  if (!Array.isArray(data)) throw new Error(data?.error || tr('error.recipeListFormat'));
   return data;
 }
 async function exportData() {
@@ -68,34 +68,34 @@ async function exportData() {
     const blob = new Blob([JSON.stringify({ app: 'paoding', version: 1, exportedAt: new Date().toISOString(), recipes, userdata }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = 'paoding-backup-' + new Date().toISOString().slice(0, 10) + '.json';
-    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); toast('已导出备份文件');
-  } catch (e) { toast('导出失败：' + e.message); }
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); toast(tr('backup.exported'));
+  } catch (e) { toast(tr('backup.exportFailed', { message: e.message })); }
 }
 function importData(file) {
   const reader = new FileReader();
   reader.onload = async () => {
-    let data; try { data = JSON.parse(reader.result); } catch { toast('不是有效的备份文件'); return; }
-    if (!(await confirmModal('用这个备份覆盖当前数据？现有菜谱与收藏会被替换。', '恢复'))) return;
+    let data; try { data = JSON.parse(reader.result); } catch { toast(tr('backup.invalid')); return; }
+    if (!(await confirmModal(tr('backup.restore.confirm'), tr('backup.restore')))) return;
     try {
       const res = await API.importAll({ recipes: data.recipes, userdata: data.userdata });
-      toast('已恢复 ' + (res.count || 0) + ' 道菜，刷新中…');
+      toast(tr('backup.restored', { count: res.count || 0 }));
       setTimeout(() => location.reload(), 900);
-    } catch (e) { toast('导入失败：' + e.message); }
+    } catch (e) { toast(tr('backup.importFailed', { message: e.message })); }
   };
   reader.readAsText(file);
 }
 async function importRecipeJsonLd(text) {
   const raw = String(text || '').trim();
-  if (!raw) { toast('先粘贴 JSON-LD'); return; }
+  if (!raw) { toast(tr('importRecipe.empty')); return; }
   try {
     const res = await API.importRecipe(raw);
-    toast('已导入：' + (res.recipe?.title || res.id));
+    toast(tr('importRecipe.done', { title: res.recipe?.title || res.id }));
     recipes = await API.list();
     renderAll();
     const found = recipes.find(x => x.id === res.id) || res.recipe;
     if (found) openDetail(found);
   } catch (e) {
-    toast('导入失败：' + e.message);
+    toast(tr('importRecipe.failed', { message: e.message }));
   }
 }
 function importRecipeJsonFile(file) {
@@ -108,7 +108,7 @@ function readAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.onerror = () => reject(new Error(tr('error.imageRead')));
     reader.readAsDataURL(file);
   });
 }
@@ -583,7 +583,7 @@ const Timers = {
     if (!seconds) return;
     if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => { });
     this.list.push({ id: Date.now() + '' + Math.floor(performance.now()), label, endAt: Date.now() + seconds * 1000, done: false });
-    this.save(); this.render(); this.start(); toast('⏱ 已开始计时：' + label);
+    this.save(); this.render(); this.start(); toast(tr('timer.started', { label }));
   },
   start() { if (this.iv) return; this.iv = setInterval(() => this.tick(), 500); },
   tick() {
@@ -598,8 +598,8 @@ const Timers = {
   },
   ring(t) {
     beep(); try { navigator.vibrate && navigator.vibrate([300, 150, 300]); } catch { }
-    speak(t.label + ' 时间到'); toast('⏰ ' + t.label + ' 时间到！');
-    try { if ('Notification' in window && Notification.permission === 'granted') new Notification('⏰ 庖丁计时', { body: t.label + ' 时间到！', tag: t.id }); } catch { }
+    speak(tr('timer.doneSpeech', { label: t.label })); toast(tr('timer.done', { label: t.label }));
+    try { if ('Notification' in window && Notification.permission === 'granted') new Notification(tr('timer.notification.title'), { body: tr('timer.notification.body', { label: t.label }), tag: t.id }); } catch { }
   },
   remove(id) { this.list = this.list.filter(x => x.id !== id); this.save(); this.render(); },
   render() {
@@ -813,7 +813,7 @@ function renderTechniques() {
 }
 function openRecipeAtStep(recipeId, stepIndex) {
   const r = recipes.find(x => x.id === recipeId);
-  if (!r) { toast('菜谱不存在或尚未加载'); return; }
+  if (!r) { toast(tr('error.recipeMissing')); return; }
   openDetail(r, stepIndex);
 }
 function openTechnique(t) {
@@ -855,7 +855,7 @@ function openTechnique(t) {
         <div class="meta">${esc(techSummaryNoteText(data.cached))}</div>`;
     } catch (e) {
       summaryBox.classList.add('hidden');
-      toast('技法归纳失败：' + e.message);
+      toast(tr('tech.summary.failed', { message: e.message }));
     } finally {
       summaryBtn.disabled = false;
       summaryBtn.textContent = oldText;
@@ -878,7 +878,7 @@ function renderSkills() {
       <div style="font-size:14px;color:var(--muted);line-height:1.55">${esc(s.action || '')}</div>
       ${w.reason ? `<p><span class="lbl">${esc(tr('why.reason'))}</span> ${esc(w.reason)}</p>` : ''}
       ${w.if_not ? `<p><span class="lbl">${esc(tr('why.ifNot'))}</span> ${esc(w.if_not)}</p>` : ''}</div>`);
-    c.querySelector('.star').onclick = () => { favSteps = favSteps.filter(x => x.key !== s.key); store.set('favSteps', favSteps); renderSkills(); updateBadges(); toast('已移出收藏'); };
+    c.querySelector('.star').onclick = () => { favSteps = favSteps.filter(x => x.key !== s.key); store.set('favSteps', favSteps); renderSkills(); updateBadges(); toast(tr('skills.removed')); };
     box.appendChild(c);
   });
 }
@@ -974,8 +974,8 @@ function renderShopping() {
     $('#shopAdd') && ($('#shopAdd').onkeydown = (e) => { if (e.key === 'Enter') shopManualAdd(); });
     $('#shopCopy') && ($('#shopCopy').onclick = async () => {
       const text = shoppingTextBySection();
-      try { if (!navigator.clipboard?.writeText) throw new Error('clipboard'); await navigator.clipboard.writeText(text); toast('已复制购物清单'); }
-      catch { toast('复制失败'); }
+      try { if (!navigator.clipboard?.writeText) throw new Error('clipboard'); await navigator.clipboard.writeText(text); toast(tr('shopping.copy.done')); }
+      catch { toast(tr('shopping.copy.failed')); }
     });
   };
   if (!shopping.length) { box.innerHTML = head + `<div class="empty">${esc(tr('shopping.empty.title'))}<br>${esc(tr('shopping.empty.help'))}</div>`; wireAdd(); return; }
@@ -1006,7 +1006,7 @@ function addToShoppingItems(r, factor) {
     if (!names.has(key)) shopping.push({ name: i.name, amount: scaledAmount(i, factor || 1), from: r.title, checked: false });
   });
 }
-function addToShopping(r, factor) { addToShoppingItems(r, factor); store.set('shopping', shopping); updateBadges(); toast('已加入购物清单'); }
+function addToShopping(r, factor) { addToShoppingItems(r, factor); store.set('shopping', shopping); updateBadges(); toast(tr('shopping.added')); }
 
 /* ================= 本周计划（膳食计划）================= */
 function weekDays() {
@@ -1053,7 +1053,7 @@ function renderPlan() {
   $('#planToShop') && ($('#planToShop').onclick = () => {
     const ids = new Set(); days.forEach(d => (mealPlan[d.key] || []).forEach(id => ids.add(id)));
     let n = 0; ids.forEach(id => { const r = byId[id]; if (r) { addToShoppingItems(r, 1); n++; } });
-    if (n) { store.set('shopping', shopping); updateBadges(); toast(`已把 ${n} 道菜的食材加入购物清单`); } else toast('这周还没排菜');
+    if (n) { store.set('shopping', shopping); updateBadges(); toast(tr('plan.addedToShopping', { count: n })); } else toast(tr('plan.emptyWeek'));
   });
   $('#planClear') && ($('#planClear').onclick = async () => { if (!(await confirmModal(tr('plan.clear.confirm'), tr('shopping.clearAll')))) return; days.forEach(d => delete mealPlan[d.key]); saveMealPlan(); renderPlan(); });
 }
@@ -1084,7 +1084,7 @@ function showCookTimeline(key, dayRecipes) {
   ov.querySelector('#tlClose').onclick = () => ov.remove();
 }
 function pickRecipeForDay(key) {
-  if (!recipes.length) { toast('还没有菜谱，先解析一道'); return; }
+  if (!recipes.length) { toast(tr('plan.noRecipes')); return; }
   const day = weekDays().find(d => d.key === key);
   const ov = openModal(`<h3 style="text-align:left">${esc(tr('plan.pick.title', { day: day ? day.label : '' }))}</h3>
     <input type="text" id="pickSearch" placeholder="${esc(tr('plan.pick.search'))}" style="margin:8px 0 0">
@@ -1095,7 +1095,7 @@ function pickRecipeForDay(key) {
       `<div class="pickrow" data-id="${esc(r.id)}" style="padding:11px 6px;border-bottom:1px solid var(--line);cursor:pointer">${esc(r.title)}</div>`).join('') || `<div style="color:var(--muted);padding:10px 6px">${esc(tr('plan.pick.noMatch'))}</div>`;
     ov.querySelectorAll('.pickrow').forEach(row => row.onclick = () => {
       mealPlan[key] = mealPlan[key] || []; if (!mealPlan[key].includes(row.dataset.id)) mealPlan[key].push(row.dataset.id);
-      saveMealPlan(); ov.remove(); renderPlan(); toast('已排入');
+      saveMealPlan(); ov.remove(); renderPlan(); toast(tr('plan.added'));
     });
   };
   draw('');
@@ -1149,8 +1149,8 @@ function renderSettings() {
   box.querySelectorAll('[data-tr]').forEach(b => b.onclick = () => { settings.ttsRate = Math.min(1.6, Math.max(0.6, settings.ttsRate + (b.dataset.tr === '+' ? 0.1 : -0.1))); saveSettings(); renderSettings(); });
   $('#setDepth').querySelectorAll('.chip').forEach(c => c.onclick = () => { settings.depth = c.dataset.d; depth = c.dataset.d; saveSettings(); renderSettings(); syncDepthChips(); });
   $('#uiLang').onchange = (e) => { setLanguage(e.target.value); saveSettings(); applyStaticI18n(); renderAll(); renderSettings(); toast(tr('settings.language.saved')); };
-  $('#apiBase').onchange = (e) => { settings.apiBase = e.target.value.trim().replace(/\/$/, ''); saveSettings(); toast('已保存后端地址'); refresh(); };
-  $('#apiToken').onchange = (e) => { settings.apiToken = e.target.value.trim(); saveSettings(); toast('已保存 API Token'); refresh(); };
+  $('#apiBase').onchange = (e) => { settings.apiBase = e.target.value.trim().replace(/\/$/, ''); saveSettings(); toast(tr('settings.backend.saved')); refresh(); };
+  $('#apiToken').onchange = (e) => { settings.apiToken = e.target.value.trim(); saveSettings(); toast(tr('settings.token.saved')); refresh(); };
   $('#btnExport').onclick = exportData;
   $('#btnImport').onclick = () => $('#importFile').click();
   $('#importFile').onchange = (e) => { const f = e.target.files[0]; if (f) importData(f); e.target.value = ''; };
@@ -1173,12 +1173,12 @@ function showBackendSetupIfNeeded() {
   ov.querySelector('#setupLater').onclick = () => ov.remove();
   ov.querySelector('#setupSave').onclick = () => {
     const base = ov.querySelector('#setupApiBase').value.trim().replace(/\/$/, '');
-    if (!/^https?:\/\//.test(base)) { toast('请输入 http(s) 后端地址'); return; }
+    if (!/^https?:\/\//.test(base)) { toast(tr('error.backendUrl')); return; }
     settings.apiBase = base;
     settings.apiToken = ov.querySelector('#setupApiToken').value.trim();
     saveSettings();
     ov.remove();
-    toast('已保存后端地址');
+    toast(tr('settings.backend.saved'));
     loadUserData().finally(refresh);
   };
   setTimeout(() => ov.querySelector('#setupApiBase').focus(), 30);
@@ -1208,8 +1208,8 @@ async function editRecipeTags(r, onSaved) {
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || ('HTTP ' + res.status));
       ov.remove();
       onSaved && onSaved(tags);
-      toast('标签已保存');
-    } catch (e) { toast('保存失败：' + e.message); }
+      toast(tr('tag.saved'));
+    } catch (e) { toast(tr('tag.saveFailed', { message: e.message })); }
   };
 }
 function openDetail(r, focusStepIndex = null) {
@@ -1313,7 +1313,7 @@ function openDetail(r, focusStepIndex = null) {
   p.querySelector('.back').onclick = close;
   p.querySelector('#btnBack2').onclick = close;
   p.querySelector('#dfav').onclick = (e) => { toggleRecipe(r.id); const on = favRecipes.includes(r.id); e.target.className = 'star ' + (on ? 'on' : ''); e.target.textContent = on ? '★' : '☆'; renderRecipes(); renderFilters(); };
-  p.querySelector('#dDel').onclick = async () => { if (!(await confirmModal(tr('detail.delete.confirm'), tr('common.delete')))) return; try { await API.del(r.id); } catch { } close(); refresh(); toast('已删除'); };
+  p.querySelector('#dDel').onclick = async () => { if (!(await confirmModal(tr('detail.delete.confirm'), tr('common.delete')))) return; try { await API.del(r.id); } catch { } close(); refresh(); toast(tr('detail.deleted')); };
   p.querySelector('#dPrint').onclick = () => window.print();
   p.querySelector('#dEdit').onclick = () => { close(); openEdit(r); };
   p.querySelector('#dShare').onclick = () => shareRecipe(r, factor);
@@ -1353,11 +1353,11 @@ function openDetail(r, focusStepIndex = null) {
       const data = await API.explainRecipe(r.id, depth);
       Object.assign(r, data.recipe || {});
       recipes = recipes.map(x => x.id === r.id ? r : x);
-      toast('已补齐原理讲解');
+      toast(tr('detail.explainDone'));
       close(); openDetail(r);
     } catch (err) {
       btn.disabled = false; btn.textContent = tr('detail.imported.explain');
-      toast('补讲解失败：' + err.message);
+      toast(tr('detail.explainFailed', { message: err.message }));
     }
   };
   p.querySelector('#btnNutri').onclick = async (e) => {
@@ -1368,9 +1368,9 @@ function openDetail(r, focusStepIndex = null) {
       const data = await API.nutrition(r.id);
       r.nutrition = data.nutrition;
       renderNutrition();
-      toast(data.cached ? '已读取营养缓存' : '已生成营养估算');
+      toast(data.cached ? tr('detail.nutritionCached') : tr('detail.nutritionGenerated'));
     } catch (err) {
-      p.querySelector('#nutritionBox').innerHTML = `<div class="nutrition-card"><div class="nutrition-note">估算失败：${esc(err.message)}</div></div>`;
+      p.querySelector('#nutritionBox').innerHTML = `<div class="nutrition-card"><div class="nutrition-note">${esc(tr('detail.nutritionFailed', { message: err.message }))}</div></div>`;
     }
     btn.disabled = false;
   };
@@ -1411,7 +1411,7 @@ function finishCook(r) {
   ov.querySelectorAll('.rs').forEach(rs => rs.onclick = () => {
     m.rating = +rs.dataset.r; saveMeta(); renderRecipes();
     ov.querySelectorAll('.rs').forEach(x => x.classList.toggle('on', +x.dataset.r <= m.rating));
-    toast('已记录：' + '★'.repeat(m.rating)); setTimeout(() => ov.remove(), 350);
+    toast(tr('detail.ratingSaved', { stars: '★'.repeat(m.rating) })); setTimeout(() => ov.remove(), 350);
   });
   ov.querySelector('#finishSkip').onclick = () => ov.remove();
 }
@@ -1538,11 +1538,11 @@ function openEdit(r) {
     try {
       const res = await F('/api/recipes/' + encodeURIComponent(r.id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || ('HTTP ' + res.status));
-      toast('已保存'); close();
+      toast(tr('edit.saved')); close();
       recipes = await API.list(); renderAll();
       const found = recipes.find(x => x.id === r.id) || recipes.find(x => x.title === d.title);
       if (found) openDetail(found);
-    } catch (e) { toast('保存失败：' + e.message); }
+    } catch (e) { toast(tr('edit.saveFailed', { message: e.message })); }
   }
   p.querySelector('#eSave').onclick = save;
   p.querySelector('#eSave2').onclick = save;
@@ -1558,7 +1558,7 @@ async function showSubstitute(r, ingredient) {
 function shareRecipe(r, factor) {
   const md = recipeToText(r, factor);
   if (navigator.share) navigator.share({ title: r.title, text: md }).catch(() => { });
-  else { navigator.clipboard?.writeText(md); toast('已复制菜谱文本'); }
+  else { navigator.clipboard?.writeText(md); toast(tr('export.text.copied')); }
 }
 function recipeToText(r, f) {
   let s = `【${r.title}】\n`;
@@ -1620,10 +1620,10 @@ function openExport(r, factor) {
       <button class="btn ghost" id="xJson">${esc(tr('export.jsonld'))}</button>
     </div>
     <div class="mrow"><button class="btn" id="xClose">${esc(tr('common.close'))}</button></div>`, 'left');
-  ov.querySelector('#xLink').onclick = () => { navigator.clipboard?.writeText(shareRecipeUrl(r.id)); toast('已复制分享链接'); };
-  ov.querySelector('#xMd').onclick = () => { navigator.clipboard?.writeText(recipeToText(r, factor)); toast('已复制菜谱文字'); };
-  ov.querySelector('#xCook').onclick = () => { downloadFile(safe + '.cook', recipeToCooklang(r), 'text/plain;charset=utf-8'); toast('已下载 .cook'); };
-  ov.querySelector('#xJson').onclick = () => { downloadFile(safe + '.jsonld', JSON.stringify(recipeToSchemaOrg(r), null, 2), 'application/ld+json'); toast('已下载 JSON-LD'); };
+  ov.querySelector('#xLink').onclick = () => { navigator.clipboard?.writeText(shareRecipeUrl(r.id)); toast(tr('export.link.copied')); };
+  ov.querySelector('#xMd').onclick = () => { navigator.clipboard?.writeText(recipeToText(r, factor)); toast(tr('export.recipeText.copied')); };
+  ov.querySelector('#xCook').onclick = () => { downloadFile(safe + '.cook', recipeToCooklang(r), 'text/plain;charset=utf-8'); toast(tr('export.cook.downloaded')); };
+  ov.querySelector('#xJson').onclick = () => { downloadFile(safe + '.jsonld', JSON.stringify(recipeToSchemaOrg(r), null, 2), 'application/ld+json'); toast(tr('export.jsonld.downloaded')); };
   ov.querySelector('#xClose').onclick = () => ov.remove();
 }
 function shareRecipeUrl(recipeId, { apiBase = settings.apiBase, origin = location.origin, base = BASE } = {}) {
@@ -1706,8 +1706,8 @@ async function openCook(r) {
   }
   function toggleStep(r, s) {
     const key = stepKey(r.id, s.index);
-    if (favSteps.some(x => x.key === key)) { favSteps = favSteps.filter(x => x.key !== key); toast('已移出技巧收藏'); }
-    else { favSteps.push({ key, recipeId: r.id, recipeTitle: r.title, index: s.index, title: s.title, action: s.action, params: s.params, why: s.why }); toast('已收藏到「技巧收藏」⭐️'); }
+    if (favSteps.some(x => x.key === key)) { favSteps = favSteps.filter(x => x.key !== key); toast(tr('cook.favorite.removed')); }
+    else { favSteps.push({ key, recipeId: r.id, recipeTitle: r.title, index: s.index, title: s.title, action: s.action, params: s.params, why: s.why }); toast(tr('cook.favorite.added')); }
     store.set('favSteps', favSteps); render(); updateBadges();
   }
   function toggleVoice() {
@@ -1723,11 +1723,11 @@ async function openCook(r) {
     };
     recog.onerror = (ev) => {
       if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(ev.error)) {
-        voiceWant = false; recog = null; toast('语音识别不可用（' + ev.error + '）'); render();
+        voiceWant = false; recog = null; toast(tr('cook.voiceUnavailable', { message: ev.error })); render();
       }
     };
     recog.onend = () => { if (voiceWant && recog) { try { recog.start(); } catch { voiceWant = false; recog = null; } } };
-    try { recog.start(); showVoiceHint(); render(); } catch { voiceWant = false; recog = null; toast('语音识别启动失败'); }
+    try { recog.start(); showVoiceHint(); render(); } catch { voiceWant = false; recog = null; toast(tr('cook.voiceStartFailed')); }
   }
   function exit() { stopTimer(); stopSpeak(); voiceWant = false; if (recog) { try { recog.stop(); } catch { } recog = null; } if (wakeLock) { wakeLock.release().catch(() => { }); wakeLock = null; } box.remove(); }
   // 左右滑动翻步
@@ -1767,7 +1767,7 @@ function showVoiceHint() { const h = el(`<div class="voice-hint">${esc(tr('cook.
 async function showTerm(term) {
   const ov = openModal(`<h3>${esc(term)}</h3><p style="color:var(--muted)">${esc(tr('term.loading'))}</p>`);
   try { const { answer } = await API.term(term); ov.querySelector('.modal').innerHTML = `<h3>${esc(term)}</h3><p style="text-align:left">${esc(answer)}</p><div class="mrow"><button class="btn" id="ok">${esc(tr('term.ok'))}</button></div>`; ov.querySelector('#ok').onclick = () => ov.remove(); }
-  catch (e) { ov.remove(); toast('查询失败：' + e.message); }
+  catch (e) { ov.remove(); toast(tr('term.failed', { message: e.message })); }
 }
 
 /* ================= 解析（带进度）================= */
@@ -1836,16 +1836,16 @@ async function doParse(starter) {
       };
       // 瞬时断网时 EventSource 会自动重连、服务端补发当前进度；只有确实关闭或连续多次失败(约18s)才判失败，
       // 避免长解析(1~3分钟)中一次网络抖动就误报「连接中断」。
-      es.onerror = () => { if (es.readyState === EventSource.CLOSED || ++errs >= 6) { es.close(); reject(new Error('连接中断')); } };
+      es.onerror = () => { if (es.readyState === EventSource.CLOSED || ++errs >= 6) { es.close(); reject(new Error(tr('parse.connectionInterrupted'))); } };
     }).then(async (recipe) => {
-      await refresh(); cleanup(); toast('解析完成：' + (recipe.title || ''));
+      await refresh(); cleanup(); toast(tr('parse.done', { title: recipe.title || '' }));
       const found = recipes.find(x => x.title === recipe.title); if (found) openDetail(found);
     });
-  } catch (e) { cleanup(); refresh(); toast('解析失败：' + e.message); }
+  } catch (e) { cleanup(); refresh(); toast(tr('parse.failed', { message: e.message })); }
 }
 function stageLabel(stage, message) {
-  const map = { acquire: '下载 & 抽取音频', transcribe: '语音转文字', vision: '识别图片/画面', structure: '整理成步骤', explain: '逐步生成「为什么」', images: '截取步骤/食材画面', done: '完成' };
-  return map[stage] || message || '处理中…';
+  const key = stage ? 'parse.stage.' + stage : '';
+  return hasI18nKey(key) ? tr(key) : message || tr('parse.stage.processing');
 }
 
 /* ================= PWA / 初始化 ================= */
@@ -1891,14 +1891,14 @@ function init() {
   });
   initTabs();
   $('#depth').onclick = (e) => { const c = e.target.closest('.chip'); if (!c) return; depth = c.dataset.d; syncDepthChips(); };
-  $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast('请粘贴 http(s) 视频链接'); return; } const vision = $('#visChk')?.checked, images = $('#imgChk')?.checked; doParse(() => API.startUrl(u, depth, vision, images)); $('#url').value = ''; };
+  $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast(tr('parse.invalidUrl')); return; } const vision = $('#visChk')?.checked, images = $('#imgChk')?.checked; doParse(() => API.startUrl(u, depth, vision, images)); $('#url').value = ''; };
   $('#url').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#parseUrl').click(); } });
   $('#fileBtn').onclick = () => $('#file').click();
   $('#imageBtn').onclick = () => $('#imageFile').click();
   $('#textBtn').onclick = async () => {
-    const t = await promptModal('粘贴文字菜谱', '把小红书图文 / 公众号 / 任意帖子的做菜文字粘进来，AI 直接整理成分步骤 + 讲透为什么', '解析');
+    const t = await promptModal(tr('parse.text.title'), tr('parse.text.placeholder'), tr('home.parse'));
     if (t && t.length >= 10) doParse(() => API.startText(t, depth));
-    else if (t) toast('文字太短了，多粘一点');
+    else if (t) toast(tr('parse.text.tooShort'));
   };
   $('#file').onchange = (e) => { const f = e.target.files[0]; if (f) doParse(() => API.startFile(f, depth, $('#visChk')?.checked, $('#imgChk')?.checked)); e.target.value = ''; };
   $('#imageFile').onchange = (e) => {
@@ -1928,8 +1928,8 @@ function init() {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (refreshing) return;
       // 正在跟做或有弹窗时别硬刷，避免打断；等下次打开自然生效
-      if (document.getElementById('cook') || document.querySelector('.overlay')) { toast('🆕 新版本已就绪，下次打开生效'); return; }
-      refreshing = true; toast('更新到新版本…'); location.reload();
+      if (document.getElementById('cook') || document.querySelector('.overlay')) { toast(tr('parse.updateReady')); return; }
+      refreshing = true; toast(tr('parse.updating')); location.reload();
     });
   }
   let deferred = null;
