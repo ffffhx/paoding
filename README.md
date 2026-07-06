@@ -16,6 +16,11 @@ _Turn any cooking video into step-by-step instructions that explain the **why** 
 <img src="https://github.com/ffffhx/paoding/actions/workflows/test.yml/badge.svg" alt="test" />
 </p>
 
+<p>
+<a href="README.md"><img src="https://img.shields.io/badge/语言-简体中文-E4572E" alt="语言：简体中文" /></a>
+<a href="README.en.md"><img src="https://img.shields.io/badge/Language-English-2A2724" alt="Language: English" /></a>
+</p>
+
 <img src="docs/assets/cook.gif" width="300" alt="跟做模式演示" />
 
 </div>
