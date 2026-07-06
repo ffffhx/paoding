@@ -304,6 +304,7 @@ function openDetail(r) {
     <div class="topbar">
       <button class="back">‹ 返回</button>
       <div style="display:flex;gap:4px">
+        <button class="iconbtn" id="dEdit" title="编辑">✏️</button>
         <button class="iconbtn" id="dShare" title="分享">↗</button>
         <button class="iconbtn" id="dDel" title="删除">🗑</button>
         <button class="star ${favRecipes.includes(r.id) ? 'on' : ''}" id="dfav">${favRecipes.includes(r.id) ? '★' : '☆'}</button>
@@ -366,6 +367,7 @@ function openDetail(r) {
   p.querySelector('#btnBack2').onclick = close;
   p.querySelector('#dfav').onclick = (e) => { toggleRecipe(r.id); const on = favRecipes.includes(r.id); e.target.className = 'star ' + (on ? 'on' : ''); e.target.textContent = on ? '★' : '☆'; renderRecipes(); renderFilters(); };
   p.querySelector('#dDel').onclick = async () => { if (!(await confirmModal('删除这道菜？此操作不可撤销。', '删除'))) return; try { await API.del(r.id); } catch { } close(); refresh(); toast('已删除'); };
+  p.querySelector('#dEdit').onclick = () => { close(); openEdit(r); };
   p.querySelector('#dShare').onclick = () => shareRecipe(r, factor);
   p.querySelector('#addShop').onclick = () => addToShopping(r, factor);
   const aiBox = p.querySelector('#aiBox');
@@ -395,6 +397,127 @@ function openDetail(r) {
   $('#app').appendChild(p);
 }
 function riskBadge(r) { return r === 'high' ? ' <span class="badge risk-high">🔴 新手雷区</span>' : r === 'medium' ? ' <span class="badge risk-medium">🟡 需留意</span>' : ''; }
+
+/* ================= 编辑菜谱（修正 AI 的错误）================= */
+function openEdit(r) {
+  const d = JSON.parse(JSON.stringify(r)); // 深拷贝，取消即丢弃
+  d.ingredients = Array.isArray(d.ingredients) ? d.ingredients : [];
+  d.steps = Array.isArray(d.steps) ? d.steps : [];
+  d.tags = Array.isArray(d.tags) ? d.tags : [];
+  const fld = 'border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;font-size:15px;color:var(--ink);font-family:inherit;width:100%';
+  const p = el(`<div class="page">
+    <div class="topbar">
+      <button class="back">‹ 取消</button>
+      <button class="btn sm" id="eSave">✓ 保存</button>
+    </div>
+    <div class="detail-hd"><h2 style="font-size:22px">编辑菜谱</h2>
+      <div class="meta">改错的用量 / 步骤 / 讲解，保存后同步到所有设备</div></div>
+
+    <div class="sec-title">基本信息</div>
+    <div style="padding:0 16px;display:flex;flex-direction:column;gap:8px">
+      <input type="text" id="eTitle" placeholder="菜名" value="${esc(d.title || '')}">
+      <div style="display:flex;gap:8px">
+        <input type="text" id="eServings" placeholder="份量，如 2人份" value="${esc(d.servings || '')}" style="flex:1;min-width:0">
+        <input type="text" id="eTime" inputmode="numeric" placeholder="总时长(分钟)" value="${esc(d.total_time_min || '')}" style="width:130px">
+      </div>
+      <div style="display:flex;gap:8px">
+        <select id="eDiff" style="${fld};flex:1">
+          <option value="easy" ${d.difficulty === 'easy' ? 'selected' : ''}>简单</option>
+          <option value="medium" ${d.difficulty === 'medium' || !d.difficulty ? 'selected' : ''}>中等</option>
+          <option value="hard" ${d.difficulty === 'hard' ? 'selected' : ''}>有挑战</option>
+        </select>
+        <input type="text" id="eCuisine" placeholder="菜系" value="${esc(d.cuisine || '')}" style="flex:1;min-width:0">
+      </div>
+      <input type="text" id="eTags" placeholder="标签，用逗号分隔" value="${esc(d.tags.join('、'))}">
+    </div>
+
+    <div class="sec-title">食材 <span class="act" id="eAddIng">＋ 加一行</span></div>
+    <div id="eIng" style="padding:0 16px;display:flex;flex-direction:column;gap:6px"></div>
+
+    <div class="sec-title">步骤 <span class="act" id="eAddStep">＋ 加一步</span></div>
+    <div id="eSteps" style="padding:0 16px;display:flex;flex-direction:column;gap:14px"></div>
+
+    <div class="cta"><button class="btn ghost" id="eCancel">取消</button><button class="btn" id="eSave2">✓ 保存</button></div>`);
+
+  function renderIng() {
+    const box = p.querySelector('#eIng');
+    box.innerHTML = d.ingredients.map((i, idx) => `
+      <div style="display:flex;gap:6px;align-items:center" data-i="${idx}">
+        <input type="text" class="fName" placeholder="食材" value="${esc(i.name || '')}" style="${fld};flex:2">
+        <input type="text" class="fAmt" placeholder="用量" value="${esc(i.amount || '')}" style="${fld};flex:1;min-width:0">
+        <button class="iconbtn fDel" title="删除">🗑</button>
+      </div>`).join('') || '<div style="color:var(--muted);font-size:13px">还没有食材，点上面「加一行」</div>';
+    box.querySelectorAll('[data-i]').forEach(row => {
+      const idx = +row.dataset.i;
+      row.querySelector('.fName').oninput = (e) => d.ingredients[idx].name = e.target.value;
+      row.querySelector('.fAmt').oninput = (e) => d.ingredients[idx].amount = e.target.value;
+      row.querySelector('.fDel').onclick = () => { d.ingredients.splice(idx, 1); renderIng(); };
+    });
+  }
+  function renderSteps() {
+    const box = p.querySelector('#eSteps');
+    box.innerHTML = d.steps.map((s, idx) => `
+      <div class="stepmini" style="padding:12px" data-s="${idx}">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <b>第 ${idx + 1} 步</b>
+          <span style="display:flex;gap:2px">
+            <button class="iconbtn sUp" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
+            <button class="iconbtn sDown" title="下移" ${idx === d.steps.length - 1 ? 'disabled' : ''}>↓</button>
+            <button class="iconbtn sDel" title="删除">🗑</button>
+          </span>
+        </div>
+        <input type="text" class="sTitle" placeholder="步骤标题" value="${esc(s.title || '')}" style="${fld};margin-bottom:6px">
+        <textarea class="sAction" placeholder="具体怎么做" style="${fld};min-height:56px;margin-bottom:6px">${esc(s.action || '')}</textarea>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <input type="text" class="sHeat" placeholder="火候" value="${esc(s.params?.heat || '')}" style="${fld};flex:1;min-width:0">
+          <input type="text" class="sTime" placeholder="时间(如3分钟)" value="${esc(s.params?.time || '')}" style="${fld};flex:1;min-width:0">
+        </div>
+        <textarea class="sReason" placeholder="为什么这么做（讲解）" style="${fld};min-height:56px">${esc(s.why?.reason || '')}</textarea>
+      </div>`).join('') || '<div style="color:var(--muted);font-size:13px">还没有步骤，点上面「加一步」</div>';
+    box.querySelectorAll('[data-s]').forEach(row => {
+      const idx = +row.dataset.s, s = d.steps[idx];
+      row.querySelector('.sTitle').oninput = (e) => s.title = e.target.value;
+      row.querySelector('.sAction').oninput = (e) => s.action = e.target.value;
+      row.querySelector('.sHeat').oninput = (e) => (s.params = s.params || {}).heat = e.target.value;
+      row.querySelector('.sTime').oninput = (e) => (s.params = s.params || {}).time = e.target.value;
+      row.querySelector('.sReason').oninput = (e) => (s.why = s.why || {}).reason = e.target.value;
+      row.querySelector('.sDel').onclick = () => { d.steps.splice(idx, 1); renderSteps(); };
+      row.querySelector('.sUp').onclick = () => { if (idx > 0) { [d.steps[idx - 1], d.steps[idx]] = [d.steps[idx], d.steps[idx - 1]]; renderSteps(); } };
+      row.querySelector('.sDown').onclick = () => { if (idx < d.steps.length - 1) { [d.steps[idx + 1], d.steps[idx]] = [d.steps[idx], d.steps[idx + 1]]; renderSteps(); } };
+    });
+  }
+  renderIng(); renderSteps();
+  p.querySelector('#eAddIng').onclick = () => { d.ingredients.push({ name: '', amount: '', note: '' }); renderIng(); };
+  p.querySelector('#eAddStep').onclick = () => { d.steps.push({ title: '', action: '', params: {}, why: {} }); renderSteps(); };
+
+  const close = () => p.remove();
+  p.querySelector('.back').onclick = () => { close(); openDetail(r); };
+  p.querySelector('#eCancel').onclick = () => { close(); openDetail(r); };
+
+  async function save() {
+    d.title = p.querySelector('#eTitle').value.trim() || d.title;
+    const sv = p.querySelector('#eServings').value.trim(); d.servings = sv || null;
+    const tm = parseInt(p.querySelector('#eTime').value, 10); d.total_time_min = Number.isFinite(tm) ? tm : null;
+    d.difficulty = p.querySelector('#eDiff').value;
+    d.cuisine = p.querySelector('#eCuisine').value.trim() || null;
+    d.tags = p.querySelector('#eTags').value.split(/[,，、\s]+/).map(t => t.trim()).filter(Boolean);
+    d.ingredients = d.ingredients.filter(i => (i.name || '').trim());
+    d.steps = d.steps.filter(s => (s.title || s.action || '').trim());
+    d.steps.forEach((s, i) => s.index = i + 1);
+    const patch = { title: d.title, servings: d.servings, total_time_min: d.total_time_min, difficulty: d.difficulty, cuisine: d.cuisine, tags: d.tags, ingredients: d.ingredients, steps: d.steps };
+    try {
+      const res = await fetch(api('/api/recipes/' + encodeURIComponent(r.id)), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || ('HTTP ' + res.status));
+      toast('已保存'); close();
+      recipes = await API.list(); renderAll();
+      const found = recipes.find(x => x.id === r.id) || recipes.find(x => x.title === d.title);
+      if (found) openDetail(found);
+    } catch (e) { toast('保存失败：' + e.message); }
+  }
+  p.querySelector('#eSave').onclick = save;
+  p.querySelector('#eSave2').onclick = save;
+  $('#app').appendChild(p);
+}
 
 async function showSubstitute(r, ingredient) {
   const ov = openModal(`<h3>${esc(ingredient)} 的替代</h3><p style="color:var(--muted)">思考中…</p>`);
