@@ -662,7 +662,7 @@ async function openCook(r) {
         <div class="stepno">第 ${s.index} 步${riskBadge(s.risk_level)}</div>
         <h2>${esc(s.title || '')}</h2>
         <div class="action">${richText(s.action || '')}</div>
-        ${paramsHtml(s.params)}${timerHtml(s.params)}
+        ${paramsHtml(s.params)}${usedIngsHtml(r, s)}${timerHtml(s.params)}
         ${(w.reason || w.if_not || w.cue) ? `<div class="why"><div class="why-hd"><span>🤔 为什么这么做</span>${warn}</div>
           ${w.reason ? `<p><span class="lbl">原理　　</span>${richText(w.reason)}</p>` : ''}
           ${w.if_not ? `<p><span class="lbl">不这么做</span>${esc(w.if_not)}</p>` : ''}
@@ -735,6 +735,13 @@ async function openCook(r) {
   box.addEventListener('touchstart', e => x0 = e.touches[0].clientX);
   box.addEventListener('touchend', e => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; if (dx < -60) next(); else if (dx > 60) box.querySelector('.prev').click(); x0 = null; });
   render();
+}
+// 跟做时高亮本步用到的食材（在这一步 action 文本里出现的食材）
+function usedIngsHtml(r, s) {
+  const used = (r.ingredients || []).filter(i => i.name && String(s.action || '').includes(i.name));
+  if (!used.length) return '';
+  return `<div class="used-ings">🧺 本步用到：${used.map(i =>
+    `<span class="uing">${esc(i.name)}${i.amount && !['视频未明确', '适量'].includes(i.amount) ? ' <b>' + esc(i.amount) + '</b>' : ''}</span>`).join('')}</div>`;
 }
 function paramsHtml(p) {
   if (!p) return '';

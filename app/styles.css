@@ -119,6 +119,9 @@ input:focus,textarea:focus{outline:none;border-color:var(--tomato)}
 .param{background:var(--line);border-radius:10px;padding:8px 12px;font-size:14px;color:var(--muted)}
 .param b{color:var(--ink);font-weight:600}
 .term{border-bottom:1px dashed var(--tomato);color:inherit;cursor:pointer}
+.used-ings{margin:16px 0 0;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px;color:var(--muted)}
+.uing{background:var(--line);border-radius:999px;padding:5px 11px;color:var(--ink)}
+.uing b{color:var(--tomato);font-weight:600}
 .timer{margin:8px 0 4px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .timer .cd{font-variant-numeric:tabular-nums;font-size:22px;font-weight:700;color:var(--tomato)}
 .why{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px}
