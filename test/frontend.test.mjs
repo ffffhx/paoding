@@ -200,6 +200,12 @@ test("sourceSegmentUrl 按平台生成原视频时间戳链接", () => {
   assert.equal(app.sourceSegmentUrl("", [1, 2]), "");
 });
 
+test("normalizeRecipeListPayload 拒绝错误对象，避免渲染崩溃", () => {
+  const list = [{ id: "a", title: "菜" }];
+  assert.equal(app.normalizeRecipeListPayload(list), list);
+  assert.throws(() => app.normalizeRecipeListPayload({ error: "未授权" }), /未授权/);
+});
+
 test("shareRecipeUrl 优先使用远程后端地址", () => {
   assert.equal(app.shareRecipeUrl("红烧肉", { origin: "https://cook.example", base: "" }), "https://cook.example/r/%E7%BA%A2%E7%83%A7%E8%82%89");
   assert.equal(app.shareRecipeUrl("红烧肉", { origin: "https://cook.example", base: "/paoding" }), "https://cook.example/paoding/r/%E7%BA%A2%E7%83%A7%E8%82%89");

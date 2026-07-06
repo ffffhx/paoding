@@ -19,7 +19,7 @@ const authHeaders = () => settings.apiToken ? { 'X-Paoding-Token': settings.apiT
 // 统一 fetch 包装：自动注入 token 头，与调用方自带 headers 合并。
 const F = (p, opts = {}) => fetch(api(p), { ...opts, headers: { ...(opts.headers || {}), ...authHeaders() } });
 const API = {
-  list: () => F('/api/recipes').then(r => r.json()),
+  list: () => F('/api/recipes').then(j).then(normalizeRecipeListPayload),
   techniques: () => F('/api/techniques').then(r => r.json()),
   techniqueSummary: (name) => F('/api/techniques/' + encodeURIComponent(name) + '/summary', { method: 'POST' }).then(j),
   del: (id) => F('/api/recipes/' + encodeURIComponent(id), { method: 'DELETE' }),
@@ -45,6 +45,10 @@ const API = {
   importAll: (data) => F('/api/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(j),
   importRecipe: (jsonld) => F('/api/import-recipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonld }) }).then(j),
 };
+function normalizeRecipeListPayload(data) {
+  if (!Array.isArray(data)) throw new Error(data?.error || '菜谱列表格式错误');
+  return data;
+}
 async function exportData() {
   try {
     const [recipes, userdata] = await Promise.all([API.list(), API.userdataGet()]);
