@@ -122,6 +122,20 @@ node bin/paoding.mjs "https://www.bilibili.com/video/BVxxxx" --depth advanced
 
 > B站等平台反爬（HTTP 412）：`.env` 里设 `PAODING_COOKIES_FROM_BROWSER=chrome`，借用浏览器已登录的 cookie 即可。
 
+## 自动部署
+
+安卓 APK 默认打开 `https://124-221-36-36.anyip.dev:8443/paoding/`。云服务器上的 Caddy 把 `/paoding/*` 反代到 `127.0.0.1:14177`，这个端口由 Mac 上的 `com.paoding.tunnel` 通过 autossh 反向转发到本机 `4177`。实际 App 服务由 Mac 上的 `com.paoding.server` 跑 `node app/server.mjs`。
+
+服务端会兼容 `/paoding` 子路径：即使 Caddy 没有剥掉前缀，`/paoding/`、`/paoding/index.html` 和 `/paoding/api/*` 都会正常落到同一套 App。
+
+仓库内置自动部署 workflow：`.github/workflows/deploy.yml`。每次 push 到 `main` 会在这台 Mac 的 `paoding` self-hosted runner 上执行：
+
+1. `git pull --ff-only origin main` 更新 `/Users/bytedance/Code/paoding`
+2. `npm test`
+3. 重启 `com.paoding.server`
+4. 重启 `com.paoding.tunnel`
+5. 校验本机 `http://127.0.0.1:4177/api/recipes` 和公网 `https://124-221-36-36.anyip.dev:8443/paoding/api/recipes`
+
 ## 目录
 
 ```

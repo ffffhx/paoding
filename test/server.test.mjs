@@ -82,6 +82,20 @@ test("静态首页含庖丁", async () => {
   assert.ok((await r.text()).includes("庖丁"));
 });
 
+test("兼容 /paoding 子路径首页和 API", async () => {
+  const home = await fetch(BASE + "/paoding/");
+  assert.equal(home.status, 200);
+  assert.ok((await home.text()).includes("庖丁"));
+
+  const api = await fetch(BASE + "/paoding/api/recipes");
+  assert.equal(api.status, 200);
+  assert.deepEqual(await api.json(), []);
+
+  const sw = await fetch(BASE + "/paoding/sw.js");
+  assert.equal(sw.status, 200);
+  assert.match(await sw.text(), /Service Worker/);
+});
+
 test("recipes/ 目录禁止直接静态访问", async () => {
   assert.equal((await fetch(BASE + "/recipes/anything.json")).status, 403);
 });

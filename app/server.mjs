@@ -16,12 +16,25 @@ const RECIPES_DIR = process.env.PAODING_RECIPES_DIR || path.join(HERE, "recipes"
 const USERDATA_FILE = process.env.PAODING_USERDATA_FILE || path.join(HERE, "..", "paoding-userdata.json");
 const PORT = process.env.PAODING_PORT ? Number(process.env.PAODING_PORT) : 4177;
 const HOST = process.env.PAODING_HOST || "0.0.0.0"; // 默认局域网可达(手机用)；设 127.0.0.1 可锁本机
+const BASE_PATH = normalizeBasePath(process.env.PAODING_BASE_PATH || "/paoding"); // 兼容 Caddy/Capacitor 挂在 /paoding 子路径
 const MAX_RUNNING = Number(process.env.PAODING_MAX_JOBS || 2); // 同时解析上限，防资源耗尽
 const MAX_IMPORT_RECIPES = Number(process.env.PAODING_MAX_IMPORT || 5000); // 单次导入菜谱上限，防脏/超大备份写爆磁盘
 // 可选 API token：设了 PAODING_API_TOKEN 就要求 /api/* 带上正确 token；不设则不鉴权（向后兼容）。
 // 后端一旦经公网/隧道暴露，强烈建议设置。
 const API_TOKEN = process.env.PAODING_API_TOKEN || "";
 fs.mkdirSync(RECIPES_DIR, { recursive: true });
+
+function normalizeBasePath(value) {
+  const p = String(value || "").trim().replace(/\/+$/, "");
+  if (!p || p === "/") return "";
+  return p.startsWith("/") ? p : `/${p}`;
+}
+function stripBasePath(pathname) {
+  if (!BASE_PATH) return pathname;
+  if (pathname === BASE_PATH) return "/";
+  if (pathname.startsWith(`${BASE_PATH}/`)) return pathname.slice(BASE_PATH.length) || "/";
+  return pathname;
+}
 
 let config;
 try {
@@ -209,7 +222,7 @@ function serveStatic(res, pathname) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
-  const p = url.pathname;
+  const p = stripBasePath(url.pathname);
 
   // CORS：App(Capacitor WebView，源为 capacitor://localhost / http://localhost)跨域访问本机后端时放行
   res.setHeader("Access-Control-Allow-Origin", "*");

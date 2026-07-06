@@ -1,0 +1,55 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: paoding-local-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, macOS, paoding]
+    steps:
+      - name: Pull latest code into live checkout
+        run: |
+          set -euo pipefail
+          cd /Users/bytedance/Code/paoding
+          git fetch origin main
+          git pull --ff-only origin main
+
+      - name: Test
+        run: |
+          set -euo pipefail
+          cd /Users/bytedance/Code/paoding
+          npm test
+
+      - name: Restart local app service
+        run: |
+          set -euo pipefail
+          uid="$(id -u)"
+          launchctl kickstart -k "gui/$uid/com.paoding.server"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4177/api/recipes >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          tail -80 /tmp/paoding-server.log || true
+          exit 1
+
+      - name: Restart cloud tunnel and verify public URL
+        run: |
+          set -euo pipefail
+          uid="$(id -u)"
+          launchctl kickstart -k "gui/$uid/com.paoding.tunnel"
+          for i in $(seq 1 30); do
+            if curl -kfsS https://124-221-36-36.anyip.dev:8443/paoding/api/recipes >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          tail -80 /tmp/paoding-tunnel.log || true
+          exit 1
