@@ -184,6 +184,13 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--tomato)}
 .tech-card h3{margin:0 0 4px;font-size:18px}
 .tech-card .meta{color:var(--muted);font-size:12px;line-height:1.45}
 .tech-card>span{color:var(--tomato);font-weight:700;font-size:13px;white-space:nowrap}
+.tech-ai{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px}
+.tech-ai .btn{min-height:38px;font-size:14px}
+.tech-summary-result{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+.tech-summary-result>div:not(.meta){margin-bottom:10px}
+.tech-summary-result b{font-size:13px;color:var(--tomato)}
+.tech-summary-result p{margin:4px 0 0;color:var(--muted);font-size:14px;line-height:1.6}
+.tech-summary-result .meta,.tech-summary-result .muted{color:var(--muted);font-size:12px}
 .tech-occ{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 15px;margin-bottom:10px}
 .tech-occ .src{color:var(--muted);font-size:12px}
 .tech-occ h4{margin:4px 0 6px;font-size:16px}

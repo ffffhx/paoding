@@ -452,6 +452,68 @@ test("techniques 聚合全部菜谱步骤和 why", async () => {
   fs.rmSync(path.join(recipesDir, `${id}.json`), { force: true });
 });
 
+test("technique summary 走 LLM、命中缓存并随技法样本集合变化失效", async () => {
+  const cacheDir = path.join(dataRoot, "techniques-cache");
+  fs.rmSync(cacheDir, { recursive: true, force: true });
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const id1 = "技法归纳菜一";
+  const id2 = "技法归纳菜二";
+  const fp1 = path.join(recipesDir, `${id1}.json`);
+  const fp2 = path.join(recipesDir, `${id2}.json`);
+  fs.writeFileSync(fp1, JSON.stringify({
+    title: id1,
+    steps: [{ index: 1, title: "焯水", action: "排骨冷水下锅焯水。", why: { reason: "去腥并带走血沫。" } }],
+  }, null, 2));
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    assert.ok(String(input).endsWith("/chat/completions"));
+    const body = JSON.parse(String(init.body || "{}"));
+    assert.equal(body.response_format?.type, "json_object");
+    calls++;
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: JSON.stringify({
+        when: `用于去腥去血沫-${calls}`,
+        keys: "浮沫明显后捞出冲净",
+        pitfalls: "久煮会让肉变柴",
+      }) } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const url = "/api/techniques/" + encodeURIComponent("焯水") + "/summary";
+    let res = await request(url, { method: "POST" });
+    assert.equal(res.status, 200);
+    let data = await res.json();
+    assert.equal(data.cached, false);
+    assert.equal(data.summary.when, "用于去腥去血沫-1");
+    assert.equal(calls, 1);
+
+    res = await request(url, { method: "POST" });
+    assert.equal(res.status, 200);
+    data = await res.json();
+    assert.equal(data.cached, true);
+    assert.equal(data.summary.when, "用于去腥去血沫-1");
+    assert.equal(calls, 1);
+
+    fs.writeFileSync(fp2, JSON.stringify({
+      title: id2,
+      steps: [{ index: 2, title: "飞水", action: "牛肉飞水后冲洗浮沫。", why: { cue: "水面有浮沫。" } }],
+    }, null, 2));
+    res = await request(url, { method: "POST" });
+    assert.equal(res.status, 200);
+    data = await res.json();
+    assert.equal(data.cached, false);
+    assert.equal(data.summary.when, "用于去腥去血沫-2");
+    assert.equal(data.count, 2);
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(fp1, { force: true });
+    fs.rmSync(fp2, { force: true });
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});
+
 test("parse-url 非法链接 → 400", async () => {
   assert.equal((await request("/api/parse-url", J({ url: "notaurl" }))).status, 400);
 });

@@ -13,6 +13,12 @@ import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 import { FileJobStore, createJobQueue, createJobRecord, publicJob, TERMINAL_JOB_STATUSES } from "../src/jobs.mjs";
 import { mapSchemaRecipeToPaoding } from "../src/importRecipe.mjs";
 import { extractTechniques } from "../src/techniques.mjs";
+import {
+  isTechniqueSummaryCacheFresh,
+  normalizeTechniqueSummary,
+  techniqueCacheFileName,
+  techniqueOccurrenceSignature,
+} from "../src/techniqueSummary.mjs";
 import { backupFilename, packBackup, parseBackupTime, planBackupRotation, shouldRunBackup } from "../src/backups.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +27,7 @@ loadEnvFiles();
 const RECIPES_DIR = process.env.PAODING_RECIPES_DIR || path.join(HERE, "recipes");
 const JOBS_DIR = path.join(path.dirname(RECIPES_DIR), "jobs");
 const BACKUPS_DIR = path.join(path.dirname(RECIPES_DIR), "backups");
+const TECHNIQUES_CACHE_DIR = path.join(path.dirname(RECIPES_DIR), "techniques-cache");
 // 用户数据（收藏/笔记/评分/购物清单等）跨设备同步用；放项目根、不在 webDir 内，避免被静态服务或打包暴露
 const USERDATA_FILE = process.env.PAODING_USERDATA_FILE || path.join(HERE, "..", "paoding-userdata.json");
 const PORT = process.env.PAODING_PORT ? Number(process.env.PAODING_PORT) : 4177;
@@ -48,6 +55,7 @@ const LLM_RATE_LIMIT_WINDOW_MS = Number(process.env.PAODING_LLM_RATE_LIMIT_WINDO
 fs.mkdirSync(RECIPES_DIR, { recursive: true });
 fs.mkdirSync(JOBS_DIR, { recursive: true });
 fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+fs.mkdirSync(TECHNIQUES_CACHE_DIR, { recursive: true });
 
 function normalizeBasePath(value) {
   const p = String(value || "").trim().replace(/\/+$/, "");
@@ -464,7 +472,8 @@ function currentUser(req) {
   return req.paodingUser || DEFAULT_USER;
 }
 function rateLimitOk(req, res, p) {
-  const shouldLimit = (req.method === "POST" && LLM_ENDPOINTS.has(p)) || (req.method === "GET" && LIMITED_READ_ENDPOINTS.has(p));
+  const isTechniqueSummary = req.method === "POST" && /^\/api\/techniques\/[^/]+\/summary$/.test(p);
+  const shouldLimit = (req.method === "POST" && LLM_ENDPOINTS.has(p)) || isTechniqueSummary || (req.method === "GET" && LIMITED_READ_ENDPOINTS.has(p));
   if (!shouldLimit) return true;
   const hit = llmLimiter.take(`${clientIp(req)}:${currentUser(req)}`);
   if (hit.allowed) return true;
@@ -583,6 +592,66 @@ function aggregateTechniques() {
   return [...groups.entries()]
     .map(([technique, occurrences]) => ({ technique, count: occurrences.length, occurrences }))
     .sort((a, b) => b.count - a.count || a.technique.localeCompare(b.technique, "zh-CN"));
+}
+function techniqueSummaryCachePath(name) {
+  return path.join(TECHNIQUES_CACHE_DIR, techniqueCacheFileName(name));
+}
+function readTechniqueSummaryCache(name, signature) {
+  try {
+    const cache = JSON.parse(fs.readFileSync(techniqueSummaryCachePath(name), "utf8"));
+    return isTechniqueSummaryCacheFresh(cache, signature) ? cache : null;
+  } catch {
+    return null;
+  }
+}
+function writeTechniqueSummaryCache(name, payload) {
+  fs.mkdirSync(TECHNIQUES_CACHE_DIR, { recursive: true });
+  fs.writeFileSync(techniqueSummaryCachePath(name), JSON.stringify(payload, null, 2));
+}
+function techniqueSummarySamples(occurrences) {
+  return (occurrences || []).slice(0, 30).map((o, i) => {
+    const why = [o.why?.reason, o.why?.if_not, o.why?.cue].filter(Boolean).join(" / ");
+    return `${i + 1}. ${o.recipeTitle || o.recipeId} 第${o.stepIndex}步：${o.stepTitle || "未命名"}。做法：${o.action || "无"}。原理：${why || "无"}`;
+  }).join("\n");
+}
+async function summarizeTechnique(name) {
+  const technique = String(name || "").trim();
+  if (!technique) return { code: 400, body: { error: "技法名称为空" } };
+  const group = aggregateTechniques().find((g) => g.technique === technique);
+  if (!group) return { code: 404, body: { error: "还没有找到这个技法的样本" } };
+  const signature = techniqueOccurrenceSignature(group.occurrences);
+  const cached = readTechniqueSummaryCache(technique, signature);
+  if (cached) {
+    return { body: { technique, summary: cached.summary, cached: true, count: group.count } };
+  }
+
+  const raw = await chatJSON(config.llm, {
+    temperature: 0.2,
+    system: "你是中餐技法教练。只输出 JSON 对象，不要 markdown。请根据多个菜谱中同一技法的出现样本，归纳成短而实用的学习卡。",
+    user: `输出 schema:
+{
+  "when": "什么时候用：1-3句话",
+  "keys": "关键判断：1-3条，写成一句话或短句",
+  "pitfalls": "常见翻车点：1-3条，写成一句话或短句"
+}
+
+技法：${technique}
+样本：
+${techniqueSummarySamples(group.occurrences)}`,
+  });
+  const summary = normalizeTechniqueSummary(raw);
+  writeTechniqueSummaryCache(technique, {
+    technique,
+    signature,
+    count: group.count,
+    summary,
+    created_at: nowISO(),
+  });
+  return { body: { technique, summary, cached: false, count: group.count } };
+}
+function techniqueSummaryNameFromPath(p) {
+  const m = p.match(/^\/api\/techniques\/([^/]+)\/summary$/);
+  return m ? decodeURIComponent(m[1]) : "";
 }
 
 // ---------- 解析任务（持久化 + 排队 + 进度）----------
@@ -995,6 +1064,10 @@ export async function handleRequest(req, res) {
     if (req.method === "GET" && p === "/api/recipes") return sendJSON(res, 200, listRecipes());
     if (req.method === "GET" && p === "/api/backups") return sendJSON(res, 200, listBackups());
     if (req.method === "GET" && p === "/api/techniques") return sendJSON(res, 200, aggregateTechniques());
+    if (req.method === "POST" && /^\/api\/techniques\/[^/]+\/summary$/.test(p)) {
+      const out = await summarizeTechnique(techniqueSummaryNameFromPath(p));
+      return sendJSON(res, out.code || 200, out.body);
+    }
     if (req.method === "GET" && p === "/api/jobs") {
       const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") || 20) || 20));
       const jobTime = (j) => Date.parse(j.updated_at || j.finished_at || j.started_at || j.queued_at || j.created_at || "") || 0;

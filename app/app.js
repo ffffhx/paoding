@@ -21,6 +21,7 @@ const F = (p, opts = {}) => fetch(api(p), { ...opts, headers: { ...(opts.headers
 const API = {
   list: () => F('/api/recipes').then(r => r.json()),
   techniques: () => F('/api/techniques').then(r => r.json()),
+  techniqueSummary: (name) => F('/api/techniques/' + encodeURIComponent(name) + '/summary', { method: 'POST' }).then(j),
   del: (id) => F('/api/recipes/' + encodeURIComponent(id), { method: 'DELETE' }),
   startUrl: (url, depth, vision, images) => F('/api/parse-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth, vision: !!vision, images: !!images }) }).then(j),
   startFile: (file, depth, vision, images) => F('/api/parse-file', { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth, 'X-Vision': vision ? '1' : '0', 'X-Images': images ? '1' : '0' }, body: file }).then(j),
@@ -699,6 +700,10 @@ function openTechnique(t) {
     <div class="topbar"><button class="back">‹ 返回</button></div>
     <div class="detail-hd"><h2>${esc(t.technique)}</h2><div class="meta">${t.count} 次出现</div></div>
     <div style="padding:4px 16px 80px">
+      <div class="tech-ai">
+        <button class="btn ghost" data-tech-summary>AI 归纳要点</button>
+        <div class="tech-summary-result hidden"></div>
+      </div>
       ${(t.occurrences || []).map(o => {
         const why = whyExcerpt(o.why);
         return `<div class="tech-occ">
@@ -711,6 +716,30 @@ function openTechnique(t) {
       }).join('')}
     </div></div>`);
   p.querySelector('.back').onclick = () => p.remove();
+  const summaryBtn = p.querySelector('[data-tech-summary]');
+  const summaryBox = p.querySelector('.tech-summary-result');
+  summaryBtn.onclick = async () => {
+    const oldText = summaryBtn.textContent;
+    summaryBtn.disabled = true;
+    summaryBtn.textContent = '归纳中…';
+    summaryBox.classList.remove('hidden');
+    summaryBox.innerHTML = '<div class="muted">归纳中…</div>';
+    try {
+      const data = await API.techniqueSummary(t.technique);
+      const s = data.summary || {};
+      summaryBox.innerHTML = `
+        <div><b>什么时候用</b><p>${esc(s.when || '')}</p></div>
+        <div><b>关键判断</b><p>${esc(s.keys || '')}</p></div>
+        <div><b>常见翻车点</b><p>${esc(s.pitfalls || '')}</p></div>
+        <div class="meta">${data.cached ? '已读取缓存' : '已生成归纳'}</div>`;
+    } catch (e) {
+      summaryBox.classList.add('hidden');
+      toast('技法归纳失败：' + e.message);
+    } finally {
+      summaryBtn.disabled = false;
+      summaryBtn.textContent = oldText;
+    }
+  };
   p.querySelectorAll('[data-rid]').forEach(b => b.onclick = () => openRecipeAtStep(b.dataset.rid, Number(b.dataset.step)));
   $('#app').appendChild(p);
 }

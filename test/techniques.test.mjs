@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { TECHNIQUE_TERMS, extractTechniques } from "../src/techniques.mjs";
+import {
+  isTechniqueSummaryCacheFresh,
+  normalizeTechniqueSummary,
+  techniqueCacheFileName,
+  techniqueOccurrenceSignature,
+} from "../src/techniqueSummary.mjs";
 
 test("技法词表保持 30-50 个常见中餐技法", () => {
   assert.ok(TECHNIQUE_TERMS.length >= 30);
@@ -29,4 +35,37 @@ test("extractTechniques 扫描步骤文本和 why 文本，并按步骤去重", 
     { technique: "收汁", recipeId: "r1", stepIndex: 3 },
     { technique: "勾芡", recipeId: "r1", stepIndex: 3 },
   ]);
+});
+
+test("技法归纳缓存签名随出现集合变化失效", () => {
+  const sig1 = techniqueOccurrenceSignature([
+    { recipeId: "红烧肉", stepIndex: 2 },
+    { recipeId: "番茄炒蛋", stepIndex: 1 },
+  ]);
+  const sig1b = techniqueOccurrenceSignature([
+    { recipeId: "番茄炒蛋", stepIndex: 1 },
+    { recipeId: "红烧肉", stepIndex: 2 },
+  ]);
+  const sig2 = techniqueOccurrenceSignature([
+    { recipeId: "红烧肉", stepIndex: 2 },
+    { recipeId: "番茄炒蛋", stepIndex: 1 },
+    { recipeId: "青椒肉丝", stepIndex: 3 },
+  ]);
+  assert.equal(sig1, sig1b);
+  assert.notEqual(sig1, sig2);
+  assert.equal(isTechniqueSummaryCacheFresh({ signature: sig1, summary: { when: "x" } }, sig1), true);
+  assert.equal(isTechniqueSummaryCacheFresh({ signature: sig1, summary: { when: "x" } }, sig2), false);
+  assert.match(techniqueCacheFileName("焯水/飞水"), /^[A-Za-z0-9_-]+\.json$/);
+});
+
+test("normalizeTechniqueSummary 兼容中英文归纳字段", () => {
+  assert.deepEqual(normalizeTechniqueSummary({
+    "什么时候用": "去血沫时",
+    "关键判断": "水面有浮沫",
+    "常见翻车点": "久煮变柴",
+  }), {
+    when: "去血沫时",
+    keys: "水面有浮沫",
+    pitfalls: "久煮变柴",
+  });
 });
