@@ -38,6 +38,16 @@ _Turn any cooking video into step-by-step instructions that explain the **why** 
 
 **庖丁把两者缝在一起**：自动解析任意视频 × 每步深度原理讲解。你不只是照着做，而是**搞懂**——为什么油要七成热、为什么先焯水、为什么这步省了会翻车。
 
+| 维度 | 庖丁 | Mealie v3.13+ | ReciMe / Deglaze 类 | ATK / ChefSteps 类 |
+|---|---|---|---|---|
+| 视频音频转写 | ✅ | ✅ | ✅ | ❌ |
+| 画面级理解（VL/OCR） | ✅ 可选 | ❌ 主要用音频转写 | ❌/未见明确支持 | ❌ 人工制作内容 |
+| 每步状态截图 | ✅ 自动截原视频 | ❌ | ❌/少见 | ✅ 人工拍摄 |
+| 每步为什么 | ✅ 自动逐步解释 | ❌ | ❌ | ✅ 人工编辑 |
+| 中文平台（B站/抖音/小红书） | ✅ 重点支持 | ❌ | ❌ | ❌ |
+| 自托管零成本 | ✅ Ollama + whisper.cpp | ✅ 开源自托管，生态/多用户/i18n 更成熟 | ❌ 商业 App | ❌ 内容站/课程 |
+| 多用户/权限/i18n | ⚠️ 轻量单人优先 | ✅ 强 | ⚠️ 取决于产品 | ⚠️ 非菜谱管理系统 |
+
 <div align="center">
 <img src="docs/assets/why.png" width="300" alt="每步讲透为什么" />
 </div>
@@ -53,9 +63,10 @@ _Turn any cooking video into step-by-step instructions that explain the **why** 
 | 📱 **双端一套** | 手机装成 App（Capacitor 安卓 APK）+ 电脑桌面响应式；同一后端、改一处两端同步、检测到新版**自动更新**（免重装） |
 | 📖 **跟做模式** | 一步一屏 / 大字 / 屏幕常亮 / 进度条 / 左右滑 / 断点续做 / **本步用到的食材高亮** |
 | 🤔 **每步为什么** | 三段式原理讲解，关键信息（火候/时间/用量）高亮，术语可点开秒懂 |
+| 🎞 **跳回原视频** | 每步可跳回 B站 / YouTube 对应时间段；不支持时间戳的平台只打开原链接 |
 | 🎙 **免手操作** | 语音说「下一步 / 上一步 / 朗读」翻页，朗读当前步骤（洗手做菜刚需） |
 | ⏱ **多计时器** | 从步骤自动识别时长，多个并行、跨步骤保留、到点响铃+震动+系统通知 |
-| 💬 **AI 助手** | 对每步追问、🆘 翻车补救、食材替代（**该替就替、不能替直说**）、整菜设计、营养估算 |
+| 💬 **AI 助手** | 对每步追问、🆘 翻车补救、食材替代（**该替就替、不能替直说**）、整菜设计、结构化营养估算 |
 | 🧺 **食材 & 购物** | 份量缩放（按 `qty/unit` 精确重算）、购物清单**同名合并 + 按品类归类** |
 | ✏️ **可编辑** | AI 出错能直接改：标题/用量/步骤/讲解随手修正，保存即同步 |
 | ☁️ **同步 & 备份** | 收藏/笔记/评分/购物清单**跨设备共享**（手机↔电脑）；一键导出备份 / 导入恢复 |
@@ -63,6 +74,7 @@ _Turn any cooking video into step-by-step instructions that explain the **why** 
 | ⭐ **收藏 & 记录** | 收藏整菜 + 收藏单步技巧、笔记、做过打卡 + 评分、搜索/标签筛选 |
 | 🌙 **顺手** | 暗色模式、字号、朗读语速、装到主屏（PWA）、离线看已解析菜谱、双指缩放 |
 | 🛡 **诚实** | 视频没讲清的绝不臆造，如实标「视频未明确」；每步带置信度，靠推测的会标「⚠️ 推测」 |
+| 🧰 **自托管** | Docker / Compose 可复制部署；APK 首次启动填自己的后端地址，不再绑定私人服务 |
 
 <div align="center">
 <img src="docs/assets/home.png" width="270" alt="首页" />&nbsp;&nbsp;
@@ -122,6 +134,29 @@ node bin/paoding.mjs ./红烧肉.mp4
 node bin/paoding.mjs "https://www.bilibili.com/video/BVxxxx" --depth advanced
 ```
 
+### 方案 C：Docker 一键起
+
+```bash
+cp .env.example .env
+openssl rand -hex 16  # 填到 .env 的 PAODING_API_TOKEN
+
+mkdir -p models
+curl -L -o models/ggml-large-v3-turbo.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+
+docker compose up --build
+```
+
+默认会把菜谱写到 `./recipes/`，把用户数据写到 Docker volume。若本机已跑 Ollama，`.env` 里的 `PAODING_LLM_BASE_URL` 可用默认的 `http://host.docker.internal:11434/v1`。
+
+也可以让 compose 顺手起一个 Ollama：
+
+```bash
+docker compose --profile ollama up -d ollama
+docker compose exec ollama ollama pull qwen2.5:14b
+docker compose --profile ollama up --build paoding
+```
+
 ## 装到手机
 
 `node app/server.mjs` 启动后会打印**局域网地址**（如 `http://192.168.1.5:4177`）。手机连同一 WiFi 打开它 → 浏览器菜单「添加到主屏幕」→ 就是一个全屏 App。App 界面跑在手机、解析引擎跑在电脑，两者通过局域网通信。
@@ -132,19 +167,23 @@ node bin/paoding.mjs "https://www.bilibili.com/video/BVxxxx" --depth advanced
 
 安全边界：服务端会在抓网页、下载视频前拒绝本机、私网与链路本地地址，避免把后端当成内网探测器。`yt-dlp` 仍可能跟随平台侧重定向；首跳会被庖丁拦截，公网部署时仍建议放在受控网络与鉴权之后使用。
 
+### 安卓 APK
+
+Capacitor APK 不再写死任何个人后端地址；首次打开会加载本地设置页，填自己的后端地址和 API Token 后再使用。仓库也不再提供指向作者私人后端的 `paoding-debug.apk`，需要 APK 时请在本机执行 `npx cap sync android` 后自行打包。
+
 ## 自动部署
 
-安卓 APK 默认打开 `https://124-221-36-36.anyip.dev:8443/paoding/`。云服务器上的 Caddy 把 `/paoding/*` 反代到 `127.0.0.1:14177`，这个端口由 Mac 上的 `com.paoding.tunnel` 通过 autossh 反向转发到本机 `4177`。实际 App 服务由 Mac 上的 `com.paoding.server` 跑 `node app/server.mjs`。
+云服务器上的 Caddy 把 `/paoding/*` 反代到 `127.0.0.1:14177`，这个端口由 Mac 上的 `com.paoding.tunnel` 通过 autossh 反向转发到本机 `4177`。实际 App 服务由 Mac 上的 `com.paoding.server` 跑 `node app/server.mjs`。
 
 服务端会兼容 `/paoding` 子路径：即使 Caddy 没有剥掉前缀，`/paoding/`、`/paoding/index.html` 和 `/paoding/api/*` 都会正常落到同一套 App。
 
-仓库内置自动部署 workflow：`.github/workflows/deploy.yml`。每次 push 到 `main` 会在这台 Mac 的 `paoding` self-hosted runner 上执行：
+仓库内置自动部署 workflow：`.github/workflows/deploy.yml`。每次 push 到 `main` 会在这台 Mac 的 `paoding` self-hosted runner 上执行；路径、launchd 服务名和健康检查 URL 都集中在 workflow 顶部 `env:`，fork 后按需改一处即可。
 
-1. `git pull --ff-only origin main` 更新 `/Users/bytedance/Code/paoding`
+1. `git pull --ff-only origin main` 更新部署目录
 2. `npm test`
-3. 重启 `com.paoding.server`
-4. 重启 `com.paoding.tunnel`
-5. 校验本机 `http://127.0.0.1:4177/api/recipes` 和公网 `https://124-221-36-36.anyip.dev:8443/paoding/api/recipes`
+3. 重启 App launchd 服务
+4. 重启隧道 launchd 服务
+5. 校验本机和公网健康检查 URL
 
 ## 目录
 
@@ -153,6 +192,7 @@ src/            解析引擎（download / fetchText / transcribe / chef / explai
 bin/paoding.mjs 命令行入口
 app/            跟做 App / PWA（index.html + styles.css + app.js + sw.js + server.mjs）
 android/        Capacitor 安卓工程（npx cap sync android 后 gradlew 打 APK）
+Dockerfile      自托管镜像（内置 ffmpeg / yt-dlp / whisper.cpp）
 docs/           产品需求与技术方案
 ```
 
@@ -175,6 +215,10 @@ node --test        # 或 npm test
 - [x] 抽帧 + 视觉 OCR（qwen2.5-VL），兜住「没口播只有字幕」的视频（前端「读画面字幕」开关）
 - [x] 画面配图：时间戳定位每步 → 截「到位状态」截图；食材/小料识别 + 视觉定位裁特写（前端「提取画面截图」开关 / CLI `--images`）
 - [x] 本周膳食计划（周日历排菜 → 一键合并购物清单）
+- [x] 公网安全加固：强制 token、CORS 收紧、SSRF 过滤、LLM 接口限流
+- [x] Docker / Compose 自托管 + APK 后端地址运行时配置
+- [x] 每步跳回原视频时间段（B站 / YouTube 时间戳）
+- [x] 结构化营养估算落库、缓存失效、JSON-LD 导出
 - [ ] 更多真实视频调 prompt，沉淀跨视频「技法库」
 
 ## 致谢
