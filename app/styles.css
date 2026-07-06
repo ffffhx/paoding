@@ -36,7 +36,8 @@ input:focus,textarea:focus{outline:none;border-color:var(--tomato)}
 .btn[disabled]{opacity:.45;pointer-events:none}
 .parsebar .hint{color:var(--muted);font-size:12px;margin:8px 2px 2px}
 .linklike{color:var(--tomato);font-weight:600}
-.depth{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.depth{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center}
+.depth-lbl{color:var(--muted);font-size:12px;margin-right:2px}
 .chip{border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:13px;color:var(--muted);background:var(--card)}
 .chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 
@@ -135,6 +136,9 @@ input:focus,textarea:focus{outline:none;border-color:var(--tomato)}
 .fav-step{font-size:26px;padding:6px;color:var(--line)}.fav-step.on{color:var(--amber)}
 .voice-hint{position:fixed;left:50%;transform:translateX(-50%);bottom:120px;background:var(--herb);color:#fff;padding:8px 16px;border-radius:999px;font-size:13px;z-index:50}
 
+.parse-pill{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:var(--tomato);color:#fff;padding:10px 18px;border-radius:999px;font-size:14px;font-weight:600;z-index:65;box-shadow:var(--shadow);cursor:pointer;display:flex;align-items:center;gap:8px;max-width:88%}
+.parse-pill .ps{opacity:.9;font-weight:500}
+.parse-pill b{font-variant-numeric:tabular-nums}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:90px;background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:999px;font-size:14px;z-index:70;opacity:0;transition:opacity .2s;max-width:82%;text-align:center}
 .toast.show{opacity:1}
 
@@ -181,3 +185,67 @@ html[data-theme="dark"] .hl{color:var(--amber)}
 .tchip .tl{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tchip .tc{font-variant-numeric:tabular-nums;font-weight:700}
 .tchip .tx{padding:2px 6px;opacity:.8}
+
+/* ======================================================================
+   桌面 / 宽屏响应式（≥760px 生效；手机端完全不受影响）
+   同一套页面，宽屏下用更宽的版式：多列卡片网格 + 居中面板 + 鼠标 hover 反馈
+   ====================================================================== */
+@media (min-width: 760px){
+  /* 外壳加宽，两侧留白，顶部更有呼吸感 */
+  #app{max-width:1080px;padding-bottom:56px}
+  header{padding:30px 28px 8px}
+  .brand h1{font-size:34px}
+  .brand .sub{font-size:14px}
+  .parsebar{margin:14px 28px 8px;padding:16px 18px}
+  .parsebar .row{gap:10px}
+  .parsebar input{font-size:16px}
+  .tabs{gap:26px;padding:16px 30px 4px}
+  .tab{font-size:16px}
+  .searchrow{padding:12px 30px 2px}
+  .filters{padding:8px 30px 2px;flex-wrap:wrap;overflow:visible}
+
+  /* 菜谱 / 技巧：自适应多列卡片网格（桌面感的主要来源） */
+  #view-recipes.list, #view-skills.list{
+    display:grid;gap:16px;padding:22px 28px 90px;align-content:start;
+    grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));
+  }
+  .list .empty{grid-column:1/-1}
+  .skill{margin-bottom:0}
+
+  /* 购物清单 / 设置：窄条目更适合居中单列，不铺满 */
+  #view-shopping.list, #view-settings.list{
+    max-width:680px;margin:0 auto;padding:22px 20px 90px;
+  }
+
+  /* 详情页 & 跟做页：居中成一个有边界的面板，而非铺满整屏 */
+  .page, #cook{
+    max-width:860px;border-left:1px solid var(--line);border-right:1px solid var(--line);
+    box-shadow:0 0 60px rgba(42,39,36,.10);
+  }
+  #timerhud{max-width:860px}
+  /* 跟做页正文限制行宽，长行读起来更舒服 */
+  .cook-body{padding:8px 40px 24px}
+  .cook-body>*{max-width:680px;margin-left:auto;margin-right:auto}
+
+  /* 鼠标交互：hover 反馈（触屏端用 :active，不冲突） */
+  .rcard{transition:border-color .15s, box-shadow .15s, transform .15s}
+  .rcard:hover{border-color:var(--tomato);box-shadow:0 10px 30px rgba(42,39,36,.12);transform:translateY(-2px)}
+  .skill:hover{border-color:var(--tomato)}
+  .btn{transition:background .15s, filter .15s}
+  .btn:hover{filter:brightness(1.05)}
+  .btn.ghost:hover,.btn.sm:hover{filter:none;background:var(--line)}
+  .chip{cursor:pointer;transition:border-color .15s,color .15s}
+  .chip:hover{border-color:var(--tomato);color:var(--ink)}
+  .tab{cursor:pointer}
+  .tab:hover{color:var(--ink)}
+  .setrow:hover,.shop-item:hover{border-color:var(--tomato)}
+  .iconbtn{transition:background .15s}
+  .iconbtn:hover{background:var(--line)}
+  .star,.fav-step{cursor:pointer}
+}
+
+/* 更宽的屏幕再放一列 */
+@media (min-width: 1200px){
+  #app{max-width:1200px}
+  #view-recipes.list, #view-skills.list{grid-template-columns:repeat(auto-fill, minmax(340px, 1fr))}
+}

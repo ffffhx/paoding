@@ -10,7 +10,10 @@ const settings = Object.assign({ theme: 'light', fontScale: 1, tts: true, ttsRat
 function saveSettings() { store.set('settings', settings); }
 
 /* ---------- API ---------- */
-const api = (p) => (settings.apiBase || '') + p;
+// 自动推导当前页面所在的路径前缀：根部署("/","/index.html")→""；反代到子路径("/paoding/")→"/paoding"。
+// 这样 App 从 https://域名:8443/paoding/ 加载时，/api 调用会自动带上 /paoding 前缀，无需手工配。
+const BASE = location.pathname.replace(/\/[^/]*$/, '');
+const api = (p) => (settings.apiBase || BASE) + p;
 const API = {
   list: () => fetch(api('/api/recipes')).then(r => r.json()),
   del: (id) => fetch(api('/api/recipes/' + encodeURIComponent(id)), { method: 'DELETE' }),
@@ -198,7 +201,7 @@ function renderShopping() {
     </div>`).join('');
   box.querySelectorAll('.shop-item').forEach(node => node.onclick = () => { const i = +node.dataset.i; shopping[i].checked = !shopping[i].checked; store.set('shopping', shopping); renderShopping(); });
   $('#shopClear') && ($('#shopClear').onclick = () => { shopping = shopping.filter(x => !x.checked); store.set('shopping', shopping); renderShopping(); updateBadges(); });
-  $('#shopAll') && ($('#shopAll').onclick = () => { shopping = []; store.set('shopping', shopping); renderShopping(); updateBadges(); });
+  $('#shopAll') && ($('#shopAll').onclick = async () => { if (!(await confirmModal('清空整个购物清单？', '清空'))) return; shopping = []; store.set('shopping', shopping); renderShopping(); updateBadges(); });
 }
 function addToShopping(r, factor) {
   const names = new Set(shopping.map(x => x.name + '|' + x.from));
@@ -307,22 +310,29 @@ function openDetail(r) {
   p.querySelector('.back').onclick = close;
   p.querySelector('#btnBack2').onclick = close;
   p.querySelector('#dfav').onclick = (e) => { toggleRecipe(r.id); const on = favRecipes.includes(r.id); e.target.className = 'star ' + (on ? 'on' : ''); e.target.textContent = on ? '★' : '☆'; renderRecipes(); renderFilters(); };
-  p.querySelector('#dDel').onclick = async () => { if (!confirm('删除这道菜？')) return; try { await API.del(r.id); } catch { } close(); refresh(); toast('已删除'); };
+  p.querySelector('#dDel').onclick = async () => { if (!(await confirmModal('删除这道菜？此操作不可撤销。', '删除'))) return; try { await API.del(r.id); } catch { } close(); refresh(); toast('已删除'); };
   p.querySelector('#dShare').onclick = () => shareRecipe(r, factor);
   p.querySelector('#addShop').onclick = () => addToShopping(r, factor);
   const aiBox = p.querySelector('#aiBox');
-  const aiCall = async (btn, fn, title) => {
+  const aiCall = async (btn, fn, title, key) => {
     btn.disabled = true;
-    const node = el(`<div class="qa" style="border:1px solid var(--line);border-radius:14px;padding:12px 14px"><div class="q" style="font-weight:600;margin-bottom:6px">${title}</div><div class="a" style="color:var(--muted);white-space:pre-wrap">思考中…</div></div>`);
-    aiBox.innerHTML = ''; aiBox.appendChild(node);
+    let node = aiBox.querySelector(`[data-ai="${key}"]`);
+    if (!node) {
+      node = el(`<div class="qa" data-ai="${key}" style="border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:8px;position:relative">
+        <button class="ai-x" title="收起" style="position:absolute;top:6px;right:8px;color:var(--muted);font-size:16px;padding:4px 6px">✕</button>
+        <div class="q" style="font-weight:600;margin-bottom:6px;padding-right:22px">${title}</div>
+        <div class="a" style="color:var(--muted);white-space:pre-wrap">思考中…</div></div>`);
+      node.querySelector('.ai-x').onclick = () => node.remove();
+      aiBox.appendChild(node);
+    } else { node.querySelector('.a').textContent = '思考中…'; }
     try { const { answer } = await fn(); node.querySelector('.a').textContent = answer; }
     catch (e) { node.querySelector('.a').textContent = '失败：' + e.message; }
     btn.disabled = false;
   };
-  p.querySelector('#btnOverview').onclick = (e) => aiCall(e.target, () => API.overview(r.id), '💡 为什么这样设计');
-  p.querySelector('#btnNutri').onclick = (e) => aiCall(e.target, () => API.nutrition(r.id), '🥗 每份营养估算（粗略）');
+  p.querySelector('#btnOverview').onclick = (e) => aiCall(e.currentTarget, () => API.overview(r.id), '💡 为什么这样设计', 'overview');
+  p.querySelector('#btnNutri').onclick = (e) => aiCall(e.currentTarget, () => API.nutrition(r.id), '🥗 每份营养估算（粗略）', 'nutri');
   p.querySelector('#btnCook').onclick = () => { close(); openCook(r); };
-  p.querySelector('#notes').onchange = (e) => { m.notes = e.target.value; saveMeta(); };
+  p.querySelector('#notes').oninput = (e) => { m.notes = e.target.value; saveMeta(); };
   p.querySelector('#cookedBtn').onclick = (e) => { m.cooked = !m.cooked; if (m.cooked) m.cooked_at = new Date().toISOString(); saveMeta(); e.target.className = 'btn sm ' + (m.cooked ? '' : 'ghost'); e.target.textContent = m.cooked ? '✓ 已做过' : '标记做过'; renderRecipes(); };
   p.querySelectorAll('#rating .rs').forEach(rs => rs.onclick = () => { m.rating = +rs.dataset.r; saveMeta(); p.querySelectorAll('#rating .rs').forEach(x => x.classList.toggle('on', +x.dataset.r <= m.rating)); renderRecipes(); });
   if (base) p.querySelectorAll('.st').forEach(b => b.onclick = () => { factor = Math.max(0.5, factor + (b.dataset.s === '+' ? 0.5 : -0.5)); m.servingsFactor = factor; saveMeta(); p.querySelector('#svVal').textContent = Math.round(base * factor * 10) / 10; renderIng(); });
@@ -402,7 +412,7 @@ async function openCook(r) {
     box2.innerHTML = list.map(qa => `<div class="qa"><div class="q">问：${esc(qa.q)}</div><div class="a">${esc(qa.a)}</div></div>`).join('');
   }
   async function askStep(r, s) {
-    const q = prompt('对「' + s.title + '」这步有什么疑问？'); if (!q) return;
+    const q = await promptModal('对「' + s.title + '」这步问一句', '比如：可以不放糖吗？火太大了怎么补救？'); if (!q) return;
     (asks[s.index] = asks[s.index] || []).push({ q, a: '思考中…' }); renderQA(s);
     try { const { answer } = await API.ask(r.id, s.index, q); asks[s.index][asks[s.index].length - 1].a = answer; }
     catch (e) { asks[s.index][asks[s.index].length - 1].a = '没问出来：' + e.message; }
@@ -410,7 +420,7 @@ async function openCook(r) {
   }
   function next() { stopSpeak(); if (cur === steps.length - 1) { exit(); toast('做好啦，开动！🍜'); return; } cur++; saveProg(cur); render(); }
   async function sosStep(r, s) {
-    const problem = prompt('哪里翻车了？描述一下现象（如「粘锅了」「太咸」「不熟」）'); if (!problem) return;
+    const problem = await promptModal('🆘 哪里翻车了？', '描述现象，如：粘锅了 / 太咸 / 没熟 / 糊了', '求救'); if (!problem) return;
     (asks[s.index] = asks[s.index] || []).push({ q: '🆘 ' + problem, a: '想办法…' }); renderQA(s);
     try { const { answer } = await API.troubleshoot(r.id, s.index, problem); asks[s.index][asks[s.index].length - 1].a = answer; }
     catch (e) { asks[s.index][asks[s.index].length - 1].a = '没能给出建议：' + e.message; }
@@ -464,11 +474,54 @@ async function showTerm(term) {
 
 /* ================= 解析（带进度）================= */
 function openModal(inner, cls = '') { const ov = el(`<div class="overlay"><div class="modal ${cls}">${inner}</div></div>`); document.body.appendChild(ov); return ov; }
+// 应用内输入框（替代原生 prompt，装成 App 后更稳、更好看）。返回 Promise<string|null>
+function promptModal(title, placeholder = '', okText = '发送') {
+  return new Promise((resolve) => {
+    const ov = openModal(`<h3 style="text-align:left">${esc(title)}</h3>
+      <textarea id="pmInput" placeholder="${esc(placeholder)}" style="min-height:88px;margin:8px 0 0"></textarea>
+      <div class="mrow"><button class="btn ghost" id="pmCancel">取消</button><button class="btn" id="pmOk">${esc(okText)}</button></div>`, 'left');
+    const input = ov.querySelector('#pmInput');
+    const done = (v) => { ov.remove(); resolve(v); };
+    ov.querySelector('#pmCancel').onclick = () => done(null);
+    ov.querySelector('#pmOk').onclick = () => done(input.value.trim() || null);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); done(input.value.trim() || null); }
+      else if (e.key === 'Escape') { e.preventDefault(); done(null); }
+    });
+    setTimeout(() => input.focus(), 30);
+  });
+}
+// 应用内确认框（替代原生 confirm，用于删除/清空等破坏性操作）。返回 Promise<boolean>
+function confirmModal(title, okText = '确定') {
+  return new Promise((resolve) => {
+    const ov = openModal(`<h3 style="text-align:left">${esc(title)}</h3>
+      <div class="mrow"><button class="btn ghost" id="cmCancel">取消</button><button class="btn" id="cmOk" style="background:var(--tomato-d)">${esc(okText)}</button></div>`, 'left');
+    const done = (v) => { ov.remove(); resolve(v); };
+    ov.querySelector('#cmCancel').onclick = () => done(false);
+    ov.querySelector('#cmOk').onclick = () => done(true);
+  });
+}
 async function doParse(starter) {
   const ov = openModal(`<div class="pct" id="pct">0%</div><div class="stage" id="stage">发起解析…</div>
     <div class="pbar"><div id="bar"></div></div>
-    <p style="color:var(--muted);font-size:12px">别关页面，解析中可放一边</p>`);
-  const setP = (pct, stage) => { $('#pct', ov).textContent = Math.round(pct) + '%'; $('#bar', ov).style.width = pct + '%'; if (stage) $('#stage', ov).textContent = stage; };
+    <p style="color:var(--muted);font-size:12px">解析约需 1–3 分钟，别关页面</p>
+    <div class="mrow"><button class="btn ghost" id="pMin">放到后台继续</button></div>`);
+  // 「放到后台」：把进度收成一个悬浮小药丸，先去浏览别的菜谱，点药丸再展开
+  let pill = null, lastPct = 0, lastStage = '解析中';
+  const showPill = () => {
+    if (pill) return;
+    pill = el(`<div class="parse-pill">🍳 <span class="ps">${esc(lastStage)}</span> <b>${lastPct}%</b></div>`);
+    pill.onclick = () => { ov.style.display = 'flex'; pill.remove(); pill = null; };
+    document.body.appendChild(pill);
+  };
+  ov.querySelector('#pMin').onclick = () => { ov.style.display = 'none'; showPill(); };
+  const setP = (pct, stage) => {
+    lastPct = Math.round(pct); if (stage) lastStage = stage;
+    $('#pct', ov).textContent = lastPct + '%'; $('#bar', ov).style.width = pct + '%';
+    if (stage) $('#stage', ov).textContent = stage;
+    if (pill) { pill.querySelector('b').textContent = lastPct + '%'; pill.querySelector('.ps').textContent = lastStage; }
+  };
+  const cleanup = () => { ov.remove(); if (pill) { pill.remove(); pill = null; } };
   try {
     const { jobId } = await starter();
     await new Promise((resolve, reject) => {
@@ -481,10 +534,10 @@ async function doParse(starter) {
       };
       es.onerror = () => { es.close(); reject(new Error('连接中断')); };
     }).then(async (recipe) => {
-      recipes = await API.list(); renderAll(); ov.remove(); toast('解析完成：' + (recipe.title || ''));
+      recipes = await API.list(); renderAll(); cleanup(); toast('解析完成：' + (recipe.title || ''));
       const found = recipes.find(x => x.title === recipe.title); if (found) openDetail(found);
     });
-  } catch (e) { ov.remove(); toast('解析失败：' + e.message); }
+  } catch (e) { cleanup(); toast('解析失败：' + e.message); }
 }
 function stageLabel(stage, message) {
   const map = { acquire: '下载 & 抽取音频', transcribe: '语音转文字', structure: '整理成步骤', explain: '逐步生成「为什么」', done: '完成' };
@@ -516,6 +569,7 @@ function init() {
   initTabs();
   $('#depth').onclick = (e) => { const c = e.target.closest('.chip'); if (!c) return; depth = c.dataset.d; syncDepthChips(); };
   $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast('请粘贴 http(s) 视频链接'); return; } doParse(() => API.startUrl(u, depth)); $('#url').value = ''; };
+  $('#url').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#parseUrl').click(); } });
   $('#fileBtn').onclick = () => $('#file').click();
   $('#file').onchange = (e) => { const f = e.target.files[0]; if (f) doParse(() => API.startFile(f, depth)); e.target.value = ''; };
   $('#search').oninput = (e) => { filter.q = e.target.value.trim(); renderRecipes(); };
@@ -526,8 +580,21 @@ function init() {
     if (shared) { $('#url').value = shared[0]; history.replaceState(null, '', location.pathname); setTimeout(() => $('#parseUrl').click(), 400); }
   } catch { }
   refresh();
-  // PWA
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
+  // PWA + 自动更新：检测到新版本就自动刷新（跟做/弹窗中途不打断，等忙完或下次打开）
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      const check = () => { try { reg.update(); } catch { } };
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); }); // 回到前台时查更新
+      setInterval(check, 60 * 60 * 1000); // 每小时兜底查一次
+    }).catch(() => { });
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      // 正在跟做或有弹窗时别硬刷，避免打断；等下次打开自然生效
+      if (document.getElementById('cook') || document.querySelector('.overlay')) { toast('🆕 新版本已就绪，下次打开生效'); return; }
+      refreshing = true; toast('更新到新版本…'); location.reload();
+    });
+  }
   let deferred = null;
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferred = e; showInstall(deferred); });
 }

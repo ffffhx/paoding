@@ -1,5 +1,5 @@
 /* 庖丁 Service Worker —— 应用外壳网络优先(可更新) + 已解析菜谱离线可用 */
-const VER = 'paoding-v3';
+const VER = 'paoding-v7';
 const SHELL = [
   './index.html', './styles.css', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png',
@@ -28,9 +28,12 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.pathname.startsWith('/api/progress/')) return; // SSE 不拦
-  if (url.pathname.startsWith('/api/') && url.pathname !== '/api/recipes') return; // AI 调用直连
-  if (url.pathname === '/api/recipes') { e.respondWith(networkFirst(req)); return; }
+  // 反代到子路径(如 /paoding)时 pathname 会带前缀，这里取 /api/ 之后的部分判断，兼容根部署与子路径部署
+  const i = url.pathname.indexOf('/api/');
+  const apiPath = i >= 0 ? url.pathname.slice(i) : '';
+  if (apiPath.startsWith('/api/progress/')) return; // SSE 不拦
+  if (apiPath.startsWith('/api/') && apiPath !== '/api/recipes') return; // AI 调用直连
+  if (apiPath === '/api/recipes') { e.respondWith(networkFirst(req)); return; }
   // 应用外壳与同源资源：网络优先，离线回退缓存/首页
   e.respondWith(networkFirst(req, './index.html'));
 });
