@@ -13,6 +13,7 @@ _Turn any cooking video into step-by-step instructions that explain the **why** 
 <img src="https://img.shields.io/badge/PWA-可装到手机主屏-6A8D3F" />
 <img src="https://img.shields.io/badge/本地零成本-Ollama%20%2B%20whisper.cpp-2A2724" />
 <img src="https://img.shields.io/badge/Node-22%2B-8A817A" />
+<img src="https://github.com/ffffhx/paoding/actions/workflows/test.yml/badge.svg" alt="test" />
 </p>
 
 <img src="docs/assets/cook.gif" width="300" alt="跟做模式演示" />
