@@ -6,7 +6,7 @@ const store = {
   get(k, d) { try { const v = JSON.parse(localStorage.getItem('paoding.' + k)); return v ?? d; } catch { return d; } },
   set(k, v) { localStorage.setItem('paoding.' + k, JSON.stringify(v)); },
 };
-const settings = Object.assign({ theme: 'light', fontScale: 1, tts: true, ttsRate: 1, apiBase: '', depth: 'balanced' }, store.get('settings', {}));
+const settings = Object.assign({ theme: 'light', fontScale: 1, tts: true, ttsRate: 1, apiBase: '', apiToken: '', depth: 'balanced' }, store.get('settings', {}));
 function saveSettings() { store.set('settings', settings); }
 
 /* ---------- API ---------- */
@@ -14,20 +14,24 @@ function saveSettings() { store.set('settings', settings); }
 // 这样 App 从 https://域名:8443/paoding/ 加载时，/api 调用会自动带上 /paoding 前缀，无需手工配。
 const BASE = location.pathname.replace(/\/[^/]*$/, '');
 const api = (p) => (settings.apiBase || BASE) + p;
+// 可选 API token：服务端设了 PAODING_API_TOKEN 时，所有 /api/* 都要带上（走 X-Paoding-Token 头）。
+const authHeaders = () => settings.apiToken ? { 'X-Paoding-Token': settings.apiToken } : {};
+// 统一 fetch 包装：自动注入 token 头，与调用方自带的 headers 合并。
+const F = (p, opts = {}) => fetch(api(p), { ...opts, headers: { ...(opts.headers || {}), ...authHeaders() } });
 const API = {
-  list: () => fetch(api('/api/recipes')).then(r => r.json()),
-  del: (id) => fetch(api('/api/recipes/' + encodeURIComponent(id)), { method: 'DELETE' }),
-  startUrl: (url, depth) => fetch(api('/api/parse-url'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth }) }).then(j),
-  startFile: (file, depth) => fetch(api('/api/parse-file'), { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth }, body: file }).then(j),
-  ask: (recipeId, stepIndex, question) => fetch(api('/api/ask'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, question }) }).then(j),
-  substitute: (recipeId, ingredient) => fetch(api('/api/substitute'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, ingredient }) }).then(j),
-  term: (term) => fetch(api('/api/term'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ term }) }).then(j),
-  troubleshoot: (recipeId, stepIndex, problem) => fetch(api('/api/troubleshoot'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, problem }) }).then(j),
-  nutrition: (recipeId) => fetch(api('/api/nutrition'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
-  overview: (recipeId) => fetch(api('/api/overview'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
-  userdataGet: () => fetch(api('/api/userdata')).then(r => r.json()).catch(() => ({})),
-  userdataPut: (data) => fetch(api('/api/userdata'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).catch(() => { }),
-  importAll: (data) => fetch(api('/api/import'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(j),
+  list: () => F('/api/recipes').then(r => r.json()),
+  del: (id) => F('/api/recipes/' + encodeURIComponent(id), { method: 'DELETE' }),
+  startUrl: (url, depth) => F('/api/parse-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth }) }).then(j),
+  startFile: (file, depth) => F('/api/parse-file', { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth }, body: file }).then(j),
+  ask: (recipeId, stepIndex, question) => F('/api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, question }) }).then(j),
+  substitute: (recipeId, ingredient) => F('/api/substitute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, ingredient }) }).then(j),
+  term: (term) => F('/api/term', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ term }) }).then(j),
+  troubleshoot: (recipeId, stepIndex, problem) => F('/api/troubleshoot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, problem }) }).then(j),
+  nutrition: (recipeId) => F('/api/nutrition', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
+  overview: (recipeId) => F('/api/overview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
+  userdataGet: () => F('/api/userdata').then(r => r.json()).catch(() => ({})),
+  userdataPut: (data) => F('/api/userdata', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).catch(() => { }),
+  importAll: (data) => F('/api/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(j),
 };
 async function exportData() {
   try {
@@ -276,6 +280,8 @@ function renderSettings() {
         <span class="chip ${settings.depth === 'advanced' ? 'on' : ''}" data-d="advanced">进阶原理</span></div></div>
     <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">后端地址</div><div class="desc">手机端填电脑的「局域网地址」（启动服务器时会打印）；本机留空即可</div></div>
       <input type="text" id="apiBase" placeholder="如 http://192.168.1.5:4177" value="${esc(settings.apiBase)}" style="margin-top:8px"></div>
+    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">API Token</div><div class="desc">后端设了 PAODING_API_TOKEN 才需要填（公网/隧道暴露时建议开启）；本机局域网可留空</div></div>
+      <input type="password" id="apiToken" placeholder="与服务端 PAODING_API_TOKEN 一致" value="${esc(settings.apiToken)}" style="margin-top:8px"></div>
     <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">数据备份</div><div class="desc">把全部菜谱与收藏导出成一个文件；换设备或搬后端时可导入恢复</div></div>
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="btn ghost sm" id="btnExport">⬇ 导出备份</button>
@@ -288,6 +294,7 @@ function renderSettings() {
   box.querySelectorAll('[data-tr]').forEach(b => b.onclick = () => { settings.ttsRate = Math.min(1.6, Math.max(0.6, settings.ttsRate + (b.dataset.tr === '+' ? 0.1 : -0.1))); saveSettings(); renderSettings(); });
   $('#setDepth').querySelectorAll('.chip').forEach(c => c.onclick = () => { settings.depth = c.dataset.d; depth = c.dataset.d; saveSettings(); renderSettings(); syncDepthChips(); });
   $('#apiBase').onchange = (e) => { settings.apiBase = e.target.value.trim().replace(/\/$/, ''); saveSettings(); toast('已保存后端地址'); refresh(); };
+  $('#apiToken').onchange = (e) => { settings.apiToken = e.target.value.trim(); saveSettings(); toast('已保存 API Token'); refresh(); };
   $('#btnExport').onclick = exportData;
   $('#btnImport').onclick = () => $('#importFile').click();
   $('#importFile').onchange = (e) => { const f = e.target.files[0]; if (f) importData(f); e.target.value = ''; };
@@ -579,7 +586,7 @@ async function doParse(starter) {
   try {
     const { jobId } = await starter();
     await new Promise((resolve, reject) => {
-      const es = new EventSource(api('/api/progress/' + jobId));
+      const es = new EventSource(api('/api/progress/' + jobId) + (settings.apiToken ? '?token=' + encodeURIComponent(settings.apiToken) : ''));
       es.onmessage = (ev) => {
         const d = JSON.parse(ev.data);
         if (d.type === 'progress') setP(d.pct || 0, stageLabel(d.stage, d.message));

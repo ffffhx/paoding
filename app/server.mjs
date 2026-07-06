@@ -16,7 +16,22 @@ const USERDATA_FILE = path.join(HERE, "..", "paoding-userdata.json");
 const PORT = process.env.PAODING_PORT ? Number(process.env.PAODING_PORT) : 4177;
 const HOST = process.env.PAODING_HOST || "0.0.0.0"; // 默认局域网可达(手机用)；设 127.0.0.1 可锁本机
 const MAX_RUNNING = Number(process.env.PAODING_MAX_JOBS || 2); // 同时解析上限，防资源耗尽
+// 可选的 API token：设了 PAODING_API_TOKEN 就要求 /api/* 带上正确 token；
+// 不设则不鉴权（向后兼容）。后端一旦经公网/隧道暴露，强烈建议设置。
+const API_TOKEN = process.env.PAODING_API_TOKEN || "";
 fs.mkdirSync(RECIPES_DIR, { recursive: true });
+
+// 校验请求是否带了正确 token。token 可来自 Authorization: Bearer / X-Paoding-Token 头，
+// 或 ?token= 查询参数（SSE 的 EventSource 无法自定义请求头，只能走查询参数）。
+function authOk(req, url) {
+  if (!API_TOKEN) return true; // 未配置 = 不鉴权
+  const auth = req.headers["authorization"] || "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const provided = req.headers["x-paoding-token"] || bearer || url.searchParams.get("token") || "";
+  const a = Buffer.from(String(provided));
+  const b = Buffer.from(API_TOKEN);
+  return a.length === b.length && crypto.timingSafeEqual(a, b); // 常量时间比较，避免时序侧信道
+}
 
 let config;
 try {
@@ -131,8 +146,13 @@ const server = http.createServer(async (req, res) => {
   // CORS：App(Capacitor WebView，源为 capacitor://localhost / http://localhost)跨域访问本机后端时放行
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Filename,X-Depth");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Filename,X-Depth,X-Paoding-Token,Authorization");
   if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
+
+  // 鉴权：所有 /api/* 都要过（APK/静态资源不拦，PWA 外壳才能加载）。未配置 token 时直接放行。
+  if (p.startsWith("/api/") && !authOk(req, url)) {
+    return sendJSON(res, 401, { error: "未授权：缺少或错误的 API token" });
+  }
 
   try {
     // ---- 列表 ----
@@ -333,4 +353,5 @@ server.listen(PORT, HOST, () => {
   if (lan) console.log(`  局域网(手机同WiFi): http://${lan}:${PORT}`);
   console.log(`  LLM: ${config.llm.model} @ ${config.llm.baseUrl}`);
   console.log(`  ASR: ${config.asr.provider === "local" ? "本地 whisper.cpp" : config.asr.model}`);
+  console.log(`  API 鉴权: ${API_TOKEN ? "\x1b[32m已开启\x1b[0m（客户端需在设置里填同一 token）" : "\x1b[33m未开启\x1b[0m（公网/隧道暴露时请设 PAODING_API_TOKEN）"}`);
 });
