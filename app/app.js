@@ -113,6 +113,11 @@ function scaleAmount(amt, f) {
     let v = +n * f; v = Math.round(v * 10) / 10; return String(v);
   });
 }
+// 优先用结构化 qty/unit 精确缩放（新菜谱有）；没有就回退到对 amount 文本的数字缩放（旧菜谱兼容）
+function scaledAmount(i, f) {
+  if (i && Number.isFinite(i.qty)) return (Math.round(i.qty * f * 100) / 100) + (i.unit || '');
+  return scaleAmount(i && i.amount, f);
+}
 function baseServings(r) { const m = String(r.servings || '').match(/(\d+)/); return m ? +m[1] : null; }
 const DIFF = { easy: '简单', medium: '中等', hard: '有挑战' };
 function highlightInfo(text) {
@@ -254,7 +259,7 @@ function addToShopping(r, factor) {
   const names = new Set(shopping.map(x => x.name + '|' + x.from));
   (r.ingredients || []).forEach(i => {
     const key = i.name + '|' + r.title;
-    if (!names.has(key)) shopping.push({ name: i.name, amount: scaleAmount(i.amount, factor || 1), from: r.title, checked: false });
+    if (!names.has(key)) shopping.push({ name: i.name, amount: scaledAmount(i, factor || 1), from: r.title, checked: false });
   });
   store.set('shopping', shopping); updateBadges(); toast('已加入购物清单');
 }
@@ -343,7 +348,7 @@ function openDetail(r) {
       <div class="irow ${checked.has(idx) ? 'checked' : ''}" data-i="${idx}">
         <div class="ck ${checked.has(idx) ? 'on' : ''}">${checked.has(idx) ? '✓' : ''}</div>
         <span class="name">${esc(i.name)}${i.note ? `<span class="amt">（${esc(i.note)}）</span>` : ''}</span>
-        <span class="amt">${esc(scaleAmount(i.amount, factor) || '视频未明确')}</span>
+        <span class="amt">${esc(scaledAmount(i, factor) || '视频未明确')}</span>
         <button class="btn ghost sm" data-sub="${esc(i.name)}">替代</button>
       </div>`).join('') || '<div class="irow"><span class="name">视频未列出食材</span></div>';
     p.querySelectorAll('#ingBox .irow').forEach(row => {
@@ -450,7 +455,7 @@ function openEdit(r) {
     box.querySelectorAll('[data-i]').forEach(row => {
       const idx = +row.dataset.i;
       row.querySelector('.fName').oninput = (e) => d.ingredients[idx].name = e.target.value;
-      row.querySelector('.fAmt').oninput = (e) => d.ingredients[idx].amount = e.target.value;
+      row.querySelector('.fAmt').oninput = (e) => { d.ingredients[idx].amount = e.target.value; delete d.ingredients[idx].qty; delete d.ingredients[idx].unit; };
       row.querySelector('.fDel').onclick = () => { d.ingredients.splice(idx, 1); renderIng(); };
     });
   }
@@ -531,7 +536,7 @@ function shareRecipe(r, factor) {
 }
 function recipeToText(r, f) {
   let s = `【${r.title}】\n`;
-  s += (r.ingredients || []).map(i => `· ${i.name} ${scaleAmount(i.amount, f || 1) || ''}`).join('\n') + '\n\n';
+  s += (r.ingredients || []).map(i => `· ${i.name} ${scaledAmount(i, f || 1) || ''}`).join('\n') + '\n\n';
   (r.steps || []).forEach(x => { s += `${x.index}. ${x.title}：${x.action}\n`; if (x.why?.reason) s += `   为什么：${x.why.reason}\n`; });
   return s;
 }
