@@ -70,6 +70,12 @@ function readBody(req, limitMB = 800) {
     req.on("error", reject);
   });
 }
+// 读并解析 JSON 请求体；畸形 JSON 抛 400（而非落到外层 catch 变 500）。
+async function readJson(req) {
+  const text = (await readBody(req)).toString("utf8") || "{}";
+  try { return JSON.parse(text); }
+  catch { throw Object.assign(new Error("请求体不是合法 JSON"), { statusCode: 400 }); }
+}
 
 // ---------- 解析任务（带进度）----------
 const jobs = new Map(); // id -> {status, progress, recipe, error, listeners:Set}
@@ -127,7 +133,7 @@ const MIME = {
 function serveStatic(res, pathname) {
   let rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const abs = path.join(HERE, rel);
-  if (!abs.startsWith(HERE) || rel.startsWith("recipes/") || rel === "server.mjs") { res.writeHead(403); return res.end(); }
+  if (!(abs === HERE || abs.startsWith(HERE + path.sep)) || rel.startsWith("recipes/") || rel === "server.mjs") { res.writeHead(403); return res.end(); }
   if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) { res.writeHead(404); return res.end("Not found"); }
   const ext = path.extname(abs).toLowerCase();
   const headers = { "Content-Type": MIME[ext] || "application/octet-stream" };
@@ -181,6 +187,7 @@ const server = http.createServer(async (req, res) => {
       const id = decodeURIComponent(p.slice("/api/recipes/".length));
       const fp = path.join(RECIPES_DIR, `${path.basename(id)}.json`);
       const mp = path.join(RECIPES_DIR, `${path.basename(id)}.md`);
+      if (!fs.existsSync(fp)) return sendJSON(res, 404, { error: "菜谱不存在" }); // 不存在别谎报成功
       fs.rmSync(fp, { force: true }); fs.rmSync(mp, { force: true });
       return sendJSON(res, 200, { ok: true });
     }
@@ -190,7 +197,7 @@ const server = http.createServer(async (req, res) => {
       const id = decodeURIComponent(p.slice("/api/recipes/".length));
       const fp = path.join(RECIPES_DIR, `${path.basename(id)}.json`);
       if (!fs.existsSync(fp)) return sendJSON(res, 404, { error: "菜谱不存在" });
-      const patch = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const patch = await readJson(req);
       const cur = JSON.parse(fs.readFileSync(fp, "utf8"));
       const next = { ...cur, ...patch };
       delete next.id;
@@ -225,7 +232,7 @@ const server = http.createServer(async (req, res) => {
       const buf = await readBody(req);
       if (!buf.length) return sendJSON(res, 400, { error: "空文件" });
       const tmp = path.join(os.tmpdir(), `paoding-up-${Date.now()}-${slug(filename)}`);
-      fs.writeFileSync(tmp, buf);
+      await fs.promises.writeFile(tmp, buf); // 异步写，避免大文件同步写阻塞事件循环（卡住其他请求/SSE）
       const id = newJob();
       runJob(id, tmp, depth);
       const j = jobs.get(id);
@@ -254,7 +261,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AI：对某步追问 ----
     if (req.method === "POST" && p === "/api/ask") {
-      const { recipeId, stepIndex, question } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const { recipeId, stepIndex, question } = await readJson(req);
       const r = loadRecipe(recipeId);
       if (!r) return sendJSON(res, 404, { error: "菜谱不存在" });
       const s = (r.steps || []).find((x) => x.index === stepIndex);
@@ -269,7 +276,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AI：食材替代 ----
     if (req.method === "POST" && p === "/api/substitute") {
-      const { recipeId, ingredient } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const { recipeId, ingredient } = await readJson(req);
       const r = loadRecipe(recipeId);
       const answer = await chatText(config.llm, {
         system: "你是经验丰富的中餐厨师，实话实说、不糊弄。用户做某道菜时缺了某种食材/调料，针对性判断：\n" +
@@ -283,7 +290,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AI：术语微科普 ----
     if (req.method === "POST" && p === "/api/term") {
-      const { term } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const { term } = await readJson(req);
       const answer = await chatText(config.llm, {
         system: "你是食品科学科普作者。用3~4句通俗中文解释这个烹饪术语/原理是什么、为什么重要。",
         user: `解释一下烹饪里的「${term}」。`,
@@ -293,7 +300,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AI：翻车补救 ----
     if (req.method === "POST" && p === "/api/troubleshoot") {
-      const { recipeId, stepIndex, problem } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const { recipeId, stepIndex, problem } = await readJson(req);
       const r = loadRecipe(recipeId);
       const s = r && (r.steps || []).find((x) => x.index === stepIndex);
       const answer = await chatText(config.llm, {
@@ -305,7 +312,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AI：每份营养估算 ----
     if (req.method === "POST" && p === "/api/nutrition") {
-      const { recipeId } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const { recipeId } = await readJson(req);
       const r = loadRecipe(recipeId);
       if (!r) return sendJSON(res, 404, { error: "菜谱不存在" });
       const answer = await chatText(config.llm, {
@@ -317,7 +324,7 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AI：这道菜为什么这样设计（总览）----
     if (req.method === "POST" && p === "/api/overview") {
-      const { recipeId } = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const { recipeId } = await readJson(req);
       const r = loadRecipe(recipeId);
       if (!r) return sendJSON(res, 404, { error: "菜谱不存在" });
       const answer = await chatText(config.llm, {
@@ -344,7 +351,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(404); res.end("Not found");
   } catch (e) {
     console.error(`[${p}]`, e.message);
-    if (!res.headersSent) sendJSON(res, 500, { error: e.message });
+    if (!res.headersSent) sendJSON(res, e.statusCode || 500, { error: e.message });
   }
 });
 

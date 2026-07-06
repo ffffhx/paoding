@@ -44,6 +44,7 @@ function transcribeLocal(asr, audioPath, onProgress = () => {}) {
     child.on("close", (code) => {
       const txtPath = `${outBase}.txt`;
       if (code !== 0) {
+        fs.rmSync(txtPath, { force: true }); // 失败时也清掉可能已半写的 txt，别在 tmp 里留垃圾
         return reject(new Error(`whisper.cpp 退出码 ${code}：${err.slice(0, 400)}`));
       }
       try {
