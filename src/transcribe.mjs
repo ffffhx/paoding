@@ -8,7 +8,7 @@ import path from "node:path";
 //   provider=openai → OpenAI 兼容的 /audio/transcriptions（Whisper 云端）
 export async function transcribe(asr, audioPath, onProgress = () => {}) {
   if (asr.provider === "local") return transcribeLocal(asr, audioPath, onProgress);
-  return transcribeCloud(asr, audioPath);
+  return transcribeCloud(asr, audioPath, onProgress);
 }
 
 // ---- 本地 whisper.cpp ----
@@ -59,15 +59,47 @@ function transcribeLocal(asr, audioPath, onProgress = () => {}) {
 }
 
 // ---- 云端 OpenAI 兼容 ----
-async function transcribeCloud(asr, audioPath) {
-  const buf = fs.readFileSync(audioPath);
-  const sizeMB = buf.length / (1024 * 1024);
-  if (sizeMB > 24) {
-    console.warn(`  · 音频约 ${sizeMB.toFixed(1)}MB，可能超过接口上限；长视频建议后续做分片。`);
+// OpenAI 的 /audio/transcriptions 有 25MB 单文件上限，长视频必然超。
+// 超阈值就用 ffmpeg 按时长切片、逐段转写再拼接，兜住长视频。
+const ASR_MAX_MB = 24; // 略低于 25MB 硬上限留余量
+const SEG_SECONDS = 15 * 60; // 15 分钟一段；acquire 出的是 16k 单声道 64k mp3，一段 ≈ 7MB
+
+async function transcribeCloud(asr, audioPath, onProgress = () => {}) {
+  const sizeMB = fs.statSync(audioPath).size / (1024 * 1024);
+
+  // 未超限：单次请求（原路径）。
+  if (sizeMB <= ASR_MAX_MB) {
+    onProgress({ pct: 10, message: "语音转文字…" });
+    const text = await transcribeChunk(asr, audioPath);
+    onProgress({ pct: 100, message: "语音转文字…" });
+    if (!text.trim()) throw new Error("ASR 返回空转写文本。");
+    return text.trim();
   }
 
+  // 超限：切片 → 逐段转写 → 拼接。
+  console.warn(`  · 音频约 ${sizeMB.toFixed(1)}MB，超过接口上限，自动按 ${SEG_SECONDS / 60} 分钟分片转写。`);
+  const { chunks, cleanup } = await splitAudio(audioPath, SEG_SECONDS);
+  try {
+    const parts = [];
+    for (let i = 0; i < chunks.length; i++) {
+      onProgress({ pct: Math.round((i / chunks.length) * 100), message: `语音转文字…（分片 ${i + 1}/${chunks.length}）` });
+      const t = await transcribeChunk(asr, chunks[i]);
+      if (t.trim()) parts.push(t.trim());
+    }
+    onProgress({ pct: 100, message: "语音转文字…" });
+    const text = parts.join("\n").trim();
+    if (!text) throw new Error("ASR 分片转写全部为空。");
+    return text;
+  } finally {
+    cleanup();
+  }
+}
+
+// 单个音频文件 → 文本（一次 OpenAI 兼容请求）。
+async function transcribeChunk(asr, filePath) {
+  const buf = fs.readFileSync(filePath);
   const form = new FormData();
-  form.append("file", new Blob([buf]), path.basename(audioPath));
+  form.append("file", new Blob([buf]), path.basename(filePath));
   form.append("model", asr.model);
   form.append("prompt", "这是一段中文做菜教学视频，包含食材、用量、火候和步骤。");
 
@@ -81,7 +113,34 @@ async function transcribeCloud(asr, audioPath) {
     throw new Error(`ASR 请求失败 ${res.status}：${detail.slice(0, 500)}`);
   }
   const data = await res.json().catch(() => null);
-  const text = data?.text ?? "";
-  if (!text.trim()) throw new Error("ASR 返回空转写文本。");
-  return text.trim();
+  return data?.text ?? "";
+}
+
+// 用 ffmpeg 按 segSeconds 把音频切成多段 mp3；返回有序分片路径 + 清理函数。
+function splitAudio(audioPath, segSeconds) {
+  return new Promise((resolve, reject) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-asr-seg-"));
+    const cleanup = () => fs.rmSync(dir, { recursive: true, force: true });
+    const pattern = path.join(dir, "chunk-%03d.mp3");
+    const args = [
+      "-y", "-i", audioPath,
+      "-f", "segment", "-segment_time", String(segSeconds),
+      "-c", "copy", "-reset_timestamps", "1",
+      pattern,
+    ];
+    const child = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+    let err = "";
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", (e) => { cleanup(); reject(new Error(`调用 ffmpeg 切片失败：${e.message}`)); });
+    child.on("close", (code) => {
+      if (code !== 0) { cleanup(); return reject(new Error(`ffmpeg 切片退出码 ${code}：${err.slice(-300)}`)); }
+      const chunks = fs
+        .readdirSync(dir)
+        .filter((f) => f.startsWith("chunk-") && f.endsWith(".mp3"))
+        .sort()
+        .map((f) => path.join(dir, f));
+      if (!chunks.length) { cleanup(); return reject(new Error("ffmpeg 切片未产出任何分片。")); }
+      resolve({ chunks, cleanup });
+    });
+  });
 }
