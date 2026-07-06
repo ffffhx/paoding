@@ -76,7 +76,7 @@ function saveMealPlan() { store.set('mealPlan', mealPlan); }
 let meta = store.get('meta', {}); // {recipeId:{cooked,cooked_at,rating,notes,ingChecked:[]}}
 let depth = settings.depth;
 let curTab = 'recipes';
-let filter = { q: '', tag: '' };
+let filter = { q: '', tag: '', ingredients: '', sort: 'recent' };
 const rmeta = (id) => (meta[id] = meta[id] || {});
 function saveMeta() { store.set('meta', meta); }
 const stepKey = (id, i) => id + '#' + i;
@@ -198,6 +198,17 @@ function parseSeconds(t) {
   if (!t) return 0; t = String(t);
   const m = t.match(/(\d+)\s*分钟?/), s = t.match(/(\d+)\s*秒/), h = t.match(/(\d+)\s*小时/);
   return (h ? +h[1] * 3600 : 0) + (m ? +m[1] * 60 : 0) + (s ? +s[1] : 0);
+}
+function parseDurationMinutes(v) {
+  if (v == null || v === '') return null;
+  if (Number.isFinite(Number(v))) return Math.max(0, Number(v));
+  const s = String(v).trim();
+  const iso = s.match(/^P(?:(\d+(?:\.\d+)?)D)?T?(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$/i);
+  if (iso && (iso[1] || iso[2] || iso[3] || iso[4])) {
+    return Math.round(((Number(iso[1] || 0) * 24 * 60) + (Number(iso[2] || 0) * 60) + Number(iso[3] || 0) + (Number(iso[4] || 0) / 60)) * 10) / 10;
+  }
+  const sec = parseSeconds(s);
+  return sec ? Math.round(sec / 6) / 10 : null;
 }
 function scaleAmount(amt, f) {
   if (!amt || f === 1) return amt;
@@ -376,29 +387,97 @@ function stopSpeak() { if ('speechSynthesis' in window) speechSynthesis.cancel()
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 /* ================= 首页 ================= */
-function matchFilter(r) {
-  if (filter.tag === '__fav') { if (!favRecipes.includes(r.id)) return false; }
-  else if (filter.tag === '__cooked') { if (!rmeta(r.id).cooked) return false; }
-  else if (filter.tag && !(r.tags || []).includes(filter.tag) && r.difficulty !== filter.tag && r.cuisine !== filter.tag) return false;
-  // 搜索词对所有筛选都生效（含「★收藏」「✓做过」下）；此前这两个分支提前 return 导致搜索失效
-  if (filter.q) { const hay = (r.title + ' ' + (r.tags || []).join(' ') + ' ' + (r.ingredients || []).map(i => i.name).join(' ')); if (!hay.includes(filter.q)) return false; }
+function splitFilterKeywords(q) {
+  return String(q || '').split(/[,，、]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
+}
+function recipeIngredientText(r) {
+  return (r.ingredients || []).map(i => `${i.name || ''} ${i.amount || ''} ${i.note || ''}`).join(' ').toLowerCase();
+}
+function recipeTotalTimeMin(r) {
+  const direct = parseDurationMinutes(r.total_time_min ?? r.total_time ?? r.totalTime ?? r.duration);
+  if (direct != null) return direct;
+  let sum = 0, found = false;
+  for (const s of (r.steps || [])) {
+    const v = parseDurationMinutes(s.duration ?? s.time ?? s.params?.time);
+    if (v != null) { sum += v; found = true; }
+  }
+  return found ? Math.round(sum * 10) / 10 : null;
+}
+function recipeCreatedMs(r) {
+  const ts = Date.parse(r.created_at || r.createdAt || '');
+  return Number.isFinite(ts) ? ts : null;
+}
+function recipeMeta(ctx, id) {
+  const m = ctx && ctx.meta && ctx.meta[id];
+  return m && typeof m === 'object' ? m : {};
+}
+function compareNumber(a, b, dir = 'asc') {
+  const ak = Number.isFinite(a), bk = Number.isFinite(b);
+  if (!ak && !bk) return 0;
+  if (!ak) return 1;
+  if (!bk) return -1;
+  return dir === 'desc' ? b - a : a - b;
+}
+function compareRecent(a, b) {
+  const c = compareNumber(recipeCreatedMs(a), recipeCreatedMs(b), 'desc');
+  return c || String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN');
+}
+function matchRecipeFilter(r, opts = {}, ctx = {}) {
+  const tag = opts.tag || '';
+  const m = recipeMeta(ctx, r.id);
+  const faved = Array.isArray(ctx.favRecipes) && ctx.favRecipes.includes(r.id);
+  if (tag === '__fav') { if (!faved) return false; }
+  else if (tag === '__cooked') { if (!m.cooked) return false; }
+  else if (tag === '__uncooked') { if (m.cooked) return false; }
+  else if (tag === '__nutrition') { if (!r.nutrition?.per_serving) return false; }
+  else if (tag && !(r.tags || []).includes(tag) && r.difficulty !== tag && r.cuisine !== tag) return false;
+
+  const q = String(opts.q || '').trim().toLowerCase();
+  if (q) {
+    const hay = `${r.title || ''} ${(r.tags || []).join(' ')} ${recipeIngredientText(r)} ${r.cuisine || ''} ${r.difficulty || ''}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+
+  const ingredientKeys = splitFilterKeywords(opts.ingredients);
+  if (ingredientKeys.length) {
+    const ingredients = recipeIngredientText(r);
+    if (!ingredientKeys.every(k => ingredients.includes(k))) return false;
+  }
   return true;
+}
+function filterAndSortRecipes(list, opts = {}, ctx = {}) {
+  const items = (Array.isArray(list) ? list : []).filter(r => matchRecipeFilter(r, opts, ctx));
+  const sort = opts.sort || 'recent';
+  return items.sort((a, b) => {
+    if (sort === 'rating') {
+      const c = compareNumber(Number(recipeMeta(ctx, a.id).rating), Number(recipeMeta(ctx, b.id).rating), 'desc');
+      return c || compareRecent(a, b);
+    }
+    if (sort === 'time') {
+      const c = compareNumber(recipeTotalTimeMin(a), recipeTotalTimeMin(b), 'asc');
+      return c || String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN');
+    }
+    if (sort === 'name') return String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN') || compareRecent(a, b);
+    return compareRecent(a, b);
+  });
 }
 function renderFilters() {
   const tags = new Set(); recipes.forEach(r => (r.tags || []).forEach(t => tags.add(t)));
-  const chips = [['', '全部'], ['__fav', '★ 收藏'], ['__cooked', '✓ 做过'], ...[...tags].slice(0, 12).map(t => [t, t])];
+  const chips = [['', '全部'], ['__fav', '★ 已收藏'], ['__cooked', '✓ 做过'], ['__uncooked', '未做过'], ['__nutrition', '有营养信息'], ...[...tags].slice(0, 12).map(t => [t, t])];
   $('#filters').innerHTML = chips.map(([v, l]) => `<span class="chip ${filter.tag === v ? 'on' : ''}" data-f="${esc(v)}">${esc(l)}</span>`).join('');
   $('#filters').querySelectorAll('.chip').forEach(c => c.onclick = () => { filter.tag = c.dataset.f; renderFilters(); renderRecipes(); });
 }
 function renderRecipes() {
   const box = $('#view-recipes');
-  const items = recipes.filter(matchFilter);
+  const items = filterAndSortRecipes(recipes, filter, { meta, favRecipes });
   box.innerHTML = '';
   renderRecentJobs(box);
   if (!recipes.length) { box.insertAdjacentHTML('beforeend', '<div class="empty">还没有菜谱。<br>粘贴一个做菜视频链接，或上传本地视频开始解析。</div>'); return; }
   if (!items.length) { box.insertAdjacentHTML('beforeend', '<div class="empty">没有匹配的菜谱。</div>'); return; }
   items.forEach(r => {
     const m = rmeta(r.id), faved = favRecipes.includes(r.id);
+    const totalMin = recipeTotalTimeMin(r);
+    const timeText = totalMin != null ? `<span>⏱ 约${esc(totalMin)}分钟</span>` : (filter.sort === 'time' ? '<span>⏱ 未知</span>' : '');
     // 封面：取最后一个有截图的步骤（通常是接近成品的状态图）
     const cover = (r.steps || []).slice().reverse().find(s => s.image);
     const card = el(`<div class="rcard">
@@ -407,7 +486,7 @@ function renderRecipes() {
         <h3>${esc(r.title || '未命名')}</h3>
         <div class="meta">
           ${r.difficulty ? `<span class="tag diff-${esc(r.difficulty)}">${esc(DIFF[r.difficulty] || r.difficulty)}</span>` : ''}
-          ${r.total_time_min ? `<span>⏱ 约${esc(r.total_time_min)}分钟</span>` : ''}
+          ${timeText}
           <span>📋 ${(r.steps || []).length}步</span>
           ${m.cooked ? `<span class="cooked">✓ 做过</span>` : ''}
           ${m.rating ? `<span class="cooked">${'★'.repeat(m.rating)}</span>` : ''}
@@ -1282,7 +1361,7 @@ function initTabs() {
     document.querySelectorAll('.tab').forEach(x => { const on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', on ? 'true' : 'false'); });
     ['recipes', 'plan', 'skills', 'shopping', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== curTab));
     const showSearch = curTab === 'recipes';
-    $('#searchrow').classList.toggle('hidden', !showSearch); $('#filters').classList.toggle('hidden', !showSearch);
+    $('#searchrow').classList.toggle('hidden', !showSearch); $('#recipeTools').classList.toggle('hidden', !showSearch); $('#filters').classList.toggle('hidden', !showSearch);
     if (curTab === 'skills') renderSkills(); if (curTab === 'shopping') renderShopping(); if (curTab === 'settings') renderSettings(); if (curTab === 'plan') renderPlan();
   });
   // 加载时同步一次 aria-selected，读屏用户一进来就知道当前在哪个标签
@@ -1307,6 +1386,8 @@ function init() {
   };
   $('#file').onchange = (e) => { const f = e.target.files[0]; if (f) doParse(() => API.startFile(f, depth, $('#visChk')?.checked, $('#imgChk')?.checked)); e.target.value = ''; };
   $('#search').oninput = (e) => { filter.q = e.target.value.trim(); renderRecipes(); };
+  $('#ingredientFilter').oninput = (e) => { filter.ingredients = e.target.value.trim(); renderRecipes(); };
+  $('#sortRecipe').onchange = (e) => { filter.sort = e.target.value || 'recent'; renderRecipes(); };
   // 系统分享导入：从别的 App 分享 B站/YouTube 链接进庖丁 → 自动填入并解析
   try {
     const sp = new URLSearchParams(location.search);

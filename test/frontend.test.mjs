@@ -131,6 +131,22 @@ test("sourceSegmentUrl 按平台生成原视频时间戳链接", () => {
   assert.equal(app.sourceSegmentUrl("", [1, 2]), "");
 });
 
+test("filterAndSortRecipes 支持食材 AND 筛选、快捷筛选和排序", () => {
+  const list = [
+    { id: "a", title: "番茄炒蛋", created_at: "2026-01-03T00:00:00.000Z", total_time: "PT15M", ingredients: [{ name: "番茄" }, { name: "鸡蛋" }], nutrition: { per_serving: { calories_kcal: 1 } } },
+    { id: "b", title: "葱油面", created_at: "2026-01-04T00:00:00.000Z", ingredients: [{ name: "面条" }, { name: "小葱" }] },
+    { id: "c", title: "白灼青菜", created_at: "2026-01-02T00:00:00.000Z", ingredients: [{ name: "青菜" }], steps: [{ params: { time: "5分钟" } }, { duration: "PT2M" }] },
+  ];
+  const ctx = { favRecipes: ["b"], meta: { a: { cooked: true, rating: 2 }, b: { rating: 5 } } };
+
+  assert.deepEqual(app.filterAndSortRecipes(list, { ingredients: "鸡蛋, 番茄", sort: "name" }, ctx).map(r => r.id), ["a"]);
+  assert.deepEqual(app.filterAndSortRecipes(list, { tag: "__fav" }, ctx).map(r => r.id), ["b"]);
+  assert.deepEqual(app.filterAndSortRecipes(list, { tag: "__uncooked", sort: "name" }, ctx).map(r => r.id), ["c", "b"]);
+  assert.deepEqual(app.filterAndSortRecipes(list, { tag: "__nutrition" }, ctx).map(r => r.id), ["a"]);
+  assert.deepEqual(app.filterAndSortRecipes(list, { sort: "rating" }, ctx).map(r => r.id), ["b", "a", "c"]);
+  assert.deepEqual(app.filterAndSortRecipes(list, { sort: "time" }, ctx).map(r => r.id), ["c", "a", "b"]);
+});
+
 test("groupShoppingItems 按货架分区、同名合并且已购沉底", () => {
   const groups = app.groupShoppingItems([
     { name: "酱油", amount: "1勺", from: "A", checked: true },

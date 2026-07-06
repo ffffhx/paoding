@@ -46,6 +46,15 @@
   <div class="searchrow" id="searchrow">
     <input id="search" type="search" placeholder="搜索菜名 / 食材 / 标签" />
   </div>
+  <div class="recipe-tools" id="recipeTools">
+    <input id="ingredientFilter" type="text" placeholder="食材：鸡蛋,番茄" />
+    <select id="sortRecipe" aria-label="菜谱排序">
+      <option value="recent">最近添加</option>
+      <option value="rating">评分</option>
+      <option value="time">总时长</option>
+      <option value="name">名称</option>
+    </select>
+  </div>
   <div class="filters" id="filters"></div>
 
   <div id="view-recipes" class="list"></div>
