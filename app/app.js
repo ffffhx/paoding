@@ -627,8 +627,17 @@ function openEdit(r) {
     d.cuisine = p.querySelector('#eCuisine').value.trim() || null;
     d.tags = p.querySelector('#eTags').value.split(/[,，、\s]+/).map(t => t.trim()).filter(Boolean);
     d.ingredients = d.ingredients.filter(i => (i.name || '').trim());
-    d.steps = d.steps.filter(s => (s.title || s.action || '').trim());
+    // 只填了「为什么」而没写标题/做法的步骤也保留，别把用户输入的讲解静默丢掉
+    d.steps = d.steps.filter(s => (s.title || s.action || s.why?.reason || s.why?.if_not || s.why?.cue || '').trim());
     d.steps.forEach((s, i) => s.index = i + 1);
+    // 食材被增删/重排后，勾选态(ingChecked 存的是下标)按名字重映射到新下标，
+    // 否则勾中的是错误的食材（原来勾第2个，删掉第1个后仍落在下标2上）。
+    const em = rmeta(r.id);
+    if (Array.isArray(em.ingChecked) && em.ingChecked.length) {
+      const checkedNames = new Set(em.ingChecked.map(i => r.ingredients?.[i]?.name).filter(Boolean));
+      em.ingChecked = d.ingredients.reduce((acc, ing, idx) => (checkedNames.has(ing.name) && acc.push(idx), acc), []);
+      saveMeta();
+    }
     const patch = { title: d.title, servings: d.servings, total_time_min: d.total_time_min, difficulty: d.difficulty, cuisine: d.cuisine, tags: d.tags, ingredients: d.ingredients, steps: d.steps };
     try {
       const res = await fetch(api('/api/recipes/' + encodeURIComponent(r.id)), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
