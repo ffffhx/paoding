@@ -102,19 +102,29 @@ function runJob(id, input, depth, kind = "video") {
       throw e;
     });
   }
+  // 超时兜底：卡死的 yt-dlp/ffmpeg/whisper 不再永久占住 MAX_RUNNING slot（否则卡 2 次解析就整体瘫）。
+  // 可用 PAODING_JOB_TIMEOUT_MIN 调整（默认 20 分钟）。超时与真实结果竞速，先到者结算，另一个被丢弃。
+  const TIMEOUT_MS = Math.max(1000, (Number(process.env.PAODING_JOB_TIMEOUT_MIN) || 20) * 60 * 1000);
+  let settled = false, timer;
+  const finish = (ev) => {
+    if (settled) return; // 只结算一次：超时后再迟到的真实结果直接丢弃
+    settled = true;
+    clearTimeout(timer);
+    if (ev.type === "done") { j.status = "done"; j.recipe = ev.recipe; }
+    else { j.status = "error"; j.error = ev.error; }
+    pushJob(id, ev);
+    for (const res of j.listeners) res.end();
+    j.listeners.clear();
+    setTimeout(() => jobs.delete(id), 5 * 60 * 1000);
+  };
+  timer = setTimeout(
+    () => finish({ type: "error", error: `解析超时（超过 ${Math.round(TIMEOUT_MS / 60000)} 分钟无结果），已释放，请重试` }),
+    TIMEOUT_MS,
+  );
+
   run
-    .then(({ recipe }) => {
-      j.status = "done"; j.recipe = recipe;
-      pushJob(id, { type: "done", recipe });
-      for (const res of j.listeners) res.end();
-      setTimeout(() => jobs.delete(id), 5 * 60 * 1000);
-    })
-    .catch((e) => {
-      j.status = "error"; j.error = e.message;
-      pushJob(id, { type: "error", error: e.message });
-      for (const res of j.listeners) res.end();
-      setTimeout(() => jobs.delete(id), 5 * 60 * 1000);
-    });
+    .then(({ recipe }) => finish({ type: "done", recipe }))
+    .catch((e) => finish({ type: "error", error: e.message }));
 }
 
 // ---------- 静态资源 ----------
