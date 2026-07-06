@@ -19,6 +19,7 @@ const API = {
   del: (id) => fetch(api('/api/recipes/' + encodeURIComponent(id)), { method: 'DELETE' }),
   startUrl: (url, depth) => fetch(api('/api/parse-url'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, depth }) }).then(j),
   startFile: (file, depth) => fetch(api('/api/parse-file'), { method: 'POST', headers: { 'X-Filename': encodeURIComponent(file.name), 'X-Depth': depth }, body: file }).then(j),
+  startText: (text, depth) => fetch(api('/api/parse-text'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, depth }) }).then(j),
   ask: (recipeId, stepIndex, question) => fetch(api('/api/ask'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, question }) }).then(j),
   substitute: (recipeId, ingredient) => fetch(api('/api/substitute'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, ingredient }) }).then(j),
   term: (term) => fetch(api('/api/term'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ term }) }).then(j),
@@ -625,6 +626,11 @@ function init() {
   $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast('请粘贴 http(s) 视频链接'); return; } doParse(() => API.startUrl(u, depth)); $('#url').value = ''; };
   $('#url').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#parseUrl').click(); } });
   $('#fileBtn').onclick = () => $('#file').click();
+  $('#textBtn').onclick = async () => {
+    const t = await promptModal('粘贴文字菜谱', '把小红书图文 / 公众号 / 任意帖子的做菜文字粘进来，AI 直接整理成分步骤 + 讲透为什么', '解析');
+    if (t && t.length >= 10) doParse(() => API.startText(t, depth));
+    else if (t) toast('文字太短了，多粘一点');
+  };
   $('#file').onchange = (e) => { const f = e.target.files[0]; if (f) doParse(() => API.startFile(f, depth)); e.target.value = ''; };
   $('#search').oninput = (e) => { filter.q = e.target.value.trim(); renderRecipes(); };
   // 系统分享导入：从别的 App 分享 B站/YouTube 链接进庖丁 → 自动填入并解析

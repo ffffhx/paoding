@@ -5,6 +5,7 @@ import { transcribe } from "./transcribe.mjs";
 import { structureRecipe } from "./chef.mjs";
 import { explainSteps } from "./explain.mjs";
 import { toMarkdown } from "./render.mjs";
+import { fetchArticleText } from "./fetchText.mjs";
 
 const slug = (s) =>
   (s || "recipe")
@@ -56,4 +57,40 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
   } finally {
     cleanup();
   }
+}
+
+// 文字管线：文字帖 URL（抓网页文字）或直接粘贴的文字 → 结构化 → 讲解 → 落盘。
+// 用于小红书图文/公众号/下厨房等没有音频的来源，跳过下载与转写。
+export async function processText(input, config, { onProgress = () => {} } = {}) {
+  const emit = (stage, pct, message) => onProgress({ stage, pct: Math.round(pct), message });
+  const isUrl = /^https?:\/\//i.test(input);
+  let title = "", text = "";
+
+  if (isUrl) {
+    emit("acquire", 6, "抓取网页文字…");
+    ({ title, text } = await fetchArticleText(input, config.ytdlp || {}));
+    if (text.trim().length < 20) {
+      throw new Error("没抓到足够的文字（可能是登录墙或纯图片帖）。可直接复制帖子文字，用「粘贴文字」解析。");
+    }
+  } else {
+    text = input;
+    title = (input.split("\n").find((l) => l.trim()) || "").slice(0, 30);
+  }
+
+  emit("structure", 40, "整理成步骤…");
+  const recipe = await structureRecipe(config.llm, { transcript: text, meta: { title, description: text.slice(0, 2000) } });
+  emit("structure", 60, "步骤已生成");
+
+  emit("explain", 65, "逐步生成「为什么」…");
+  await explainSteps(config.llm, recipe, config.depth);
+  emit("explain", 96, "讲解已生成");
+
+  recipe.source = isUrl ? input : "（粘贴文字）";
+  recipe.created_at = new Date().toISOString();
+  fs.mkdirSync(config.outDir, { recursive: true });
+  const base = path.join(config.outDir, slug(recipe.title || title));
+  fs.writeFileSync(`${base}.json`, JSON.stringify(recipe, null, 2));
+  fs.writeFileSync(`${base}.md`, toMarkdown(recipe, recipe.source));
+  emit("done", 100, "完成");
+  return { recipe, files: { json: `${base}.json`, md: `${base}.md` } };
 }

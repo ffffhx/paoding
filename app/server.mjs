@@ -5,7 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../src/config.mjs";
-import { processVideo } from "../src/pipeline.mjs";
+import { processVideo, processText } from "../src/pipeline.mjs";
 import { chatText } from "../src/llm.mjs";
 import { DEPTHS } from "../src/explain.mjs";
 
@@ -84,13 +84,25 @@ function pushJob(id, ev) {
   if (!j) return;
   for (const res of j.listeners) res.write(`data: ${JSON.stringify(ev)}\n\n`);
 }
-function runJob(id, input, depth) {
+function runJob(id, input, depth, kind = "video") {
   const j = jobs.get(id);
   // 非法/缺省的 depth 归一到配置默认值，避免前端传错值时静默按 balanced 生成。
   const cfg = { ...config, depth: DEPTHS.includes(depth) ? depth : config.depth };
-  processVideo(input, cfg, {
-    onProgress: (p) => { j.progress = p; pushJob(id, { type: "progress", ...p }); },
-  })
+  const onProgress = (p) => { j.progress = p; pushJob(id, { type: "progress", ...p }); };
+  let run;
+  if (kind === "text") {
+    run = processText(input, cfg, { onProgress });
+  } else {
+    // 视频路径；URL 视频抓不到（如小红书无抽取器）时自动改按文字帖尝试
+    run = processVideo(input, cfg, { onProgress }).catch((e) => {
+      if (/^https?:\/\//i.test(input)) {
+        onProgress({ stage: "acquire", pct: 4, message: "视频抓取失败，改按文字帖尝试…" });
+        return processText(input, cfg, { onProgress });
+      }
+      throw e;
+    });
+  }
+  run
     .then(({ recipe }) => {
       j.status = "done"; j.recipe = recipe;
       pushJob(id, { type: "done", recipe });
@@ -193,6 +205,17 @@ const server = http.createServer(async (req, res) => {
       if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
       const id = newJob();
       runJob(id, body.url, body.depth);
+      return sendJSON(res, 200, { jobId: id });
+    }
+    // ---- 文字解析：粘贴的文字，或图文/文字帖链接（小红书/公众号/下厨房等无音频来源）----
+    if (req.method === "POST" && p === "/api/parse-text") {
+      const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const url = (body.url || "").trim();
+      const input = /^https?:\/\//.test(url) ? url : (body.text || "").trim();
+      if (!input || input.length < 10) return sendJSON(res, 400, { error: "请粘贴菜谱文字，或提供文字帖链接" });
+      if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
+      const id = newJob();
+      runJob(id, input, body.depth, "text");
       return sendJSON(res, 200, { jobId: id });
     }
     if (req.method === "POST" && p === "/api/parse-file") {
