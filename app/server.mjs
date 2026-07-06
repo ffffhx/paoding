@@ -6,7 +6,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { loadConfig, loadEnvFiles } from "../src/config.mjs";
 import { processVideo, processText } from "../src/pipeline.mjs";
-import { chatText } from "../src/llm.mjs";
+import { chatJSON, chatText } from "../src/llm.mjs";
 import { DEPTHS } from "../src/explain.mjs";
 import { assertPublicUrl } from "../src/urlSafety.mjs";
 import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
@@ -122,13 +122,16 @@ function listRecipes() {
 }
 function loadRecipe(id) {
   if (!id || typeof id !== "string") return null; // 缺 recipeId 时返回 null，避免 path.basename(undefined) 抛错→500
-  const p = path.join(RECIPES_DIR, `${path.basename(id)}.json`);
+  const p = recipePath(id);
   if (!fs.existsSync(p)) return null;
   try {
     const r = JSON.parse(fs.readFileSync(p, "utf8")); // 损坏文件也容错
     r.id = id;
     return r;
   } catch { return null; }
+}
+function recipePath(id) {
+  return path.join(RECIPES_DIR, `${path.basename(id)}.json`);
 }
 
 function sendJSON(res, code, obj) {
@@ -198,6 +201,63 @@ async function readJson(req) {
   const text = (await readBody(req)).toString("utf8") || "{}";
   try { return JSON.parse(text); }
   catch { throw Object.assign(new Error("请求体不是合法 JSON"), { statusCode: 400 }); }
+}
+function normalizeNutrition(raw) {
+  const src = raw?.nutrition || raw || {};
+  const per = src.per_serving || src;
+  const num = (v) => {
+    if (Number.isFinite(v)) return Math.round(v * 10) / 10;
+    const m = String(v ?? "").match(/-?\d+(?:\.\d+)?/);
+    return m ? Math.round(Number(m[0]) * 10) / 10 : null;
+  };
+  return {
+    per_serving: {
+      calories_kcal: num(per.calories_kcal ?? per.calories ?? per.kcal),
+      protein_g: num(per.protein_g ?? per.protein),
+      fat_g: num(per.fat_g ?? per.fat),
+      carbs_g: num(per.carbs_g ?? per.carbs ?? per.carbohydrate_g),
+      sodium_mg: num(per.sodium_mg ?? per.sodium),
+    },
+    disclaimer: String(src.disclaimer || "AI 根据菜谱食材和份量粗略估算，仅供参考。"),
+    estimated: true,
+  };
+}
+function nutritionText(n) {
+  const p = n?.per_serving || {};
+  return [
+    `每份约 ${p.calories_kcal ?? "未知"} kcal`,
+    `蛋白质 ${p.protein_g ?? "未知"} g`,
+    `脂肪 ${p.fat_g ?? "未知"} g`,
+    `碳水 ${p.carbs_g ?? "未知"} g`,
+    `钠 ${p.sodium_mg ?? "未知"} mg`,
+    n?.disclaimer || "AI 估算，仅供参考。",
+  ].join("\n");
+}
+async function estimateNutrition(r) {
+  const raw = await chatJSON(config.llm, {
+    temperature: 0.2,
+    system: "你是营养师。只输出 JSON 对象，按 schema 给出这道菜每份的粗略营养估算。字段必须是数字，不要区间，不确定也给合理近似值。",
+    user: `schema:
+{
+  "nutrition": {
+    "per_serving": {
+      "calories_kcal": 0,
+      "protein_g": 0,
+      "fat_g": 0,
+      "carbs_g": 0,
+      "sodium_mg": 0
+    },
+    "disclaimer": "AI 根据菜谱食材和份量粗略估算，仅供参考。",
+    "estimated": true
+  }
+}
+
+菜名：${r.title}
+份量：${r.servings || "未知"}
+食材：${(r.ingredients || []).map((i) => `${i.name || ""}${i.amount || ""}${i.note ? `（${i.note}）` : ""}`).join("、")}
+步骤概要：${(r.steps || []).map((s) => `${s.index || ""}.${s.title || ""}${s.action || ""}`).join(" ")}`,
+  });
+  return normalizeNutrition(raw);
 }
 
 // ---------- 解析任务（带进度）----------
@@ -370,6 +430,9 @@ export async function handleRequest(req, res) {
       const patch = await readJson(req);
       const cur = JSON.parse(fs.readFileSync(fp, "utf8"));
       const next = { ...cur, ...patch };
+      const nutritionTouched = ("ingredients" in patch && JSON.stringify(patch.ingredients) !== JSON.stringify(cur.ingredients))
+        || ("servings" in patch && patch.servings !== cur.servings);
+      if (nutritionTouched) delete next.nutrition;
       delete next.id;
       fs.writeFileSync(fp, JSON.stringify(next, null, 2));
       return sendJSON(res, 200, { ok: true });
@@ -492,11 +555,14 @@ export async function handleRequest(req, res) {
       const { recipeId } = await readJson(req);
       const r = loadRecipe(recipeId);
       if (!r) return sendJSON(res, 404, { error: "菜谱不存在" });
-      const answer = await chatText(config.llm, {
-        system: "你是营养师。根据食材给出这道菜「每份」的粗略营养估算（热量kcal、蛋白质、脂肪、碳水，各给个大致数值区间），并一句话点评。声明是粗略估算。简洁中文。",
-        user: `菜名：${r.title}，份量：${r.servings || "未知"}。食材：${(r.ingredients || []).map((i) => i.name + i.amount).join("、")}`,
-      });
-      return sendJSON(res, 200, { answer });
+      if (r.nutrition?.per_serving) return sendJSON(res, 200, { nutrition: r.nutrition, answer: nutritionText(r.nutrition), cached: true });
+      const nutrition = await estimateNutrition(r);
+      const fp = recipePath(recipeId);
+      const cur = JSON.parse(fs.readFileSync(fp, "utf8"));
+      cur.nutrition = nutrition;
+      delete cur.id;
+      fs.writeFileSync(fp, JSON.stringify(cur, null, 2));
+      return sendJSON(res, 200, { nutrition, answer: nutritionText(nutrition), cached: false });
     }
 
     // ---- AI：这道菜为什么这样设计（总览）----

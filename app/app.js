@@ -129,6 +129,26 @@ function scaledAmount(i, f) {
   if (i && Number.isFinite(i.qty)) return (Math.round(i.qty * f * 100) / 100) + (i.unit || '');
   return scaleAmount(i && i.amount, f);
 }
+function scaledNutritionValue(v, f) {
+  return Number.isFinite(v) ? Math.round(v * (f || 1) * 10) / 10 : null;
+}
+function nutritionHtml(r, factor) {
+  const n = r && r.nutrition;
+  const p = n && n.per_serving;
+  if (!p) return '';
+  const item = (k, v, unit) => `<div class="nitem"><span>${k}</span><b>${v == null ? '—' : esc(v) + unit}</b></div>`;
+  const f = factor || 1;
+  return `<div class="nutrition-card">
+    <div class="nutrition-title">每份营养 <span>AI 估算，仅供参考</span></div>
+    <div class="nutrition-grid">
+      ${item('热量', scaledNutritionValue(p.calories_kcal, f), ' kcal')}
+      ${item('蛋白质', scaledNutritionValue(p.protein_g, f), ' g')}
+      ${item('脂肪', scaledNutritionValue(p.fat_g, f), ' g')}
+      ${item('碳水', scaledNutritionValue(p.carbs_g, f), ' g')}
+      ${item('钠', scaledNutritionValue(p.sodium_mg, f), ' mg')}
+    </div>
+    ${n.disclaimer ? `<div class="nutrition-note">${esc(n.disclaimer)}</div>` : ''}</div>`;
+}
 function baseServings(r) { const m = String(r.servings || '').match(/(\d+)/); return m ? +m[1] : null; }
 const DIFF = { easy: '简单', medium: '中等', hard: '有挑战' };
 function highlightInfo(text) {
@@ -138,6 +158,24 @@ function highlightInfo(text) {
 const richText = (t) => highlightInfo(linkifyTerms(t));
 /* 解析时截取的步骤/食材图片：走公开图片路由（服务端对图片 GET 豁免 token，<img> 无需带头） */
 const recipeImg = (rid, file) => api('/api/recipes/' + encodeURIComponent(rid) + '/images/' + encodeURIComponent(file));
+function sourceSegmentUrl(source, sourceTime) {
+  if (!/^https?:\/\//.test(source || '') || !Array.isArray(sourceTime) || sourceTime.length < 1) return '';
+  const start = Math.floor(Number(sourceTime[0]));
+  if (!Number.isFinite(start) || start < 0) return '';
+  try {
+    const u = new URL(source);
+    const host = u.hostname.toLowerCase();
+    if (/(^|\.)bilibili\.com$/.test(host)) {
+      u.searchParams.set('t', String(start));
+      return u.href;
+    }
+    if (/(^|\.)youtube\.com$/.test(host) || host === 'youtu.be') {
+      u.searchParams.set('t', start + 's');
+      return u.href;
+    }
+  } catch { }
+  return source;
+}
 // 点图放大；onerror 时图会自行移除（备份导入的菜谱可能没带图片文件）
 function showLightbox(src) {
   const ov = el(`<div class="lightbox"><img src="${esc(src)}" alt=""></div>`);
@@ -459,6 +497,31 @@ function renderSettings() {
   $('#importFile').onchange = (e) => { const f = e.target.files[0]; if (f) importData(f); e.target.value = ''; };
 }
 function applyTheme() { document.documentElement.setAttribute('data-theme', settings.theme); document.documentElement.style.setProperty('--fs', (16 * settings.fontScale) + 'px'); }
+function needsBackendSetup() {
+  if (settings.apiBase) return false;
+  return location.protocol === 'capacitor:' || location.origin === 'https://localhost';
+}
+function showBackendSetupIfNeeded() {
+  if (!needsBackendSetup()) return false;
+  const ov = openModal(`<h3 style="text-align:left">连接后端</h3>
+    <p style="color:var(--muted);text-align:left;margin-bottom:12px">填写自己的庖丁服务地址和 API Token。</p>
+    <input type="text" id="setupApiBase" inputmode="url" placeholder="如 http://192.168.1.5:4177" style="margin-bottom:8px">
+    <input type="password" id="setupApiToken" placeholder="PAODING_API_TOKEN">
+    <div class="mrow"><button class="btn ghost" id="setupLater">稍后</button><button class="btn" id="setupSave">连接</button></div>`, 'left');
+  ov.querySelector('#setupLater').onclick = () => ov.remove();
+  ov.querySelector('#setupSave').onclick = () => {
+    const base = ov.querySelector('#setupApiBase').value.trim().replace(/\/$/, '');
+    if (!/^https?:\/\//.test(base)) { toast('请输入 http(s) 后端地址'); return; }
+    settings.apiBase = base;
+    settings.apiToken = ov.querySelector('#setupApiToken').value.trim();
+    saveSettings();
+    ov.remove();
+    toast('已保存后端地址');
+    loadUserData().finally(refresh);
+  };
+  setTimeout(() => ov.querySelector('#setupApiBase').focus(), 30);
+  return true;
+}
 
 /* ================= 详情页 ================= */
 function openDetail(r) {
@@ -491,6 +554,7 @@ function openDetail(r) {
       <button class="btn ghost sm" id="btnExport2">⬇ 导出</button>
     </div>
     <div id="aiBox" style="margin:8px 16px 0"></div>
+    <div id="nutritionBox"></div>
     <div class="sec-title">食材 <span class="act" id="addShop">＋ 加入购物清单</span></div>
     <div class="ing" id="ingBox"></div>
     <div class="sec-title">步骤总览</div>
@@ -527,10 +591,14 @@ function openDetail(r) {
   renderIng();
 
   const stepsBox = p.querySelector('#steps');
-  (r.steps || []).forEach(s => stepsBox.appendChild(el(`<div class="stepmini">
-    ${s.image ? `<img class="mthumb" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="" loading="lazy" onerror="this.remove()">` : ''}
-    <div class="t"><span class="n">${s.index}</span>${esc(s.title || '')}${riskBadge(s.risk_level)}</div>
-    <div class="a">${esc(s.action || '')}</div></div>`)));
+  (r.steps || []).forEach(s => {
+    const segUrl = sourceSegmentUrl(r.source, s.source_time);
+    stepsBox.appendChild(el(`<div class="stepmini">
+      ${s.image ? `<img class="mthumb" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="" loading="lazy" onerror="this.remove()">` : ''}
+      <div class="t"><span class="n">${s.index}</span>${esc(s.title || '')}${riskBadge(s.risk_level)}</div>
+      <div class="a">${esc(s.action || '')}</div>
+      ${segUrl ? `<a class="step-video-link" href="${esc(segUrl)}" target="_blank" rel="noopener">▶ 看原视频这一段</a>` : ''}</div>`));
+  });
   wireZoom(stepsBox);
 
   const close = () => p.remove();
@@ -542,6 +610,10 @@ function openDetail(r) {
   p.querySelector('#dShare').onclick = () => shareRecipe(r, factor);
   p.querySelector('#addShop').onclick = () => addToShopping(r, factor);
   const aiBox = p.querySelector('#aiBox');
+  function renderNutrition() {
+    p.querySelector('#nutritionBox').innerHTML = nutritionHtml(r, factor);
+  }
+  renderNutrition();
   const aiCall = async (btn, fn, title, key) => {
     btn.disabled = true;
     let node = aiBox.querySelector(`[data-ai="${key}"]`);
@@ -558,13 +630,26 @@ function openDetail(r) {
     btn.disabled = false;
   };
   p.querySelector('#btnOverview').onclick = (e) => aiCall(e.currentTarget, () => API.overview(r.id), '💡 为什么这样设计', 'overview');
-  p.querySelector('#btnNutri').onclick = (e) => aiCall(e.currentTarget, () => API.nutrition(r.id), '🥗 每份营养估算（粗略）', 'nutri');
+  p.querySelector('#btnNutri').onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    p.querySelector('#nutritionBox').innerHTML = '<div class="nutrition-card"><div class="nutrition-title">每份营养 <span>估算中…</span></div></div>';
+    try {
+      const data = await API.nutrition(r.id);
+      r.nutrition = data.nutrition;
+      renderNutrition();
+      toast(data.cached ? '已读取营养缓存' : '已生成营养估算');
+    } catch (err) {
+      p.querySelector('#nutritionBox').innerHTML = `<div class="nutrition-card"><div class="nutrition-note">估算失败：${esc(err.message)}</div></div>`;
+    }
+    btn.disabled = false;
+  };
   p.querySelector('#btnExport2').onclick = () => openExport(r, factor);
   p.querySelector('#btnCook').onclick = () => { close(); openCook(r); };
   p.querySelector('#notes').oninput = (e) => { m.notes = e.target.value; saveMeta(); };
   p.querySelector('#cookedBtn').onclick = (e) => { m.cooked = !m.cooked; if (m.cooked) m.cooked_at = new Date().toISOString(); saveMeta(); e.target.className = 'btn sm ' + (m.cooked ? '' : 'ghost'); e.target.textContent = m.cooked ? '✓ 已做过' : '标记做过'; renderRecipes(); };
   p.querySelectorAll('#rating .rs').forEach(rs => rs.onclick = () => { m.rating = +rs.dataset.r; saveMeta(); p.querySelectorAll('#rating .rs').forEach(x => x.classList.toggle('on', +x.dataset.r <= m.rating)); renderRecipes(); });
-  if (base) p.querySelectorAll('.st').forEach(b => b.onclick = () => { factor = Math.max(0.5, factor + (b.dataset.s === '+' ? 0.5 : -0.5)); m.servingsFactor = factor; saveMeta(); p.querySelector('#svVal').textContent = Math.round(base * factor * 10) / 10; renderIng(); });
+  if (base) p.querySelectorAll('.st').forEach(b => b.onclick = () => { factor = Math.max(0.5, factor + (b.dataset.s === '+' ? 0.5 : -0.5)); m.servingsFactor = factor; saveMeta(); p.querySelector('#svVal').textContent = Math.round(base * factor * 10) / 10; renderIng(); renderNutrition(); });
 
   $('#app').appendChild(p);
 }
@@ -752,12 +837,21 @@ function recipeToCooklang(r) {
 // 导出为 schema.org Recipe（JSON-LD，搜索引擎/菜谱工具通用结构化格式）
 function recipeToSchemaOrg(r) {
   const undef = (v) => (v == null || v === '' ? undefined : v);
+  const n = r.nutrition && r.nutrition.per_serving;
   return {
     '@context': 'https://schema.org', '@type': 'Recipe',
     name: r.title, recipeCuisine: undef(r.cuisine), keywords: undef((r.tags || []).join(', ')),
     recipeYield: undef(r.servings), totalTime: r.total_time_min ? `PT${r.total_time_min}M` : undefined,
     recipeIngredient: (r.ingredients || []).map(i => `${i.name} ${i.amount || ''}`.trim()),
     recipeInstructions: (r.steps || []).map(s => ({ '@type': 'HowToStep', name: undef(s.title), text: s.action || '' })),
+    nutrition: n ? {
+      '@type': 'NutritionInformation',
+      calories: Number.isFinite(n.calories_kcal) ? `${n.calories_kcal} kcal` : undefined,
+      proteinContent: Number.isFinite(n.protein_g) ? `${n.protein_g} g` : undefined,
+      fatContent: Number.isFinite(n.fat_g) ? `${n.fat_g} g` : undefined,
+      carbohydrateContent: Number.isFinite(n.carbs_g) ? `${n.carbs_g} g` : undefined,
+      sodiumContent: Number.isFinite(n.sodium_mg) ? `${n.sodium_mg} mg` : undefined,
+    } : undefined,
     url: r.source && /^https?:/.test(r.source) ? r.source : undefined,
   };
 }
@@ -797,6 +891,7 @@ async function openCook(r) {
   function render() {
     const s = steps[cur], w = s.why || {}, key = stepKey(r.id, s.index), faved = favSteps.some(x => x.key === key);
     const warn = s.confidence === 'low' ? '<span class="warn">⚠️ 原视频信息有限，以下为推测</span>' : s.confidence === 'medium' ? '<span class="warn">⚠️ 置信度中</span>' : '';
+    const segUrl = sourceSegmentUrl(r.source, s.source_time);
     box.innerHTML = `
       <div class="cook-top"><button class="x">✕ 退出</button>
         <span style="color:var(--muted);font-size:14px">${cur + 1} / ${steps.length}</span>
@@ -811,6 +906,7 @@ async function openCook(r) {
         <h2>${esc(s.title || '')}</h2>
         <div class="action">${richText(s.action || '')}</div>
         ${s.image ? `<img class="stepimg" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="本步画面" loading="lazy" onerror="this.remove()">` : ''}
+        ${segUrl ? `<a class="step-video-link cook-src" href="${esc(segUrl)}" target="_blank" rel="noopener">▶ 看原视频这一段</a>` : ''}
         ${paramsHtml(s.params)}${usedIngsHtml(r, s)}${timerHtml(s.params)}
         ${(w.reason || w.if_not || w.cue) ? `<div class="why"><div class="why-hd"><span>🤔 为什么这么做</span>${warn}</div>
           ${w.reason ? `<p><span class="lbl">原理　　</span>${richText(w.reason)}</p>` : ''}
@@ -1045,7 +1141,8 @@ function init() {
     const shared = (sp.get('url') || sp.get('text') || sp.get('title') || '').match(/https?:\/\/[^\s]+/);
     if (shared) { $('#url').value = shared[0]; history.replaceState(null, '', location.pathname); setTimeout(() => $('#parseUrl').click(), 400); }
   } catch { }
-  loadUserData().finally(refresh); // 先同步远端用户数据，再拉菜谱并渲染
+  if (showBackendSetupIfNeeded()) renderAll();
+  else loadUserData().finally(refresh); // 先同步远端用户数据，再拉菜谱并渲染
   // PWA + 自动更新：检测到新版本就自动刷新（跟做/弹窗中途不打断，等忙完或下次打开）
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').then((reg) => {

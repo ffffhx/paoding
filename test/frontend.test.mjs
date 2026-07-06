@@ -22,7 +22,7 @@ function loadApp() {
     setTimeout, clearTimeout, setInterval, clearInterval, console,
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     performance: { now: () => 0 },
-    URLSearchParams,
+    URL, URLSearchParams,
   };
   ctx.window = ctx;
   ctx.globalThis = ctx;
@@ -68,9 +68,32 @@ test("recipeToCooklang 元数据+结构化食材+步骤", () => {
 });
 
 test("recipeToSchemaOrg 合法 Recipe JSON-LD", () => {
-  const j = app.recipeToSchemaOrg({ title: "蛋", ingredients: [{ name: "鸡蛋", amount: "3个" }], steps: [{ title: "炒", action: "下锅" }] });
+  const j = app.recipeToSchemaOrg({
+    title: "蛋",
+    ingredients: [{ name: "鸡蛋", amount: "3个" }],
+    steps: [{ title: "炒", action: "下锅" }],
+    nutrition: { per_serving: { calories_kcal: 180, protein_g: 12, fat_g: 10, carbs_g: 4, sodium_mg: 600 } },
+  });
   assert.equal(j["@type"], "Recipe");
   assert.equal(j.name, "蛋");
   assert.ok(j.recipeIngredient.includes("鸡蛋 3个"));
   assert.equal(j.recipeInstructions[0]["@type"], "HowToStep");
+  assert.equal(j.nutrition["@type"], "NutritionInformation");
+  assert.equal(j.nutrition.calories, "180 kcal");
+});
+
+test("nutritionHtml 按份量系数缩放显示", () => {
+  const html = app.nutritionHtml({ nutrition: { per_serving: { calories_kcal: 100, protein_g: 8, fat_g: 3, carbs_g: 12, sodium_mg: 200 }, disclaimer: "估算" } }, 1.5);
+  assert.ok(html.includes("150 kcal"));
+  assert.ok(html.includes("12 g"));
+  assert.ok(html.includes("AI 估算"));
+});
+
+test("sourceSegmentUrl 按平台生成原视频时间戳链接", () => {
+  assert.equal(app.sourceSegmentUrl("https://www.bilibili.com/video/BV1xx?p=2", [83.9, 120]), "https://www.bilibili.com/video/BV1xx?p=2&t=83");
+  assert.equal(app.sourceSegmentUrl("https://www.youtube.com/watch?v=abc", [65, 90]), "https://www.youtube.com/watch?v=abc&t=65s");
+  assert.equal(app.sourceSegmentUrl("https://youtu.be/abc", [12, 30]), "https://youtu.be/abc?t=12s");
+  assert.equal(app.sourceSegmentUrl("https://www.douyin.com/video/123", [8, 18]), "https://www.douyin.com/video/123");
+  assert.equal(app.sourceSegmentUrl("https://www.bilibili.com/video/BV1xx", null), "");
+  assert.equal(app.sourceSegmentUrl("", [1, 2]), "");
 });

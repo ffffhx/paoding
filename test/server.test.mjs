@@ -162,6 +162,29 @@ test("parse-text 太短 → 400", async () => {
   assert.equal((await request("/api/parse-text", J({ text: "短" }))).status, 400);
 });
 
+test("nutrition 缓存返回结构化结果，编辑食材后失效", async () => {
+  const id = "营养测试菜";
+  fs.writeFileSync(path.join(recipesDir, `${id}.json`), JSON.stringify({
+    title: id,
+    servings: "2人份",
+    ingredients: [{ name: "鸡蛋", amount: "2个" }],
+    nutrition: { per_serving: { calories_kcal: 120, protein_g: 9, fat_g: 7, carbs_g: 2, sodium_mg: 300 }, disclaimer: "AI 估算，仅供参考。", estimated: true },
+  }));
+  const cached = await (await request("/api/nutrition", J({ recipeId: id }))).json();
+  assert.equal(cached.cached, true);
+  assert.equal(cached.nutrition.per_serving.calories_kcal, 120);
+
+  const put = await request(`/api/recipes/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ingredients: [{ name: "鸡蛋", amount: "3个" }] }),
+  });
+  assert.equal(put.status, 200);
+  const saved = JSON.parse(fs.readFileSync(path.join(recipesDir, `${id}.json`), "utf8"));
+  assert.equal(saved.nutrition, undefined);
+  fs.rmSync(path.join(recipesDir, `${id}.json`), { force: true });
+});
+
 test("静态首页含庖丁", async () => {
   const r = await request("/");
   assert.equal(r.status, 200);
