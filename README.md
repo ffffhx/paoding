@@ -106,6 +106,8 @@ curl -L -o models/ggml-large-v3-turbo.bin \
 
 # 配置（默认就是本地方案）
 cp .env.example .env
+# 局域网/公网可访问时必须设置 API token；本机浏览器单独用可改为 PAODING_HOST=127.0.0.1
+openssl rand -hex 16  # 把输出填到 .env 的 PAODING_API_TOKEN
 
 # 起 App
 node app/server.mjs
@@ -124,7 +126,11 @@ node bin/paoding.mjs "https://www.bilibili.com/video/BVxxxx" --depth advanced
 
 `node app/server.mjs` 启动后会打印**局域网地址**（如 `http://192.168.1.5:4177`）。手机连同一 WiFi 打开它 → 浏览器菜单「添加到主屏幕」→ 就是一个全屏 App。App 界面跑在手机、解析引擎跑在电脑，两者通过局域网通信。
 
+默认监听局域网地址时会强制开启 API token；在 `.env` 设置 `PAODING_API_TOKEN`，再到 App「设置 → API Token」填同一个值。只在本机浏览器使用可设 `PAODING_HOST=127.0.0.1` 跳过强制鉴权。CORS 默认只允许同源与 Capacitor，跨域自托管前端可用 `PAODING_CORS_ORIGINS=https://你的域名` 放行。
+
 > B站等平台反爬（HTTP 412）：`.env` 里设 `PAODING_COOKIES_FROM_BROWSER=chrome`，借用浏览器已登录的 cookie 即可。
+
+安全边界：服务端会在抓网页、下载视频前拒绝本机、私网与链路本地地址，避免把后端当成内网探测器。`yt-dlp` 仍可能跟随平台侧重定向；首跳会被庖丁拦截，公网部署时仍建议放在受控网络与鉴权之后使用。
 
 ## 自动部署
 

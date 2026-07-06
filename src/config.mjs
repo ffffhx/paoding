@@ -24,11 +24,15 @@ function loadDotEnv(cwd) {
   }
 }
 
-export function loadConfig() {
+export function loadEnvFiles() {
   // 优先读引擎目录下的 .env，再读当前工作目录的 .env。
   // 用 fileURLToPath 而非 .pathname：后者对含空格/中文的安装路径会残留 %20 等编码，导致 .env 读不到。
   loadDotEnv(fileURLToPath(new URL("..", import.meta.url)));
   loadDotEnv(process.cwd());
+}
+
+export function loadConfig() {
+  loadEnvFiles();
 
   const llmBase = process.env.PAODING_LLM_BASE_URL?.replace(/\/$/, "");
   const llmKey = process.env.PAODING_LLM_API_KEY;

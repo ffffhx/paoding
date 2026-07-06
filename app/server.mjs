@@ -4,12 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "../src/config.mjs";
+import { loadConfig, loadEnvFiles } from "../src/config.mjs";
 import { processVideo, processText } from "../src/pipeline.mjs";
 import { chatText } from "../src/llm.mjs";
 import { DEPTHS } from "../src/explain.mjs";
+import { assertPublicUrl } from "../src/urlSafety.mjs";
+import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+loadEnvFiles();
 // 数据目录可被环境变量覆盖（测试用隔离目录，避免污染真实数据）
 const RECIPES_DIR = process.env.PAODING_RECIPES_DIR || path.join(HERE, "recipes");
 // 用户数据（收藏/笔记/评分/购物清单等）跨设备同步用；放项目根、不在 webDir 内，避免被静态服务或打包暴露
@@ -19,9 +22,13 @@ const HOST = process.env.PAODING_HOST || "0.0.0.0"; // 默认局域网可达(手
 const BASE_PATH = normalizeBasePath(process.env.PAODING_BASE_PATH || "/paoding"); // 兼容 Caddy/Capacitor 挂在 /paoding 子路径
 const MAX_RUNNING = Number(process.env.PAODING_MAX_JOBS || 2); // 同时解析上限，防资源耗尽
 const MAX_IMPORT_RECIPES = Number(process.env.PAODING_MAX_IMPORT || 5000); // 单次导入菜谱上限，防脏/超大备份写爆磁盘
-// 可选 API token：设了 PAODING_API_TOKEN 就要求 /api/* 带上正确 token；不设则不鉴权（向后兼容）。
-// 后端一旦经公网/隧道暴露，强烈建议设置。
+// 可选 API token：设了 PAODING_API_TOKEN 就要求 /api/* 带上正确 token。
+// 非回环地址监听时强制配置 token，除非显式 PAODING_ALLOW_INSECURE=1。
 const API_TOKEN = process.env.PAODING_API_TOKEN || "";
+const CORS_ORIGINS = new Set((process.env.PAODING_CORS_ORIGINS || "")
+  .split(",").map((s) => s.trim().replace(/\/+$/, "")).filter(Boolean));
+const LLM_RATE_LIMIT_PER_MIN = Number(process.env.PAODING_LLM_RATE_LIMIT_PER_MIN || 20);
+const LLM_RATE_LIMIT_WINDOW_MS = Number(process.env.PAODING_LLM_RATE_LIMIT_WINDOW_MS || 60_000);
 fs.mkdirSync(RECIPES_DIR, { recursive: true });
 
 function normalizeBasePath(value) {
@@ -34,6 +41,16 @@ function stripBasePath(pathname) {
   if (pathname === BASE_PATH) return "/";
   if (pathname.startsWith(`${BASE_PATH}/`)) return pathname.slice(BASE_PATH.length) || "/";
   return pathname;
+}
+function isLoopbackHost(host) {
+  const h = String(host || "").toLowerCase().replace(/^\[|\]$/g, "");
+  return h === "localhost" || h === "127.0.0.1" || h === "::1";
+}
+if (!API_TOKEN && !isLoopbackHost(HOST) && process.env.PAODING_ALLOW_INSECURE !== "1") {
+  console.error("\x1b[31m安全配置错误：\x1b[0m 当前监听地址不是 127.0.0.1/localhost，但未设置 PAODING_API_TOKEN。");
+  console.error("出路 1：设置 PAODING_API_TOKEN，并在 App 设置页填同一个 token。");
+  console.error("出路 2：若确认只在可信网络裸奔，显式设置 PAODING_ALLOW_INSECURE=1。");
+  process.exit(1);
 }
 
 let config;
@@ -140,6 +157,42 @@ function authOk(req, url) {
   const a = Buffer.from(String(provided)), b = Buffer.from(API_TOKEN);
   return a.length === b.length && crypto.timingSafeEqual(a, b); // 常量时间比较，避免时序侧信道
 }
+const DEFAULT_CORS_ORIGINS = new Set(["capacitor://localhost", "https://localhost"]);
+function requestOrigin(req) {
+  const origin = req.headers.origin || "";
+  return typeof origin === "string" ? origin.replace(/\/+$/, "") : "";
+}
+function sameOrigin(req, origin) {
+  if (!origin || !req.headers.host) return true;
+  const proto = String(req.headers["x-forwarded-proto"] || "http").split(",")[0].trim() || "http";
+  return origin === `${proto}://${req.headers.host}`;
+}
+function corsAllowOrigin(req) {
+  const origin = requestOrigin(req);
+  if (!origin) return "";
+  if (sameOrigin(req, origin) || DEFAULT_CORS_ORIGINS.has(origin) || CORS_ORIGINS.has(origin)) return origin;
+  return "";
+}
+const llmLimiter = createSlidingWindowRateLimiter({
+  limit: LLM_RATE_LIMIT_PER_MIN,
+  windowMs: LLM_RATE_LIMIT_WINDOW_MS,
+});
+const LLM_ENDPOINTS = new Set([
+  "/api/parse-url", "/api/parse-text", "/api/parse-file",
+  "/api/ask", "/api/substitute", "/api/term", "/api/troubleshoot", "/api/nutrition", "/api/overview",
+]);
+function clientIp(req) {
+  const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return fwd || req.socket.remoteAddress || "unknown";
+}
+function rateLimitOk(req, res, p) {
+  if (req.method !== "POST" || !LLM_ENDPOINTS.has(p)) return true;
+  const hit = llmLimiter.take(clientIp(req));
+  if (hit.allowed) return true;
+  res.setHeader("Retry-After", String(Math.max(1, Math.ceil(hit.resetMs / 1000))));
+  sendJSON(res, 429, { error: "请求太频繁，请稍后再试" });
+  return false;
+}
 // 读并解析 JSON 请求体；畸形 JSON 抛 400（而非落到外层 catch 变 500）。
 async function readJson(req) {
   const text = (await readBody(req)).toString("utf8") || "{}";
@@ -230,12 +283,16 @@ function serveStatic(res, pathname) {
   res.end(fs.readFileSync(abs));
 }
 
-const server = http.createServer(async (req, res) => {
+export async function handleRequest(req, res) {
   const url = new URL(req.url, "http://localhost");
   const p = stripBasePath(url.pathname);
 
-  // CORS：App(Capacitor WebView，源为 capacitor://localhost / http://localhost)跨域访问本机后端时放行
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  // CORS：默认只放行同源请求与 Capacitor WebView；更多来源用 PAODING_CORS_ORIGINS 显式列出。
+  const allowedOrigin = corsAllowOrigin(req);
+  if (allowedOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Filename,X-Depth,X-Vision,X-Images,X-Paoding-Token,Authorization");
   if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
@@ -244,6 +301,7 @@ const server = http.createServer(async (req, res) => {
   const isRecipeImage = req.method === "GET" && /^\/api\/recipes\/[^/]+\/images\/[^/]+$/.test(p);
   // 鉴权：所有 /api/* 都要过（分享页 /r/、静态资源、APK 不拦，PWA 外壳才能加载）。未配 token 时直接放行。
   if (p.startsWith("/api/") && !isRecipeImage && !authOk(req, url)) return sendJSON(res, 401, { error: "未授权：缺少或错误的 API token" });
+  if (!rateLimitOk(req, res, p)) return;
 
   try {
     // ---- 列表 ----
@@ -321,6 +379,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && p === "/api/parse-url") {
       const body = await readJson(req);
       if (!/^https?:\/\//.test(body.url || "")) return sendJSON(res, 400, { error: "请提供 http(s) 链接" });
+      await assertPublicUrl(body.url);
       if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
       const id = newJob();
       runJob(id, body.url, body.depth, "video", !!body.vision, !!body.images);
@@ -330,6 +389,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && p === "/api/parse-text") {
       const body = await readJson(req);
       const url = (body.url || "").trim();
+      if (/^https?:\/\//.test(url)) await assertPublicUrl(url);
       const input = /^https?:\/\//.test(url) ? url : (body.text || "").trim();
       if (!input || input.length < 10) return sendJSON(res, 400, { error: "请粘贴菜谱文字，或提供文字帖链接" });
       if (runningCount() >= MAX_RUNNING) return sendJSON(res, 429, { error: "解析任务繁忙，请等前一个完成再试" });
@@ -479,9 +539,12 @@ const server = http.createServer(async (req, res) => {
     console.error(`[${p}]`, e.message);
     if (!res.headersSent) sendJSON(res, e.statusCode || 500, { error: e.message });
   }
-});
+}
 
-server.listen(PORT, HOST, () => {
+export const server = http.createServer(handleRequest);
+
+function startServer() {
+  server.listen(PORT, HOST, () => {
   const nets = os.networkInterfaces();
   const lan = Object.values(nets).flat().find((n) => n && n.family === "IPv4" && !n.internal)?.address;
   console.log(`\x1b[32m庖丁 App 已启动\x1b[0m`);
@@ -490,4 +553,7 @@ server.listen(PORT, HOST, () => {
   console.log(`  LLM: ${config.llm.model} @ ${config.llm.baseUrl}`);
   console.log(`  ASR: ${config.asr.provider === "local" ? "本地 whisper.cpp" : config.asr.model}`);
   console.log(`  API 鉴权: ${API_TOKEN ? "\x1b[32m已开启\x1b[0m（客户端需在设置里填同一 token）" : "\x1b[33m未开启\x1b[0m（公网/隧道暴露时请设 PAODING_API_TOKEN）"}`);
-});
+  });
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) startServer();

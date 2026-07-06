@@ -5,6 +5,8 @@ import { toMarkdown } from "../src/render.mjs";
 import { isUrl, ytdlpArgs } from "../src/download.mjs";
 import { loadConfig } from "../src/config.mjs";
 import { DEPTHS } from "../src/explain.mjs";
+import { assertPublicUrl, isPrivateAddress } from "../src/urlSafety.mjs";
+import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 
 test("isUrl 只认 http(s)", () => {
   assert.equal(isUrl("https://x.com"), true);
@@ -59,6 +61,40 @@ test("loadConfig 返回必填结构", () => {
 
 test("DEPTHS 是三个合法深度", () => {
   assert.deepEqual([...DEPTHS].sort(), ["advanced", "balanced", "beginner"]);
+});
+
+test("assertPublicUrl 拒绝本机/私网/链路本地地址", async () => {
+  assert.equal(isPrivateAddress("127.0.0.1"), true);
+  assert.equal(isPrivateAddress("10.1.2.3"), true);
+  assert.equal(isPrivateAddress("172.16.0.1"), true);
+  assert.equal(isPrivateAddress("192.168.1.9"), true);
+  assert.equal(isPrivateAddress("169.254.169.254"), true);
+  assert.equal(isPrivateAddress("::1"), true);
+  assert.equal(isPrivateAddress("::ffff:7f00:1"), true);
+  assert.equal(isPrivateAddress("fc00::1"), true);
+  assert.equal(isPrivateAddress("fe80::1"), true);
+  await assert.rejects(() => assertPublicUrl("http://127.0.0.1:4177/"), /拒绝访问/);
+  await assert.rejects(() => assertPublicUrl("http://[::1]/"), /拒绝访问/);
+});
+
+test("assertPublicUrl 拒绝解析到私网的域名，允许公网地址", async () => {
+  await assert.rejects(() => assertPublicUrl("https://private.example/a", {
+    lookup: async () => [{ address: "192.168.1.8", family: 4 }],
+  }), /拒绝访问/);
+  assert.equal(await assertPublicUrl("https://public.example/a", {
+    lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+  }), "https://public.example/a");
+});
+
+test("滑动窗口限流按 key 计数并随时间恢复", () => {
+  let now = 1000;
+  const limiter = createSlidingWindowRateLimiter({ limit: 2, windowMs: 1000, now: () => now });
+  assert.equal(limiter.take("ip1").allowed, true);
+  assert.equal(limiter.take("ip1").allowed, true);
+  assert.equal(limiter.take("ip1").allowed, false);
+  assert.equal(limiter.take("ip2").allowed, true);
+  now = 2001;
+  assert.equal(limiter.take("ip1").allowed, true);
 });
 
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */

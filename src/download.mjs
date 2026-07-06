@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { assertPublicUrl } from "./urlSafety.mjs";
 
 // 运行子进程；onData(chunk) 用于实时解析进度（stdout+stderr 都喂过去）。
 // signal：AbortSignal，任务超时时用来强杀卡死的子进程（spawn 随 signal abort 杀 child）。
@@ -64,6 +65,7 @@ export async function acquire(input, ytdlp = {}, onProgress = () => {}, { wantVi
 
   try {
   if (isUrl(input)) {
+    await assertPublicUrl(input);
     if (!(await has("yt-dlp"))) {
       cleanup();
       throw new Error("未找到 yt-dlp（解析链接需要它）：brew install yt-dlp");
