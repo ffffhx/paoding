@@ -181,6 +181,31 @@ test("import 写入→列表可见→分享页→删除", async () => {
   assert.ok(!(await (await request("/api/recipes")).json()).some((r) => r.title === "测试菜X"));
 });
 
+test("import-recipe 导入 schema.org JSON-LD 且不生成 why", async () => {
+  const jsonld = {
+    "@context": "https://schema.org",
+    "@type": "Recipe",
+    name: "外部导入菜",
+    totalTime: "PT12M",
+    recipeIngredient: ["豆腐 1块"],
+    recipeInstructions: [{ "@type": "HowToStep", name: "煎", text: "豆腐煎到两面金黄。" }],
+  };
+  const imp = await request("/api/import-recipe", J({ jsonld: JSON.stringify(jsonld) }));
+  assert.equal(imp.status, 200);
+  const data = await imp.json();
+  assert.equal(data.recipe.title, "外部导入菜");
+  assert.equal(data.recipe.imported, true);
+  assert.equal(data.recipe.total_time_min, 12);
+  assert.equal(data.recipe.steps[0].why, undefined);
+  assert.equal(data.recipe.steps[0].confidence, undefined);
+
+  const saved = JSON.parse(fs.readFileSync(path.join(recipesDir, `${data.id}.json`), "utf8"));
+  assert.equal(saved.imported, true);
+  assert.equal(saved.steps[0].why, undefined);
+  assert.ok((await (await request("/api/recipes")).json()).some((r) => r.id === data.id));
+  assert.equal((await request("/api/recipes/" + encodeURIComponent(data.id), { method: "DELETE" })).status, 200);
+});
+
 test("parse-url 非法链接 → 400", async () => {
   assert.equal((await request("/api/parse-url", J({ url: "notaurl" }))).status, 400);
 });

@@ -7,10 +7,11 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, loadEnvFiles } from "../src/config.mjs";
 import { processVideo, processText } from "../src/pipeline.mjs";
 import { chatJSON, chatText } from "../src/llm.mjs";
-import { DEPTHS } from "../src/explain.mjs";
+import { DEPTHS, explainSteps } from "../src/explain.mjs";
 import { assertPublicUrl } from "../src/urlSafety.mjs";
 import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 import { FileJobStore, createJobQueue, createJobRecord, publicJob, TERMINAL_JOB_STATUSES } from "../src/jobs.mjs";
+import { mapSchemaRecipeToPaoding } from "../src/importRecipe.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 loadEnvFiles();
@@ -137,6 +138,12 @@ function loadRecipe(id) {
 function recipePath(id) {
   return path.join(RECIPES_DIR, `${path.basename(id)}.json`);
 }
+function uniqueRecipeId(seed) {
+  const base = slug(seed || "recipe") || "recipe";
+  let id = base;
+  for (let i = 2; fs.existsSync(recipePath(id)); i++) id = `${base}-${i}`;
+  return id;
+}
 
 function sendJSON(res, code, obj) {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
@@ -232,7 +239,7 @@ const llmLimiter = createSlidingWindowRateLimiter({
 });
 const LLM_ENDPOINTS = new Set([
   "/api/parse-url", "/api/parse-text", "/api/parse-file",
-  "/api/ask", "/api/substitute", "/api/term", "/api/troubleshoot", "/api/nutrition", "/api/overview",
+  "/api/ask", "/api/substitute", "/api/term", "/api/troubleshoot", "/api/nutrition", "/api/overview", "/api/explain-recipe", "/api/import-recipe",
 ]);
 function clientIp(req) {
   const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
@@ -598,6 +605,20 @@ const AI_ENDPOINTS = {
       user: `菜名：${r.title}。步骤概要：${(r.steps || []).map((s) => s.index + "." + s.title).join(" ")}`,
     }),
   },
+  "/api/explain-recipe": {
+    handle: async ({ recipeId, depth }) => {
+      const r = loadRecipe(recipeId);
+      if (!r) return { code: 404, body: { error: "菜谱不存在" } };
+      if (!Array.isArray(r.steps) || !r.steps.length) return { code: 400, body: { error: "这道菜没有步骤，无法补讲解" } };
+      const next = JSON.parse(JSON.stringify(r));
+      await explainSteps(config.llm, next, DEPTHS.includes(depth) ? depth : config.depth);
+      const id = path.basename(recipeId);
+      const saved = { ...next };
+      delete saved.id;
+      fs.writeFileSync(recipePath(id), JSON.stringify(saved, null, 2));
+      return { body: { ok: true, recipe: { ...saved, id }, answer: "已补齐每步原理讲解" } };
+    },
+  },
 };
 
 async function handleAiEndpoint(p, req, res) {
@@ -684,6 +705,29 @@ export async function handleRequest(req, res) {
       const next = normalizeUserData({ ...incoming, rev: cur.rev + 1 });
       writeUserData(next);
       return sendJSON(res, 200, { ok: true, rev: next.rev, userdata: next });
+    }
+
+    // ---- 单菜谱导入：schema.org Recipe JSON-LD（Mealie/Tandoor 等通用交换格式）----
+    if (req.method === "POST" && p === "/api/import-recipe") {
+      let text;
+      try { text = (await readBody(req, 5)).toString("utf8") || "{}"; }
+      catch (e) { return sendJSON(res, 413, { error: e.message }); }
+      let data;
+      try { data = JSON.parse(text); } catch { return sendJSON(res, 400, { error: "无效 JSON" }); }
+      let jsonld = data;
+      try {
+        if (typeof data === "string") jsonld = JSON.parse(data);
+        else if (typeof data?.jsonld === "string") jsonld = JSON.parse(data.jsonld);
+        else if (data?.jsonld && typeof data.jsonld === "object") jsonld = data.jsonld;
+      } catch { return sendJSON(res, 400, { error: "JSON-LD 内容不是合法 JSON" }); }
+      let recipe;
+      try { recipe = mapSchemaRecipeToPaoding(jsonld); }
+      catch (e) { return sendJSON(res, e.statusCode || 400, { error: e.message }); }
+      const id = uniqueRecipeId(recipe.title);
+      const saved = { ...recipe };
+      delete saved.id;
+      fs.writeFileSync(recipePath(id), JSON.stringify(saved, null, 2));
+      return sendJSON(res, 200, { ok: true, id, recipe: { ...saved, id } });
     }
 
     // ---- 备份恢复：把导出的 {recipes,userdata} 写回（换设备/搬后端/防丢数据）----

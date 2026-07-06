@@ -31,6 +31,7 @@ const API = {
   troubleshoot: (recipeId, stepIndex, problem) => F('/api/troubleshoot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, problem }) }).then(j),
   nutrition: (recipeId) => F('/api/nutrition', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
   overview: (recipeId) => F('/api/overview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
+  explainRecipe: (recipeId, depth) => F('/api/explain-recipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, depth }) }).then(j),
   userdataGet: () => F('/api/userdata').then(r => r.json()).catch(() => ({ rev: 0 })),
   userdataPut: async (data) => {
     const r = await F('/api/userdata', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
@@ -39,6 +40,7 @@ const API = {
     return d;
   },
   importAll: (data) => F('/api/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(j),
+  importRecipe: (jsonld) => F('/api/import-recipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonld }) }).then(j),
 };
 async function exportData() {
   try {
@@ -60,6 +62,25 @@ function importData(file) {
       setTimeout(() => location.reload(), 900);
     } catch (e) { toast('导入失败：' + e.message); }
   };
+  reader.readAsText(file);
+}
+async function importRecipeJsonLd(text) {
+  const raw = String(text || '').trim();
+  if (!raw) { toast('先粘贴 JSON-LD'); return; }
+  try {
+    const res = await API.importRecipe(raw);
+    toast('已导入：' + (res.recipe?.title || res.id));
+    recipes = await API.list();
+    renderAll();
+    const found = recipes.find(x => x.id === res.id) || res.recipe;
+    if (found) openDetail(found);
+  } catch (e) {
+    toast('导入失败：' + e.message);
+  }
+}
+function importRecipeJsonFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => importRecipeJsonLd(reader.result);
   reader.readAsText(file);
 }
 async function j(r) { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); return d; }
@@ -278,6 +299,9 @@ function nutritionHtml(r, factor) {
       ${item('钠', scaledNutritionValue(p.sodium_mg, f), ' mg')}
     </div>
     ${n.disclaimer ? `<div class="nutrition-note">${esc(n.disclaimer)}</div>` : ''}</div>`;
+}
+function hasRecipeWhy(r) {
+  return (r.steps || []).some(s => s.why && (s.why.reason || s.why.if_not || s.why.cue));
 }
 function baseServings(r) { const m = String(r.servings || '').match(/(\d+)/); return m ? +m[1] : null; }
 const DIFF = { easy: '简单', medium: '中等', hard: '有挑战' };
@@ -730,6 +754,12 @@ function renderSettings() {
         <button class="btn ghost sm" id="btnExport">⬇ 导出备份</button>
         <button class="btn ghost sm" id="btnImport">⬆ 导入恢复</button>
         <input type="file" id="importFile" accept="application/json,.json" class="hidden"></div></div>
+    <div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">导入外部菜谱</div><div class="desc">支持单个 schema.org Recipe JSON-LD；Cooklang 导入暂未支持</div></div>
+      <textarea id="recipeImportText" placeholder="粘贴 JSON-LD" style="margin-top:8px;min-height:96px"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn ghost sm" id="btnImportRecipeText">导入菜谱</button>
+        <button class="btn ghost sm" id="btnImportRecipeFile">选择 JSON</button>
+        <input type="file" id="recipeImportFile" accept="application/json,.json" class="hidden"></div></div>
     <div style="text-align:center;color:var(--muted);font-size:12px;margin-top:14px">庖丁 · 解剖每一道菜的为什么</div>`;
 
   box.querySelectorAll('[data-k]').forEach(x => { x.previousElementSibling.onclick = () => { const k = x.dataset.k; settings[k] = k === 'theme' ? (settings.theme === 'dark' ? 'light' : 'dark') : !settings[k]; saveSettings(); applyTheme(); renderSettings(); }; });
@@ -741,6 +771,9 @@ function renderSettings() {
   $('#btnExport').onclick = exportData;
   $('#btnImport').onclick = () => $('#importFile').click();
   $('#importFile').onchange = (e) => { const f = e.target.files[0]; if (f) importData(f); e.target.value = ''; };
+  $('#btnImportRecipeText').onclick = () => importRecipeJsonLd($('#recipeImportText').value);
+  $('#btnImportRecipeFile').onclick = () => $('#recipeImportFile').click();
+  $('#recipeImportFile').onchange = (e) => { const f = e.target.files[0]; if (f) importRecipeJsonFile(f); e.target.value = ''; };
 }
 function applyTheme() { document.documentElement.setAttribute('data-theme', settings.theme); document.documentElement.style.setProperty('--fs', (16 * settings.fontScale) + 'px'); }
 function needsBackendSetup() {
@@ -774,6 +807,7 @@ function openDetail(r) {
   const m = rmeta(r.id);
   const base = baseServings(r);
   let factor = m.servingsFactor || 1;
+  const importedNeedsWhy = !!r.imported && !hasRecipeWhy(r);
   const p = el(`<div class="page">
     <div class="topbar">
       <button class="back">‹ 返回</button>
@@ -799,6 +833,7 @@ function openDetail(r) {
       <button class="btn ghost sm" id="btnNutri">🥗 营养估算</button>
       <button class="btn ghost sm" id="btnExport2">⬇ 导出</button>
     </div>
+    ${r.imported ? `<div class="import-note"><span>${importedNeedsWhy ? '外部导入，无原理讲解' : '外部导入，原理讲解已补齐'}</span>${importedNeedsWhy ? '<button class="btn ghost sm" id="btnImportExplain">AI 补讲解</button>' : ''}</div>` : ''}
     <div id="aiBox" style="margin:8px 16px 0"></div>
     <div id="nutritionBox"></div>
     <div class="sec-title">食材 <span class="act" id="addShop">＋ 加入购物清单</span></div>
@@ -876,6 +911,21 @@ function openDetail(r) {
     btn.disabled = false;
   };
   p.querySelector('#btnOverview').onclick = (e) => aiCall(e.currentTarget, () => API.overview(r.id), '💡 为什么这样设计', 'overview');
+  const importExplainBtn = p.querySelector('#btnImportExplain');
+  if (importExplainBtn) importExplainBtn.onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true; btn.textContent = '补讲解中…';
+    try {
+      const data = await API.explainRecipe(r.id, depth);
+      Object.assign(r, data.recipe || {});
+      recipes = recipes.map(x => x.id === r.id ? r : x);
+      toast('已补齐原理讲解');
+      close(); openDetail(r);
+    } catch (err) {
+      btn.disabled = false; btn.textContent = 'AI 补讲解';
+      toast('补讲解失败：' + err.message);
+    }
+  };
   p.querySelector('#btnNutri').onclick = async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true;

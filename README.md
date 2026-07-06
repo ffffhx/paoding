@@ -70,7 +70,7 @@ _Turn any cooking video into step-by-step instructions that explain the **why** 
 | 🧺 **食材 & 购物** | 份量缩放（按 `qty/unit` 精确重算）、购物清单**同名合并 + 按超市货架分区**，本周计划展示每日营养合计与周日均 |
 | ✏️ **可编辑** | AI 出错能直接改：标题/用量/步骤/讲解随手修正，保存即同步 |
 | ☁️ **同步 & 备份** | 收藏/笔记/评分/购物清单**跨设备共享**（手机↔电脑）；一键导出备份 / 导入恢复 |
-| 📤 **开放导出** | 复制 Markdown、下载 **Cooklang `.cook`** 与 **schema.org JSON-LD**，与菜谱生态互通 |
+| 🔄 **生态互通** | 导入单个 **schema.org Recipe JSON-LD**；复制 Markdown、下载 **Cooklang `.cook`** 与 **schema.org JSON-LD** |
 | ⭐ **收藏 & 记录** | 收藏整菜 + 收藏单步技巧、笔记、做过打卡 + 评分，菜谱库支持搜索、标签/食材/快捷筛选和按最近/评分/时长/名称排序 |
 | 🌙 **顺手** | 暗色模式、字号、朗读语速、装到主屏（PWA）、离线看已解析菜谱、双指缩放 |
 | 🛡 **诚实** | 视频没讲清的绝不臆造，如实标「视频未明确」；每步带置信度，靠推测的会标「⚠️ 推测」 |
@@ -98,6 +98,8 @@ _Turn any cooking video into step-by-step instructions that explain the **why** 
 ```
 
 > 视频抓不到时（如小红书无 yt-dlp 抽取器）会**自动改按文字帖**抓网页文字；纯图文/文字帖直接走右侧文字管线。
+
+导入范围：设置页可粘贴或选择 `.json` 文件导入单个 schema.org `Recipe` JSON-LD（兼容 `@graph`、`HowToStep`、`HowToSection`）。Cooklang 目前支持导出，暂不支持导入。
 
 ## 快速开始
 
@@ -221,6 +223,7 @@ node --test        # 或 npm test
 - [x] Docker / Compose 自托管 + APK 后端地址运行时配置
 - [x] 每步跳回原视频时间段（B站 / YouTube 时间戳）
 - [x] 结构化营养估算落库、缓存失效、JSON-LD 导出
+- [x] schema.org Recipe JSON-LD 导入（进出双向互通）
 - [ ] 更多真实视频调 prompt，沉淀跨视频「技法库」
 
 ## 致谢
