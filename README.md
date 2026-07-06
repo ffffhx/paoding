@@ -135,6 +135,8 @@ node app/server.mjs
 
 不花钱、不申请 key、视频不出本机。想提质量随时把 `.env` 里的 `PAODING_LLM_*` 换成云端旗舰模型（豆包 / Gemini / GPT / Claude 等任意 OpenAI 兼容接口），其余不变。
 
+可选：`PAODING_OUTPUT_LANG=en` 会要求 LLM 用英文生成结构化菜谱、每步 why、营养估算、技法归纳和 AI 助手回答；默认 `zh` 不追加任何语言约束，保持现有中文输出行为。前端界面语言切换是后续 i18n 基建工作，暂不由这个变量控制。
+
 ### 命令行（不开 App）
 
 ```bash

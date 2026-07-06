@@ -13,6 +13,7 @@ import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 import { FileJobStore, createJobQueue, createJobRecord, publicJob, TERMINAL_JOB_STATUSES } from "../src/jobs.mjs";
 import { mapSchemaRecipeToPaoding } from "../src/importRecipe.mjs";
 import { extractTechniques } from "../src/techniques.mjs";
+import { withOutputLanguage } from "../src/outputLanguage.mjs";
 import {
   isTechniqueSummaryCacheFresh,
   normalizeTechniqueSummary,
@@ -120,6 +121,7 @@ try {
 
 const slug = (s) => (s || "recipe").replace(/[\/\\:*?"<>|]/g, "").replace(/\s+/g, "-").slice(0, 40) || "recipe";
 const escHtml = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const llmSystem = (system) => withOutputLanguage(system, config.llm.outputLang);
 function schemaOrgRecipe(r) {
   const undef = (v) => (v == null || v === "" ? undefined : v);
   const n = r.nutrition?.per_serving;
@@ -565,7 +567,7 @@ function nutritionText(n) {
 async function estimateNutrition(r) {
   const raw = await chatJSON(config.llm, {
     temperature: 0.2,
-    system: "你是营养师。只输出 JSON 对象，按 schema 给出这道菜每份的粗略营养估算。字段必须是数字，不要区间，不确定也给合理近似值。",
+    system: llmSystem("你是营养师。只输出 JSON 对象，按 schema 给出这道菜每份的粗略营养估算。字段必须是数字，不要区间，不确定也给合理近似值。"),
     user: `schema:
 {
   "nutrition": {
@@ -644,7 +646,7 @@ async function summarizeTechnique(name) {
 
   const raw = await chatJSON(config.llm, {
     temperature: 0.2,
-    system: "你是中餐技法教练。只输出 JSON 对象，不要 markdown。请根据多个菜谱中同一技法的出现样本，归纳成短而实用的学习卡。",
+    system: llmSystem("你是中餐技法教练。只输出 JSON 对象，不要 markdown。请根据多个菜谱中同一技法的出现样本，归纳成短而实用的学习卡。"),
     user: `输出 schema:
 {
   "when": "什么时候用：1-3句话",
@@ -1005,6 +1007,7 @@ async function handleAiEndpoint(p, req, res) {
     }
   }
   const prompt = def.prompt({ body, r });
+  prompt.system = llmSystem(prompt.system);
   const answer = await chatText(config.llm, prompt);
   sendJSON(res, 200, { answer });
   return true;

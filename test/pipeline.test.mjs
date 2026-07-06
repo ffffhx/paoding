@@ -213,6 +213,36 @@ async function withEnv(values, fn) {
   }
 }
 
+function systemPrompts(requests) {
+  return requests.map((body) => String(body.messages?.find((m) => m.role === "system")?.content || ""));
+}
+
+async function collectTextPipelineSystemPrompts(outputLang) {
+  const llm = await startLlmStub();
+  try {
+    await withIsolatedTmp(async (root) => {
+      const config = createConfig(root, llm.url);
+      if (outputLang !== undefined) config.llm.outputLang = outputLang;
+      await processText("番茄炒蛋\n鸡蛋3个，番茄2个。先炒蛋，再炒番茄，合炒调味。", config);
+    });
+    return systemPrompts(llm.requests);
+  } finally {
+    await llm.close();
+  }
+}
+
+test("PAODING_OUTPUT_LANG=zh 不改变结构化和讲解 prompt", async () => {
+  const baseline = await collectTextPipelineSystemPrompts(undefined);
+  const zh = await collectTextPipelineSystemPrompts("zh");
+  assert.deepEqual(zh, baseline);
+});
+
+test("PAODING_OUTPUT_LANG=en 给结构化和讲解 prompt 追加英文输出约束", async () => {
+  const systems = await collectTextPipelineSystemPrompts("en");
+  assert.ok(systems.find((s) => s.includes("专业中餐厨师兼菜谱编辑"))?.includes("Output language: English"));
+  assert.ok(systems.find((s) => s.includes("食品科学"))?.includes("Output language: English"));
+});
+
 test("processVideo 使用可注入二进制跑通本地视频管线并清理临时目录", async () => {
   const llm = await startLlmStub();
   try {

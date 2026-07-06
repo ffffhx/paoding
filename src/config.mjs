@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeOutputLang } from "./outputLanguage.mjs";
 
 // 极简 .env 加载：不引第三方依赖，只读 KEY=VALUE。
 function loadDotEnv(cwd) {
@@ -37,6 +38,7 @@ export function loadConfig() {
   const llmBase = process.env.PAODING_LLM_BASE_URL?.replace(/\/$/, "");
   const llmKey = process.env.PAODING_LLM_API_KEY;
   const llmModel = process.env.PAODING_LLM_MODEL || "gpt-4o-mini";
+  const outputLang = normalizeOutputLang(process.env.PAODING_OUTPUT_LANG || "zh");
 
   if (!llmBase || !llmKey) {
     throw new Error(
@@ -47,7 +49,7 @@ export function loadConfig() {
   const visionModel = process.env.PAODING_VISION_MODEL || "";
 
   return {
-    llm: { baseUrl: llmBase, apiKey: llmKey, model: llmModel },
+    llm: { baseUrl: llmBase, apiKey: llmKey, model: llmModel, outputLang },
     // 视觉模型（可选）：设了 PAODING_VISION_MODEL 才开启抽帧读屏，兜住「没口播只有字幕」的视频
     vision: visionModel ? {
       baseUrl: (process.env.PAODING_VISION_BASE_URL || llmBase).replace(/\/$/, ""),

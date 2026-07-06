@@ -1,4 +1,5 @@
 import { chatJSON } from "./llm.mjs";
+import { withOutputLanguage } from "./outputLanguage.mjs";
 
 // 第二步大模型 —— 庖丁的核心差异点：对每一步讲透「为什么」。
 // 与「整理」解耦：这里可以用更擅长讲原理的模型，也便于日后对单步反复追问。
@@ -40,7 +41,7 @@ export async function explainSteps(llm, recipe, depth, signal) {
   };
 
   const out = await chatJSON(llm, {
-    system: SYSTEM(depth),
+    system: withOutputLanguage(SYSTEM(depth), llm.outputLang),
     user: `菜谱：\n${JSON.stringify(compact, null, 2)}`,
     temperature: 0.4,
     signal,

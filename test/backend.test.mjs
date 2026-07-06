@@ -9,6 +9,7 @@ import { assertPublicUrl, isPrivateAddress } from "../src/urlSafety.mjs";
 import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 import { createJobQueue } from "../src/jobs.mjs";
 import { fetchWithRetry } from "../src/fetchRetry.mjs";
+import { outputLanguageInstruction, withOutputLanguage } from "../src/outputLanguage.mjs";
 
 test("isUrl 只认 http(s)", () => {
   assert.equal(isUrl("https://x.com"), true);
@@ -59,6 +60,33 @@ test("loadConfig 返回必填结构", () => {
   assert.ok(c.llm.baseUrl && c.llm.apiKey && c.llm.model);
   assert.ok(c.asr && c.ytdlp);
   assert.equal(typeof c.depth, "string");
+});
+
+test("输出语言约束默认 zh 不改变 prompt，en 才追加", () => {
+  const system = "原始 system prompt";
+  assert.equal(withOutputLanguage(system, undefined), system);
+  assert.equal(withOutputLanguage(system, "zh"), system);
+  assert.match(withOutputLanguage(system, "en"), /Output language: English/);
+  assert.throws(() => outputLanguageInstruction("fr"), /只支持 zh 或 en/);
+});
+
+test("loadConfig 读取 PAODING_OUTPUT_LANG", () => {
+  const old = {
+    PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL,
+    PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY,
+    PAODING_OUTPUT_LANG: process.env.PAODING_OUTPUT_LANG,
+  };
+  try {
+    process.env.PAODING_LLM_BASE_URL = "http://localhost:11434/v1";
+    process.env.PAODING_LLM_API_KEY = "test";
+    process.env.PAODING_OUTPUT_LANG = "en";
+    assert.equal(loadConfig().llm.outputLang, "en");
+  } finally {
+    for (const [key, value] of Object.entries(old)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
 
 test("DEPTHS 是三个合法深度", () => {

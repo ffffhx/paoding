@@ -1,4 +1,5 @@
 import { chatJSON } from "./llm.mjs";
+import { withOutputLanguage } from "./outputLanguage.mjs";
 
 // 第一步大模型：把口播/简介整理成结构化菜谱。只做「结构化」，不做「讲原理」。
 const SYSTEM = `你是一名专业中餐厨师兼菜谱编辑。用户会给你一段做菜视频的【语音转写】和【视频简介】。
@@ -58,7 +59,7 @@ export async function structureRecipe(llm, { transcript, meta, signal }) {
 【语音转写】
 ${transcript}`;
 
-  const recipe = await chatJSON(llm, { system: SYSTEM, user, temperature: 0.2, signal });
+  const recipe = await chatJSON(llm, { system: withOutputLanguage(SYSTEM, llm.outputLang), user, temperature: 0.2, signal });
 
   // 防御式规整：小模型常吐出脏结构（步骤里混字符串等），只保留对象、绝不让下游崩。
   const isObj = (x) => x && typeof x === "object" && !Array.isArray(x);
