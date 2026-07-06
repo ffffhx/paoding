@@ -133,6 +133,14 @@ docs/           产品需求与技术方案
 
 产出的菜谱 JSON（每步含 `why`、`risk_level`、`confidence`）就是 App 的数据契约。
 
+## 测试
+
+```bash
+node --test        # 或 npm test
+```
+
+纯 Node 内置测试器、零第三方依赖：`test/backend`（解析纯函数）、`test/server`（起隔离实例测接口）、`test/frontend`（vm 沙箱跑真实 `app.js` 测纯逻辑）。GitHub Actions 每次 push / PR 自动跑（`.github/workflows/test.yml`）。
+
 ## Roadmap
 
 - [x] 文字帖解析（小红书图文 / 公众号 / 粘贴文字）+ 视频抓不到时自动兜底
