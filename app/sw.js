@@ -1,5 +1,5 @@
 /* 庖丁 Service Worker —— 应用外壳网络优先(可更新) + 已解析菜谱离线可用 */
-const VER = 'paoding-v16';
+const VER = 'paoding-v17';
 const SHELL = [
   './index.html', './styles.css', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png',

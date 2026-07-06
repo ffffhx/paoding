@@ -28,6 +28,41 @@ try {
 }
 
 const slug = (s) => (s || "recipe").replace(/[\/\\:*?"<>|]/g, "").replace(/\s+/g, "-").slice(0, 40);
+const escHtml = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// 只读分享页：任何人打开链接即可看整份菜谱（含每步为什么），无需 App。自包含 HTML。
+function shareHTML(r) {
+  const DIFF = { easy: "简单", medium: "中等", hard: "有挑战" };
+  const meta = [r.difficulty && DIFF[r.difficulty], r.cuisine, r.total_time_min && `约${r.total_time_min}分钟`, `${(r.steps || []).length}步`].filter(Boolean).join(" · ");
+  const ings = (r.ingredients || []).map((i) => `<li><span>${escHtml(i.name)}${i.note ? `（${escHtml(i.note)}）` : ""}</span><span class="amt">${escHtml(i.amount || "")}</span></li>`).join("");
+  const steps = (r.steps || []).map((s) => {
+    const w = s.why || {};
+    const why = [w.reason && `<p><b>为什么</b> ${escHtml(w.reason)}</p>`, w.if_not && `<p><b>不这么做</b> ${escHtml(w.if_not)}</p>`, w.cue && `<p class="g"><b>判断到位</b> ${escHtml(w.cue)}</p>`].filter(Boolean).join("");
+    return `<li><div class="st">${escHtml(s.title || "")}</div><div class="ac">${escHtml(s.action || "")}</div>${why ? `<div class="why">${why}</div>` : ""}</li>`;
+  }).join("");
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(r.title)} · 庖丁</title>
+<style>
+:root{--bg:#FBF7F0;--card:#fff;--ink:#2A2724;--muted:#8A817A;--line:#EAE2D6;--tomato:#E4572E;--herb:#6A8D3F}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif}
+.wrap{max-width:680px;margin:0 auto;padding:28px 18px 60px}
+h1{font-family:Georgia,"Songti SC",serif;font-size:30px;margin:0 0 6px}.meta{color:var(--muted);font-size:14px;margin-bottom:18px}
+h2{font-size:14px;color:var(--muted);letter-spacing:1px;margin:26px 0 10px}
+ul.ings{list-style:none;padding:0;margin:0;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+ul.ings li{display:flex;justify-content:space-between;gap:12px;padding:11px 15px;border-bottom:1px solid var(--line)}ul.ings li:last-child{border:none}.amt{color:var(--muted)}
+ol.steps{list-style:none;counter-reset:s;padding:0;margin:0}
+ol.steps li{counter-increment:s;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px 16px 14px 46px;margin-bottom:12px;position:relative}
+ol.steps li::before{content:counter(s);position:absolute;left:14px;top:15px;width:24px;height:24px;border-radius:50%;background:var(--ink);color:var(--bg);display:flex;align-items:center;justify-content:center;font-size:14px}
+.st{font-weight:600;font-size:17px}.ac{margin-top:5px}
+.why{margin-top:12px;background:var(--bg);border-radius:10px;padding:11px 13px;font-size:14px}.why p{margin:6px 0}.why b{color:var(--tomato)}.why .g b{color:var(--herb)}
+footer{margin-top:30px;text-align:center;color:var(--muted);font-size:13px}footer a{color:var(--tomato);text-decoration:none}
+</style></head><body><div class="wrap">
+<h1>${escHtml(r.title)}</h1><div class="meta">${escHtml(meta)}</div>
+${ings ? `<h2>食材</h2><ul class="ings">${ings}</ul>` : ""}
+<h2>步骤</h2><ol class="steps">${steps}</ol>
+<footer>由 <b>庖丁</b> 解析 · 把每道菜讲透「为什么」</footer>
+</div></body></html>`;
+}
 
 function listRecipes() {
   return fs
@@ -336,6 +371,15 @@ const server = http.createServer(async (req, res) => {
         "Content-Disposition": "attachment; filename=paoding.apk",
       });
       return res.end(fs.readFileSync(apk));
+    }
+
+    // ---- 只读分享页：/r/<菜谱id> 任何人可看，无需 App ----
+    if (req.method === "GET" && p.startsWith("/r/")) {
+      const id = decodeURIComponent(p.slice("/r/".length));
+      const r = loadRecipe(id);
+      if (!r) { res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" }); return res.end("<meta charset=utf-8><p style='font-family:sans-serif;text-align:center;margin-top:40px;color:#8A817A'>菜谱不存在或已删除</p>"); }
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      return res.end(shareHTML(r));
     }
 
     // ---- 静态 ----

@@ -687,11 +687,13 @@ function openExport(r, factor) {
   const ov = openModal(`<h3 style="text-align:left">导出「${esc(r.title || '')}」</h3>
     <p style="color:var(--muted);font-size:13px;text-align:left;margin:0 0 12px">选一种格式</p>
     <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn ghost" id="xLink">🔗 复制分享链接（任何人可看）</button>
       <button class="btn ghost" id="xMd">📋 复制文字（含每步为什么）</button>
       <button class="btn ghost" id="xCook">⬇ 下载 .cook（Cooklang 标准）</button>
       <button class="btn ghost" id="xJson">⬇ 下载 schema.org JSON-LD</button>
     </div>
     <div class="mrow"><button class="btn" id="xClose">关闭</button></div>`, 'left');
+  ov.querySelector('#xLink').onclick = () => { const url = location.origin + BASE + '/r/' + encodeURIComponent(r.id); (navigator.clipboard?.writeText(url)); toast('已复制分享链接'); };
   ov.querySelector('#xMd').onclick = () => { navigator.clipboard?.writeText(recipeToText(r, factor)); toast('已复制菜谱文字'); };
   ov.querySelector('#xCook').onclick = () => { downloadFile(safe + '.cook', recipeToCooklang(r), 'text/plain;charset=utf-8'); toast('已下载 .cook'); };
   ov.querySelector('#xJson').onclick = () => { downloadFile(safe + '.jsonld', JSON.stringify(recipeToSchemaOrg(r), null, 2), 'application/ld+json'); toast('已下载 JSON-LD'); };
