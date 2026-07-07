@@ -67,6 +67,7 @@ Paoding combines automatic parsing with step-level cooking reasoning. You can fo
 | Technique library | Aggregates recurring techniques across recipes and can summarize when to use them, key cues, and common failure points. |
 | AI helper | Ask about a step, rescue a failed dish, substitute ingredients, design the whole dish, or estimate nutrition. |
 | Tools and equipment | Dessert/baking-focused tool lists for mixers, piping bags, spatulas, molds, and similar equipment; alternatives include tradeoffs, no-alternative items include the reason, and inferred items are marked. |
+| Honest parsing | Missing video details stay marked as unspecified; unambiguous cooking homophones from speech transcription are corrected with the original wording kept in notes, and fuzzy quantities get common-sense reference notes marked as inferred. |
 | Pantry and planning | Scalable structured quantities, Chinese-unit reference, merged shopping lists by aisle, weekly meal planning, and multi-dish timelines. |
 | Editing and records | Edit titles, ingredients, steps, explanations, tags, notes, ratings, favorites, and cook history. |
 | Sync and backup | Shared recipes plus token-isolated household user data; export/import backup; automatic server backups. |
