@@ -527,12 +527,36 @@ test("购物清单和计划摘要切 en 后输出英文 UI 文案", () => {
   app.setLanguage("zh");
 });
 
+test("菜谱集规范化、成员查询和跨设备合并", () => {
+  const books = app.normalizeCookbooks([
+    { id: "breakfast", name: "早餐", recipeIds: ["a", "b", "a"], updated_at: "2026-01-01T00:00:00.000Z" },
+    { id: "party", name: "宴客", recipes: ["b"] },
+    { name: "" },
+  ]);
+  assert.deepEqual(Array.from(books.map(x => x.id)).sort(), ["breakfast", "party"]);
+  assert.deepEqual(Array.from(books.find(x => x.id === "breakfast").recipeIds), ["a", "b"]);
+  assert.deepEqual(Array.from(app.cookbookRecipeIdsFor("b", books)).sort(), ["breakfast", "party"]);
+  assert.deepEqual(Array.from(app.recipesInCookbook(books[0], [{ id: "b", title: "B" }, { id: "a", title: "A" }]).map(r => r.id)), ["a", "b"]);
+
+  const merged = app.mergeCookbooks([
+    { id: "breakfast", name: "早餐", recipeIds: ["a"], updated_at: "2026-01-01T00:00:00.000Z" },
+  ], [
+    { id: "breakfast", name: "早午餐", recipeIds: ["b"], updated_at: "2026-01-02T00:00:00.000Z" },
+    { id: "light", name: "减脂", recipeIds: ["c"] },
+  ]);
+  const breakfast = merged.find(x => x.id === "breakfast");
+  assert.equal(breakfast.name, "早午餐");
+  assert.deepEqual(Array.from(breakfast.recipeIds), ["a", "b"]);
+  assert.ok(merged.some(x => x.id === "light"));
+});
+
 test("mergeUserDataConflict 按字段合并跨设备数据", () => {
   const merged = app.mergeUserDataConflict({
     rev: 3,
     favRecipes: ["a"],
     favSteps: [{ key: "a#1", title: "A" }],
     shopping: [{ name: "盐", amount: "1勺", from: "A", checked: false }],
+    cookbooks: [{ id: "breakfast", name: "早餐", recipeIds: ["a"], updated_at: "2026-01-01T00:00:00.000Z" }],
     meta: { a: { notes: "旧", ingChecked: [1], cooked: true, cooked_at: "2026-01-01T00:00:00.000Z" } },
     mealPlan: { "2026-01-01": ["a"] },
     settings: { lang: "zh" },
@@ -540,6 +564,7 @@ test("mergeUserDataConflict 按字段合并跨设备数据", () => {
     favRecipes: ["b", "a"],
     favSteps: [{ key: "b#1", title: "B" }, { key: "a#1", title: "A2" }],
     shopping: [{ name: "盐", amount: "1勺", from: "A", checked: true }, { name: "糖", amount: "2勺", from: "B" }],
+    cookbooks: [{ id: "breakfast", name: "早午餐", recipeIds: ["b"], updated_at: "2026-01-02T00:00:00.000Z" }],
     meta: { a: { notes: "新", ingChecked: [2], cooked_at: "2026-01-02T00:00:00.000Z" } },
     mealPlan: { "2026-01-01": ["b", "a"] },
     settings: { lang: "en" },
@@ -549,6 +574,8 @@ test("mergeUserDataConflict 按字段合并跨设备数据", () => {
   assert.deepEqual(Array.from(merged.favSteps).map((x) => x.key), ["a#1", "b#1"]);
   assert.equal(merged.shopping.find((x) => x.name === "盐").checked, true);
   assert.ok(merged.shopping.some((x) => x.name === "糖"));
+  assert.equal(merged.cookbooks[0].name, "早午餐");
+  assert.deepEqual(Array.from(merged.cookbooks[0].recipeIds), ["a", "b"]);
   assert.deepEqual(Array.from(merged.meta.a.ingChecked), [1, 2]);
   assert.equal(merged.meta.a.notes, "新");
   assert.equal(merged.meta.a.cooked, true);

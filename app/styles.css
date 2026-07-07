@@ -253,6 +253,26 @@ html[data-theme="dark"] .job-row.running::after,html[data-theme="dark"] .job-row
 .tech-occ .lbl{color:var(--tomato);font-weight:700}
 .focus-step{border-color:var(--tomato);box-shadow:0 0 0 3px rgba(228,87,46,.18)}
 
+.cookbook-create{display:flex;gap:8px;align-items:center}
+.cookbook-create input{flex:1;min-width:0}
+.cookbook-grid{display:grid;gap:12px}
+.cookbook-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:12px;display:grid;grid-template-columns:72px minmax(0,1fr) auto;gap:12px;align-items:center;cursor:pointer}
+.cookbook-card:hover,.cookbook-recipe:hover{border-color:var(--tomato)}
+.cookbook-cover{width:72px;height:72px;border-radius:12px;background:linear-gradient(135deg,var(--tomato),var(--herb));color:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden;font-family:Georgia,"Songti SC",serif;font-size:30px;font-weight:700}
+.cookbook-cover img{width:100%;height:100%;object-fit:cover}
+.cookbook-info{min-width:0}
+.cookbook-info h3,.cookbook-recipe h3{margin:0 0 4px;font-size:18px;line-height:1.25}
+.cookbook-info p,.cookbook-recipe p{margin:0;color:var(--muted);font-size:13px}
+.cookbook-actions{display:flex;gap:2px}
+.cookbook-recipes{padding-top:4px}
+.cookbook-recipe{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer}
+.cookbook-recipe>div{min-width:0}
+.cb-pick-list{display:flex;flex-direction:column;gap:8px;max-height:42vh;overflow:auto;margin-top:8px}
+.cb-check{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;align-items:center;gap:8px;font-size:14px}
+.cb-check input{accent-color:var(--tomato)}
+.cb-check span{flex:1;min-width:0}
+.cb-check em{font-style:normal;color:var(--muted);font-size:12px}
+
 .planday{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px}
 .planhd{display:flex;align-items:center;gap:8px}
 .planhd .act{margin-left:auto;color:var(--tomato);font-size:13px;font-weight:600}
@@ -342,6 +362,7 @@ html[data-theme="dark"] .hl{color:var(--amber)}
     display:grid;gap:16px;padding:22px 28px 90px;align-content:start;
     grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));
   }
+  .cookbook-grid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
   .list .empty{grid-column:1/-1}
   .skill{margin-bottom:0}
 
@@ -384,6 +405,7 @@ html[data-theme="dark"] .hl{color:var(--amber)}
 @media (min-width: 1200px){
   #app{max-width:1200px}
   #view-recipes.list, #view-skills.list, #view-techniques.list{grid-template-columns:repeat(auto-fill, minmax(340px, 1fr))}
+  .cookbook-grid{grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
 }
 
 /* ===== 解析截图：步骤状态图 / 食材图 / 封面 / 灯箱 ===== */
@@ -407,7 +429,7 @@ html[data-theme="dark"] .hl{color:var(--amber)}
   @page{margin:14mm}
   html,body,#app{background:#fff!important;color:#111!important;max-width:none!important;margin:0!important;padding:0!important}
   #app>header,#app>.parsebar,#app>.tabs,#searchrow,#recipeTools,#filters,
-  #view-recipes,#view-plan,#view-techniques,#view-skills,#view-shopping,#view-settings,
+  #view-recipes,#view-cookbooks,#view-plan,#view-techniques,#view-skills,#view-shopping,#view-settings,
   .toast,#timerhud,#cook,.overlay,.lightbox{display:none!important}
   .page{position:static!important;inset:auto!important;display:block!important;max-width:none!important;margin:0!important;overflow:visible!important;border:0!important;box-shadow:none!important;animation:none!important;background:#fff!important;color:#111!important}
   .page .topbar,.page .scaler,.page .import-note,.page .cta,.page .notes,.page .rating,

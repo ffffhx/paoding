@@ -129,6 +129,7 @@ let userdataRev = 0;
 let favRecipes = store.get('favRecipes', []);
 let favSteps = store.get('favSteps', []);
 let shopping = store.get('shopping', []);
+let cookbooks = normalizeCookbooks(store.get('cookbooks', []));
 let mealPlan = store.get('mealPlan', {}); // { 'YYYY-MM-DD': [recipeId,...] }
 function saveMealPlan() { store.set('mealPlan', mealPlan); }
 let meta = store.get('meta', {}); // {recipeId:{cooked,cooked_at,rating,notes,ingChecked:[]}}
@@ -143,7 +144,7 @@ const stepKey = (id, i) => id + '#' + i;
    收藏/技巧/购物清单/笔记评分等原本只存在各设备的 localStorage，手机和电脑不通。
    这里拦截对这些键的写入 → 防抖后回传后端；启动时先从后端拉一份，实现多端共享。 */
 const _storeSet = store.set.bind(store);
-const SYNC_KEYS = new Set(['favRecipes', 'favSteps', 'shopping', 'meta', 'mealPlan', 'settings']);
+const SYNC_KEYS = new Set(['favRecipes', 'favSteps', 'shopping', 'cookbooks', 'meta', 'mealPlan', 'settings']);
 let syncT = null;
 function revOf(d) { const n = Number(d && d.rev); return Number.isInteger(n) && n >= 0 ? n : 0; }
 function syncSettingsFrom(value) {
@@ -152,7 +153,7 @@ function syncSettingsFrom(value) {
   return out;
 }
 function currentSyncSettings() { return { lang: settings.lang }; }
-function localUserData() { return { rev: userdataRev, favRecipes, favSteps, shopping, meta, mealPlan, settings: currentSyncSettings() }; }
+function localUserData() { return { rev: userdataRev, favRecipes, favSteps, shopping, cookbooks, meta, mealPlan, settings: currentSyncSettings() }; }
 function uniqList(a, b, keyFn = (x) => JSON.stringify(x)) {
   const out = [], seen = new Set();
   for (const x of [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]) {
@@ -191,6 +192,77 @@ function mergeMealPlan(remote, local) {
   for (const [day, ids] of Object.entries(loc)) out[day] = uniqList(out[day], ids, String);
   return out;
 }
+function simpleHash(text) {
+  let h = 2166136261;
+  for (const ch of String(text || '')) {
+    h ^= ch.charCodeAt(0);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+function safeDataId(value, fallbackSeed = '') {
+  const raw = String(value || '').trim();
+  const clean = raw.replace(/[^\w-]/g, '').slice(0, 48);
+  return clean || `cb-${simpleHash(fallbackSeed || Date.now())}`;
+}
+function normalizeCookbook(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const name = String(raw.name || '').trim().slice(0, 60);
+  if (!name) return null;
+  const recipeIds = uniqList(raw.recipeIds || raw.recipes || [], [], String).map(String).filter(Boolean);
+  return {
+    id: safeDataId(raw.id, name),
+    name,
+    recipeIds,
+    created_at: String(raw.created_at || raw.createdAt || ''),
+    updated_at: String(raw.updated_at || raw.updatedAt || ''),
+  };
+}
+function normalizeCookbooks(list) {
+  const out = [];
+  const byKey = new Map();
+  for (const raw of Array.isArray(list) ? list : []) {
+    const cb = normalizeCookbook(raw);
+    if (!cb) continue;
+    const key = cb.id || `name:${cb.name}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.recipeIds = uniqList(existing.recipeIds, cb.recipeIds, String);
+      if (cb.updated_at && (!existing.updated_at || cb.updated_at > existing.updated_at)) {
+        existing.name = cb.name;
+        existing.updated_at = cb.updated_at;
+      }
+    } else {
+      byKey.set(key, cb);
+      out.push(cb);
+    }
+  }
+  return out.sort((a, b) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || '')) || a.name.localeCompare(b.name, 'zh-CN'));
+}
+function mergeCookbooks(remote, local) {
+  const merged = new Map();
+  const add = (book) => {
+    const cb = normalizeCookbook(book);
+    if (!cb) return;
+    const key = cb.id;
+    const prev = merged.get(key);
+    if (!prev) {
+      merged.set(key, cb);
+      return;
+    }
+    const preferNextName = cb.updated_at && (!prev.updated_at || cb.updated_at >= prev.updated_at);
+    merged.set(key, {
+      ...prev,
+      name: preferNextName ? cb.name : prev.name,
+      recipeIds: uniqList(prev.recipeIds, cb.recipeIds, String),
+      created_at: prev.created_at || cb.created_at,
+      updated_at: [prev.updated_at, cb.updated_at].filter(Boolean).sort().pop() || '',
+    });
+  };
+  normalizeCookbooks(remote).forEach(add);
+  normalizeCookbooks(local).forEach(add);
+  return normalizeCookbooks([...merged.values()]);
+}
 function mergeSyncSettings(remote, local) {
   const r = syncSettingsFrom(remote);
   const l = syncSettingsFrom(local);
@@ -202,6 +274,7 @@ function mergeUserDataConflict(remote, local) {
     favRecipes: uniqList(remote?.favRecipes, local?.favRecipes, String),
     favSteps: uniqList(remote?.favSteps, local?.favSteps, (x) => x?.key || JSON.stringify(x)),
     shopping: mergeShopping(remote?.shopping, local?.shopping),
+    cookbooks: mergeCookbooks(remote?.cookbooks, local?.cookbooks),
     meta: mergeMeta(remote?.meta, local?.meta),
     mealPlan: mergeMealPlan(remote?.mealPlan, local?.mealPlan),
     settings: mergeSyncSettings(remote?.settings, local?.settings),
@@ -212,11 +285,12 @@ function applyUserData(d) {
   favRecipes = Array.isArray(d.favRecipes) ? d.favRecipes : [];
   favSteps = Array.isArray(d.favSteps) ? d.favSteps : [];
   shopping = Array.isArray(d.shopping) ? d.shopping : [];
+  cookbooks = normalizeCookbooks(d.cookbooks);
   meta = d.meta && typeof d.meta === 'object' && !Array.isArray(d.meta) ? d.meta : {};
   mealPlan = d.mealPlan && typeof d.mealPlan === 'object' && !Array.isArray(d.mealPlan) ? d.mealPlan : {};
   const syncedSettings = syncSettingsFrom(d.settings);
   if (syncedSettings.lang) { setLanguage(syncedSettings.lang); applyStaticI18n(); _storeSet('settings', settings); }
-  _storeSet('favRecipes', favRecipes); _storeSet('favSteps', favSteps); _storeSet('shopping', shopping); _storeSet('meta', meta); _storeSet('mealPlan', mealPlan);
+  _storeSet('favRecipes', favRecipes); _storeSet('favSteps', favSteps); _storeSet('shopping', shopping); _storeSet('cookbooks', cookbooks); _storeSet('meta', meta); _storeSet('mealPlan', mealPlan);
 }
 async function syncUserDataNow(retry = true) {
   try {
@@ -247,6 +321,7 @@ async function loadUserData() {
   favRecipes = merge(d.favRecipes, favRecipes); _storeSet('favRecipes', favRecipes);
   favSteps = merge(d.favSteps, favSteps); _storeSet('favSteps', favSteps);
   shopping = merge(d.shopping, shopping); _storeSet('shopping', shopping);
+  cookbooks = normalizeCookbooks(merge(d.cookbooks, cookbooks)); _storeSet('cookbooks', cookbooks);
   meta = merge(d.meta, meta); _storeSet('meta', meta);
   mealPlan = merge(d.mealPlan, mealPlan); _storeSet('mealPlan', mealPlan);
   const remoteSettings = syncSettingsFrom(d.settings);
@@ -1006,6 +1081,203 @@ function renderSkills() {
   });
 }
 
+/* ================= 菜谱集 ================= */
+function cookbookRecipeIdsFor(recipeId, books = cookbooks) {
+  const id = String(recipeId || '');
+  return normalizeCookbooks(books).filter(cb => cb.recipeIds.includes(id)).map(cb => cb.id);
+}
+function recipesInCookbook(cb, list = recipes) {
+  const byId = new Map((Array.isArray(list) ? list : []).map(r => [r.id, r]));
+  return (cb?.recipeIds || []).map(id => byId.get(id)).filter(Boolean);
+}
+function recipeCoverStep(r) {
+  return (r?.steps || []).slice().reverse().find(s => s.image) || null;
+}
+function cookbookCoverRecipe(cb, list = recipes) {
+  return recipesInCookbook(cb, list)[0] || null;
+}
+function cookbookCountText(count) {
+  return tr('cookbooks.count', { count });
+}
+function saveCookbooks() {
+  cookbooks = normalizeCookbooks(cookbooks);
+  store.set('cookbooks', cookbooks);
+}
+function uniqueCookbookId(name) {
+  const seed = safeDataId(name, name);
+  let id = seed.startsWith('cb-') ? seed : `cb-${seed}`;
+  const used = new Set(cookbooks.map(cb => cb.id));
+  for (let i = 2; used.has(id); i++) id = `${seed}-${i}`;
+  return id;
+}
+function addCookbook(name) {
+  const clean = String(name || '').trim();
+  if (!clean) return null;
+  const exists = cookbooks.find(cb => cb.name === clean);
+  if (exists) return exists;
+  const stamp = new Date().toISOString();
+  const cb = { id: uniqueCookbookId(clean), name: clean.slice(0, 60), recipeIds: [], created_at: stamp, updated_at: stamp };
+  cookbooks = normalizeCookbooks([cb, ...cookbooks]);
+  saveCookbooks();
+  return cb;
+}
+function renameCookbook(id, name) {
+  const clean = String(name || '').trim();
+  if (!clean) return false;
+  const stamp = new Date().toISOString();
+  let changed = false;
+  cookbooks = cookbooks.map(cb => {
+    if (cb.id !== id) return cb;
+    changed = true;
+    return { ...cb, name: clean.slice(0, 60), updated_at: stamp };
+  });
+  if (changed) saveCookbooks();
+  return changed;
+}
+function deleteCookbook(id) {
+  const next = cookbooks.filter(cb => cb.id !== id);
+  if (next.length === cookbooks.length) return false;
+  cookbooks = next;
+  saveCookbooks();
+  return true;
+}
+function setRecipeCookbookMembership(recipeId, cookbookId, enabled) {
+  const rid = String(recipeId || '');
+  if (!rid) return;
+  const stamp = new Date().toISOString();
+  cookbooks = cookbooks.map(cb => {
+    if (cb.id !== cookbookId) return cb;
+    const recipeIds = enabled ? uniqList(cb.recipeIds, [rid], String) : (cb.recipeIds || []).filter(id => id !== rid);
+    return { ...cb, recipeIds, updated_at: stamp };
+  });
+  saveCookbooks();
+}
+function cookbookCoverHtml(cb) {
+  const r = cookbookCoverRecipe(cb);
+  const cover = recipeCoverStep(r);
+  if (r && cover) return `<img src="${esc(recipeImg(r.id, cover.image))}" alt="" loading="lazy" onerror="this.remove()">`;
+  const initial = (cb.name || '?').trim().slice(0, 1).toUpperCase();
+  return `<span>${esc(initial)}</span>`;
+}
+function renderCookbooks() {
+  const box = $('#view-cookbooks');
+  if (!box) return;
+  const head = `<div class="cookbook-create">
+    <input type="text" id="cookbookName" placeholder="${esc(tr('cookbooks.create.placeholder'))}">
+    <button class="btn sm" id="cookbookCreate">${esc(tr('cookbooks.create'))}</button>
+  </div>`;
+  if (!cookbooks.length) {
+    box.innerHTML = head + `<div class="empty">${esc(tr('cookbooks.empty.title'))}<br>${esc(tr('cookbooks.empty.help'))}</div>`;
+  } else {
+    box.innerHTML = head + `<div class="cookbook-grid">${cookbooks.map(cb => `
+      <div class="cookbook-card" data-id="${esc(cb.id)}">
+        <div class="cookbook-cover">${cookbookCoverHtml(cb)}</div>
+        <div class="cookbook-info">
+          <h3>${esc(cb.name)}</h3>
+          <p>${esc(cookbookCountText((cb.recipeIds || []).length))}</p>
+        </div>
+        <div class="cookbook-actions">
+          <button class="iconbtn cb-rename" title="${esc(tr('cookbooks.rename'))}">✏️</button>
+          <button class="iconbtn cb-delete" title="${esc(tr('cookbooks.delete'))}">🗑</button>
+        </div>
+      </div>`).join('')}</div>`;
+  }
+  const create = () => {
+    const input = box.querySelector('#cookbookName');
+    const cb = addCookbook(input?.value);
+    if (!cb) return;
+    toast(tr('cookbooks.created'));
+    renderCookbooks();
+  };
+  box.querySelector('#cookbookCreate') && (box.querySelector('#cookbookCreate').onclick = create);
+  box.querySelector('#cookbookName') && (box.querySelector('#cookbookName').onkeydown = (e) => { if (e.key === 'Enter') create(); });
+  box.querySelectorAll('.cookbook-card').forEach(card => {
+    const id = card.dataset.id;
+    card.onclick = () => openCookbook(id);
+    card.querySelector('.cb-rename').onclick = async (e) => {
+      e.stopPropagation();
+      const cb = cookbooks.find(x => x.id === id);
+      const name = await promptModal(tr('cookbooks.rename.title'), cb?.name || '', tr('common.save'));
+      if (name && renameCookbook(id, name)) { toast(tr('cookbooks.renamed')); renderCookbooks(); }
+    };
+    card.querySelector('.cb-delete').onclick = async (e) => {
+      e.stopPropagation();
+      if (!(await confirmModal(tr('cookbooks.delete.confirm'), tr('common.delete')))) return;
+      if (deleteCookbook(id)) { toast(tr('cookbooks.deleted')); renderCookbooks(); }
+    };
+  });
+}
+function openCookbook(id) {
+  const cb = cookbooks.find(x => x.id === id);
+  if (!cb) return;
+  const items = recipesInCookbook(cb);
+  const p = el(`<div class="page">
+    <div class="topbar"><button class="back">${esc(tr('detail.back'))}</button>
+      <div style="display:flex;gap:4px">
+        <button class="iconbtn" id="cbRename" title="${esc(tr('cookbooks.rename'))}">✏️</button>
+        <button class="iconbtn" id="cbDelete" title="${esc(tr('cookbooks.delete'))}">🗑</button>
+      </div></div>
+    <div class="detail-hd"><h2>${esc(cb.name)}</h2><div class="meta">${esc(cookbookCountText(items.length))}</div></div>
+    <div class="list cookbook-recipes">
+      ${items.length ? items.map(r => `<div class="cookbook-recipe" data-id="${esc(r.id)}">
+        <div><h3>${esc(r.title || tr('recipe.untitled'))}</h3><p>${esc(tr('recipe.steps', { count: (r.steps || []).length }))}</p></div>
+        <button class="btn ghost sm cb-remove">${esc(tr('cookbooks.removeRecipe'))}</button>
+      </div>`).join('') : `<div class="empty">${esc(tr('cookbooks.detail.empty'))}</div>`}
+    </div></div>`);
+  const close = () => p.remove();
+  p.querySelector('.back').onclick = close;
+  p.querySelector('#cbRename').onclick = async () => {
+    const name = await promptModal(tr('cookbooks.rename.title'), cb.name, tr('common.save'));
+    if (name && renameCookbook(cb.id, name)) { toast(tr('cookbooks.renamed')); close(); renderCookbooks(); openCookbook(cb.id); }
+  };
+  p.querySelector('#cbDelete').onclick = async () => {
+    if (!(await confirmModal(tr('cookbooks.delete.confirm'), tr('common.delete')))) return;
+    if (deleteCookbook(cb.id)) { toast(tr('cookbooks.deleted')); close(); renderCookbooks(); }
+  };
+  p.querySelectorAll('.cookbook-recipe').forEach(row => {
+    const rid = row.dataset.id;
+    row.onclick = () => { const r = recipes.find(x => x.id === rid); if (r) openDetail(r); };
+    row.querySelector('.cb-remove').onclick = (e) => {
+      e.stopPropagation();
+      setRecipeCookbookMembership(rid, cb.id, false);
+      toast(tr('cookbooks.saved'));
+      close(); renderCookbooks(); openCookbook(cb.id);
+    };
+  });
+  $('#app').appendChild(p);
+}
+function showCookbookPicker(r) {
+  const ov = openModal(`<h3 style="text-align:left">${esc(tr('cookbooks.picker.title'))}</h3>
+    <div id="cbPickList" class="cb-pick-list"></div>
+    <div class="cookbook-create" style="padding:0;margin-top:10px">
+      <input type="text" id="cbPickNew" placeholder="${esc(tr('cookbooks.create.placeholder'))}">
+      <button class="btn ghost sm" id="cbPickCreate">${esc(tr('cookbooks.create'))}</button>
+    </div>
+    <div class="mrow"><button class="btn ghost" id="cbPickCancel">${esc(tr('common.cancel'))}</button><button class="btn" id="cbPickSave">${esc(tr('common.save'))}</button></div>`, 'left');
+  const selected = new Set(cookbookRecipeIdsFor(r.id));
+  const draw = () => {
+    ov.querySelector('#cbPickList').innerHTML = cookbooks.length ? cookbooks.map(cb => `
+      <label class="cb-check"><input type="checkbox" data-id="${esc(cb.id)}" ${selected.has(cb.id) ? 'checked' : ''}> <span>${esc(cb.name)}</span><em>${esc(cookbookCountText((cb.recipeIds || []).length))}</em></label>
+    `).join('') : `<div class="empty" style="padding:20px 12px">${esc(tr('cookbooks.empty.title'))}</div>`;
+    ov.querySelectorAll('#cbPickList input').forEach(input => {
+      input.onchange = () => { input.checked ? selected.add(input.dataset.id) : selected.delete(input.dataset.id); };
+    });
+  };
+  draw();
+  ov.querySelector('#cbPickCreate').onclick = () => {
+    const input = ov.querySelector('#cbPickNew');
+    const cb = addCookbook(input.value);
+    if (cb) { selected.add(cb.id); input.value = ''; draw(); }
+  };
+  ov.querySelector('#cbPickCancel').onclick = () => ov.remove();
+  ov.querySelector('#cbPickSave').onclick = () => {
+    cookbooks.forEach(cb => setRecipeCookbookMembership(r.id, cb.id, selected.has(cb.id)));
+    ov.remove();
+    renderCookbooks();
+    toast(tr('cookbooks.saved'));
+  };
+}
+
 /* ================= 购物清单（按货架分区 + 同名合并）================= */
 const SHOP_SECTION_ORDER = ['蔬菜水果', '肉禽蛋', '水产', '调味干货', '粮油米面', '乳品豆制品', '冷冻', '其他'];
 const SHOP_SECTION_I18N = {
@@ -1372,6 +1644,7 @@ function openDetail(r, focusStepIndex = null) {
       <button class="btn ghost sm" id="btnOverview">${esc(tr('detail.overview'))}</button>
       <button class="btn ghost sm" id="btnNutri">${esc(tr('detail.nutrition'))}</button>
       ${!hasOwnToolsField(r) ? `<button class="btn ghost sm" id="btnTools">${esc(tr('detail.tools.addAi'))}</button>` : ''}
+      <button class="btn ghost sm" id="btnCookbooks">${esc(tr('cookbooks.detail.button'))}</button>
       <button class="btn ghost sm" id="btnTags">${esc(tr('detail.tags'))}</button>
       <button class="btn ghost sm" id="btnExport2">${esc(tr('detail.export'))}</button>
     </div>
@@ -1516,6 +1789,7 @@ function openDetail(r, focusStepIndex = null) {
     btn.disabled = false;
   };
   p.querySelector('#btnOverview').onclick = (e) => aiCall(e.currentTarget, () => API.overview(r.id), tr('detail.overview'), 'overview');
+  p.querySelector('#btnCookbooks').onclick = () => showCookbookPicker(r);
   p.querySelector('#btnTags').onclick = () => editRecipeTags(r, (nextTags) => {
     r.tags = nextTags;
     recipes = recipes.map(x => x.id === r.id ? { ...x, tags: nextTags } : x);
@@ -2196,7 +2470,7 @@ function updateBadges() {
   set('#tabSkillsBadge', favSteps.length);
   set('#tabShopBadge', shoppingUnchecked());
 }
-function renderAll() { renderFilters(); renderRecipes(); renderTechniques(); renderSkills(); renderShopping(); updateBadges(); }
+function renderAll() { renderFilters(); renderRecipes(); renderCookbooks(); renderTechniques(); renderSkills(); renderShopping(); updateBadges(); }
 function syncDepthChips() { document.querySelectorAll('#depth .chip').forEach(x => x.classList.toggle('on', x.dataset.d === depth)); }
 async function refresh() {
   try { recipes = await API.list(); } catch { recipes = store.get('cacheRecipes', []); }
@@ -2210,10 +2484,10 @@ function initTabs() {
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     curTab = t.dataset.tab;
     document.querySelectorAll('.tab').forEach(x => { const on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', on ? 'true' : 'false'); });
-    ['recipes', 'plan', 'techniques', 'skills', 'shopping', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== curTab));
+    ['recipes', 'cookbooks', 'plan', 'techniques', 'skills', 'shopping', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== curTab));
     const showSearch = curTab === 'recipes';
     $('#searchrow').classList.toggle('hidden', !showSearch); $('#recipeTools').classList.toggle('hidden', !showSearch); $('#filters').classList.toggle('hidden', !showSearch);
-    if (curTab === 'techniques') renderTechniques(); if (curTab === 'skills') renderSkills(); if (curTab === 'shopping') renderShopping(); if (curTab === 'settings') renderSettings(); if (curTab === 'plan') renderPlan();
+    if (curTab === 'cookbooks') renderCookbooks(); if (curTab === 'techniques') renderTechniques(); if (curTab === 'skills') renderSkills(); if (curTab === 'shopping') renderShopping(); if (curTab === 'settings') renderSettings(); if (curTab === 'plan') renderPlan();
   });
   // 加载时同步一次 aria-selected，读屏用户一进来就知道当前在哪个标签
   document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x.classList.contains('on') ? 'true' : 'false'));
