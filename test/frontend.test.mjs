@@ -406,6 +406,22 @@ test("跟做模式辅助片段切 en 后输出英文 UI 文案", () => {
   app.setLanguage("zh");
 });
 
+test("keyboardShortcutAction 映射桌面快捷键且输入框聚焦不劫持", () => {
+  const input = { tagName: "INPUT" };
+  assert.equal(app.keyboardShortcutAction({ key: "/", target: input }, { cookMode: false, hasOverlay: false }), "");
+  assert.equal(app.keyboardShortcutAction({ key: " ", target: input }, { cookMode: true, hasOverlay: false }), "");
+  assert.equal(app.keyboardShortcutAction({ key: "/", target: { tagName: "BODY" } }, { cookMode: false, hasOverlay: false }), "focus_search");
+  assert.equal(app.keyboardShortcutAction({ key: "Escape", target: { tagName: "BODY" } }, { hasOverlay: true }), "close_overlay");
+  assert.equal(app.keyboardShortcutAction({ key: "ArrowRight", target: { tagName: "BODY" } }, { cookMode: true }), "cook_next");
+  assert.equal(app.keyboardShortcutAction({ key: "j", target: { tagName: "BODY" } }, { cookMode: true }), "cook_next");
+  assert.equal(app.keyboardShortcutAction({ key: "ArrowLeft", target: { tagName: "BODY" } }, { cookMode: true }), "cook_prev");
+  assert.equal(app.keyboardShortcutAction({ key: "k", target: { tagName: "BODY" } }, { cookMode: true }), "cook_prev");
+  assert.equal(app.keyboardShortcutAction({ key: " ", target: { tagName: "BODY" } }, { cookMode: true }), "cook_timer");
+  assert.equal(app.keyboardShortcutAction({ key: "r", target: { tagName: "BODY" } }, { cookMode: true }), "cook_read");
+  assert.equal(app.keyboardShortcutAction({ key: "?", target: { tagName: "BODY" } }, { cookMode: true }), "cook_help");
+  assert.equal(app.keyboardShortcutAction({ key: " ", target: { tagName: "BUTTON" } }, { cookMode: true }), "");
+});
+
 test("技法页辅助文案切 en 后输出英文 UI 文案", () => {
   app.setLanguage("en");
   assert.equal(app.techCountText(3), "3 uses");

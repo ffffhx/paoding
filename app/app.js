@@ -900,7 +900,7 @@ const Timers = {
     const saved = store.get('timers', []);
     if (!Array.isArray(saved) || !saved.length) return;
     const now = Date.now();
-    this.list = saved.map(t => ({ ...t, done: t.done || now >= t.endAt })).filter(t => !t.done || now - t.endAt < 10 * 60 * 1000);
+    this.list = saved.map(t => ({ ...t, done: t.done || (!t.paused && now >= t.endAt), remaining: Math.max(0, Number(t.remaining) || 0) })).filter(t => !t.done || now - t.endAt < 10 * 60 * 1000);
     this.save(); this.render();
     if (this.list.some(t => !t.done)) this.start();
   },
@@ -908,19 +908,20 @@ const Timers = {
   add(label, seconds) {
     if (!seconds) return;
     if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => { });
-    this.list.push({ id: Date.now() + '' + Math.floor(performance.now()), label, endAt: Date.now() + seconds * 1000, done: false });
+    this.list.push({ id: Date.now() + '' + Math.floor(performance.now()), label, endAt: Date.now() + seconds * 1000, done: false, paused: false, remaining: seconds });
     this.save(); this.render(); this.start(); toast(tr('timer.started', { label }));
   },
   start() { if (this.iv) return; this.iv = setInterval(() => this.tick(), 500); },
   tick() {
     const now = Date.now(); let changed = false;
     for (const t of this.list) {
+      if (t.paused) continue;
       if (!t.done && now >= t.endAt) { t.done = true; changed = true; this.ring(t); }
     }
     if (changed) this.save(); // 有计时到点才落盘，避免每 500ms 写一次
     this.render();
     // 全部倒计时结束（或清空）后停掉空转的 interval；新加计时会在 add() 里重启
-    if ((!this.list.length || this.list.every(t => t.done)) && this.iv) { clearInterval(this.iv); this.iv = null; }
+    if ((!this.list.length || this.list.every(t => t.done || t.paused)) && this.iv) { clearInterval(this.iv); this.iv = null; }
   },
   ring(t) {
     beep(); try { navigator.vibrate && navigator.vibrate([300, 150, 300]); } catch { }
@@ -928,13 +929,31 @@ const Timers = {
     try { if ('Notification' in window && Notification.permission === 'granted') new Notification(tr('timer.notification.title'), { body: tr('timer.notification.body', { label: t.label }), tag: t.id }); } catch { }
   },
   remove(id) { this.list = this.list.filter(x => x.id !== id); this.save(); this.render(); },
+  toggleActive() {
+    const now = Date.now();
+    const t = this.list.slice().reverse().find(x => !x.done);
+    if (!t) return false;
+    if (t.paused) {
+      t.endAt = now + Math.max(1, Number(t.remaining) || 1) * 1000;
+      t.paused = false;
+      toast(tr('timer.resumed', { label: t.label }));
+      this.start();
+    } else {
+      t.remaining = Math.max(1, Math.round((t.endAt - now) / 1000));
+      t.paused = true;
+      toast(tr('timer.paused', { label: t.label }));
+    }
+    this.save();
+    this.render();
+    return true;
+  },
   render() {
     const h = this.ensureHUD(); const now = Date.now();
     if (!this.list.length) { h.innerHTML = ''; return; }
     h.innerHTML = this.list.map(t => {
-      const left = Math.max(0, Math.round((t.endAt - now) / 1000));
+      const left = t.paused ? Math.max(0, Number(t.remaining) || 0) : Math.max(0, Math.round((t.endAt - now) / 1000));
       const mm = String(Math.floor(left / 60)).padStart(2, '0'), ss = String(left % 60).padStart(2, '0');
-      return `<div class="tchip ${t.done ? 'ring' : ''}" data-id="${t.id}"><span class="tl">⏱ ${esc(t.label)}</span><span class="tc">${t.done ? '00:00 ✓' : mm + ':' + ss}</span><button class="tx">✕</button></div>`;
+      return `<div class="tchip ${t.done ? 'ring' : ''} ${t.paused ? 'paused' : ''}" data-id="${t.id}"><span class="tl">${t.paused ? '⏸' : '⏱'} ${esc(t.label)}</span><span class="tc">${t.done ? '00:00 ✓' : mm + ':' + ss}</span><button class="tx">✕</button></div>`;
     }).join('');
     h.querySelectorAll('.tchip').forEach(c => c.querySelector('.tx').onclick = () => this.remove(c.dataset.id));
   },
@@ -2915,6 +2934,7 @@ async function openCook(r) {
           <h2>${esc(s.title)}</h2>
           <div class="action">${esc(s.action)}</div>
         </div>
+        <div class="cook-shortcuts">${esc(tr('cook.shortcutsHint'))}</div>
         <div class="cook-nav">
           <button class="btn prev" ${cur === 0 ? 'disabled' : ''}>${esc(tr('cook.prev'))}</button>
           <button class="btn next">${esc(tr('cook.next'))}</button></div>`;
@@ -2951,7 +2971,8 @@ async function openCook(r) {
       </div>
       <div class="cook-nav">
         <button class="btn prev" ${cur === 0 ? 'disabled' : ''}>${esc(tr('cook.prev'))}</button>
-        <button class="btn next">${esc(cur === steps.length - 1 ? tr('cook.finish') : tr('cook.next'))}</button></div>`;
+        <button class="btn next">${esc(cur === steps.length - 1 ? tr('cook.finish') : tr('cook.next'))}</button></div>
+      <div class="cook-shortcuts">${esc(tr('cook.shortcutsHint'))}</div>`;
     box.querySelector('.x').onclick = exit;
     box.querySelector('.fav-step').onclick = () => toggleStep(r, s);
     box.querySelector('.prev').onclick = () => { if (cur > 0) { stopTimer(); stopSpeak(); cur--; saveProg(cur); render(); } };
@@ -3108,6 +3129,81 @@ function confirmModal(title, okText = null) {
     ov.querySelector('#cmOk').onclick = () => done(true);
   });
 }
+function isShortcutInputTarget(target) {
+  const tag = String(target?.tagName || '').toUpperCase();
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || !!target?.isContentEditable;
+}
+function isShortcutInteractiveTarget(target) {
+  const tag = String(target?.tagName || '').toUpperCase();
+  return ['BUTTON', 'A'].includes(tag) || !!target?.role;
+}
+function keyboardShortcutAction(e, ctx = {}) {
+  const key = String(e?.key || '');
+  if (isShortcutInputTarget(e?.target)) return '';
+  if (key === 'Escape') return ctx.hasOverlay ? 'close_overlay' : '';
+  if (isShortcutInteractiveTarget(e?.target)) return '';
+  if (ctx.cookMode) {
+    if (key === 'ArrowRight' || key.toLowerCase() === 'j') return 'cook_next';
+    if (key === 'ArrowLeft' || key.toLowerCase() === 'k') return 'cook_prev';
+    if (key === ' ') return 'cook_timer';
+    if (key.toLowerCase() === 'r') return 'cook_read';
+    if (key === '?') return 'cook_help';
+    return '';
+  }
+  if (key === '/' && !ctx.hasOverlay) return 'focus_search';
+  return '';
+}
+function closeTopOverlay() {
+  const lightbox = document.querySelector('.lightbox');
+  if (lightbox) { lightbox.remove(); return true; }
+  const overlays = Array.from(document.querySelectorAll('.overlay'));
+  const ov = overlays[overlays.length - 1];
+  if (!ov) return false;
+  const btn = ov.querySelector('#pmCancel,#cmCancel,#variantCancel,#xClose,#tlClose,#pkClose,#cbPickCancel,#setupLater,#finishSkip,#ok,.mrow .btn.ghost,.mrow .btn');
+  if (btn) btn.click();
+  else ov.remove();
+  return true;
+}
+function showCookShortcutHelp() {
+  const ov = openModal(`<h3 style="text-align:left">${esc(tr('cook.shortcuts.title'))}</h3>
+    <div class="shortcut-list">
+      <div><b>← / k</b><span>${esc(tr('cook.shortcuts.prev'))}</span></div>
+      <div><b>→ / j</b><span>${esc(tr('cook.shortcuts.next'))}</span></div>
+      <div><b>Space</b><span>${esc(tr('cook.shortcuts.timer'))}</span></div>
+      <div><b>r</b><span>${esc(tr('cook.shortcuts.read'))}</span></div>
+    </div>
+    <div class="mrow"><button class="btn" id="shortcutClose">${esc(tr('common.close'))}</button></div>`, 'left');
+  ov.querySelector('#shortcutClose').onclick = () => ov.remove();
+}
+function runKeyboardShortcut(action) {
+  if (action === 'focus_search') {
+    const tab = document.querySelector('[data-tab="recipes"]');
+    if (curTab !== 'recipes' && tab) tab.click();
+    setTimeout(() => $('#search')?.focus(), 0);
+    return true;
+  }
+  if (action === 'close_overlay') return closeTopOverlay();
+  const cook = document.getElementById('cook');
+  if (!cook) return false;
+  if (action === 'cook_next') { cook.querySelector('.next')?.click(); return true; }
+  if (action === 'cook_prev') { cook.querySelector('.prev')?.click(); return true; }
+  if (action === 'cook_read') { cook.querySelector('#ttsBtn')?.click(); return true; }
+  if (action === 'cook_timer') {
+    if (!Timers.toggleActive()) cook.querySelector('#timerBtn')?.click();
+    return true;
+  }
+  if (action === 'cook_help') { showCookShortcutHelp(); return true; }
+  return false;
+}
+function handleGlobalShortcut(e) {
+  const action = keyboardShortcutAction(e, {
+    cookMode: !!document.getElementById('cook'),
+    hasOverlay: !!document.querySelector('.overlay,.lightbox'),
+  });
+  if (!action) return;
+  e.preventDefault();
+  runKeyboardShortcut(action);
+}
 async function doParse(starter) {
   const ov = openModal(`<div class="pct" id="pct">0%</div><div class="stage" id="stage">${esc(tr('parse.starting'))}</div>
     <div class="pbar"><div id="bar"></div></div>
@@ -3196,6 +3292,7 @@ function init() {
   document.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[role="button"],[role="tab"]')) { e.preventDefault(); e.target.click(); }
   });
+  document.addEventListener('keydown', handleGlobalShortcut);
   initTabs();
   $('#depth').onclick = (e) => { const c = e.target.closest('.chip'); if (!c) return; depth = c.dataset.d; syncDepthChips(); };
   $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast(tr('parse.invalidUrl')); return; } const vision = $('#visChk')?.checked, images = $('#imgChk')?.checked; doParse(() => API.startUrl(u, depth, vision, images)); $('#url').value = ''; };
