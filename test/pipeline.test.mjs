@@ -557,6 +557,82 @@ test("processText 保留生活化定量并为模糊量写参考 note", async () 
       assert.ok(String(structurePrompt.messages[0].content).includes("参考："));
       assert.ok(String(structurePrompt.messages[0].content).includes("每一步尽量输出 \"source_time\""));
       assert.ok(String(structurePrompt.messages[0].content).includes("为了补齐覆盖率伪造"));
+      assert.ok(String(structurePrompt.messages[0].content).includes("多道菜合集信号"));
+      assert.ok(String(structurePrompt.messages[0].content).includes("不要只整理第一道"));
+      assert.ok(String(structurePrompt.messages[0].content).includes("至少为每一道菜输出 1 个步骤"));
+    });
+  } finally {
+    await llm.close();
+  }
+});
+
+test("processText 为多道菜合集注入时间戳目录", async () => {
+  const llm = await startLlmStub({ structuredRecipe: stubRecipe() });
+  try {
+    await withIsolatedTmp(async (root) => {
+      const config = createConfig(root, llm.url);
+      await processText([
+        "[00:00] 招待亲朋好友必吃的20道家常菜",
+        "[00:03] 第一道",
+        "[00:05] 五个女儿想吃黄焖鸡",
+        "[00:35] 第二道",
+        "[00:36] 孩子以后想吃麻辣烫了",
+        "[00:58] 第三道",
+        "[00:59] 买回来的猪肉你就像我这样做",
+      ].join("\n"), config);
+      const structurePrompt = llm.requests.find((r) => String(r.messages?.[0]?.content || "").includes("专业中餐厨师兼菜谱编辑"));
+      const user = String(structurePrompt.messages?.[1]?.content || "");
+      assert.match(user, /【多道菜目录/);
+      assert.match(user, /第一道 \[00:03-00:35\].*黄焖鸡/);
+      assert.match(user, /第二道 \[00:35-00:58\].*麻辣烫/);
+      assert.match(user, /第三道 \[00:58-01:00\].*猪肉/);
+    });
+  } finally {
+    await llm.close();
+  }
+});
+
+test("processText 在多道菜合集模型漏覆盖时回退为目录步骤", async () => {
+  const llm = await startLlmStub({
+    structuredRecipe: {
+      title: "黄焖鸡",
+      servings: "2人份",
+      total_time_min: 20,
+      difficulty: "medium",
+      cuisine: "家常菜",
+      tags: ["家常菜"],
+      ingredients: [{ name: "鸡腿", amount: "3块", qty: 3, unit: "块", note: "" }],
+      tools: [],
+      steps: [
+        { index: 1, title: "第一道：黄焖鸡", action: "处理鸡腿并焖煮。", params: {}, source_time: [3, 35] },
+      ],
+    },
+  });
+  try {
+    await withIsolatedTmp(async (root) => {
+      const config = createConfig(root, llm.url);
+      const { recipe } = await processText([
+        "招待亲朋好友必吃的20道家常菜",
+        "[00:03] 第一道",
+        "[00:05] 五个女儿想吃黄焖鸡",
+        "[00:11] 鸡腿剁成大块",
+        "[00:35] 第二道",
+        "[00:36] 孩子以后想吃麻辣烫了",
+        "[00:42] 锅中水开",
+        "[00:58] 第三道",
+        "[00:59] 买回来的猪肉你就像我这样做",
+        "[01:04] 首先把猪肉切成长条",
+      ].join("\n"), config);
+      assert.equal(recipe.title, "招待亲朋好友必吃的20道家常菜");
+      assert.equal(recipe.steps.length, 3);
+      assert.deepEqual(recipe.steps.map((s) => s.index), [1, 2, 3]);
+      assert.match(recipe.steps[0].title, /^第一道：.*黄焖鸡/);
+      assert.match(recipe.steps[1].title, /^第二道：.*麻辣烫/);
+      assert.match(recipe.steps[2].title, /^第三道：.*猪肉/);
+      assert.ok(recipe.steps.every((s) => !("source_time" in s)));
+      assert.deepEqual(recipe.ingredients, []);
+      assert.ok(recipe.tags.includes("合集"));
+      assert.ok(recipe.tags.includes("长视频"));
     });
   } finally {
     await llm.close();

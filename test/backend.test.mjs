@@ -354,7 +354,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
-import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, inferBakingToolFallback, annotateRecipeCardSources } from "../src/chef.mjs";
+import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, extractMultiDishOutline, inferBakingToolFallback, annotateRecipeCardSources } from "../src/chef.mjs";
 import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, ensureRecipeCardMarker, mapLimitSettled, extractIngredientImages, extractStepImages, visionTranscript, stepImageCandidateCount } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
@@ -527,6 +527,37 @@ test("extractRecipeCardTranscript 提取画面配方卡段落", () => {
     "倒入杯中",
   ].join("\n");
   assert.equal(extractRecipeCardTranscript(text), "【画面配方卡】\n牛奶 400毫升\n茉莉茶汤 1300毫升");
+});
+
+test("extractRecipeCardTranscript 忽略无具体用量的画面配方卡误报", () => {
+  const text = [
+    "[00:00] 招待亲朋好友必吃的20道家常菜",
+    "【画面观察 / 屏上文字】",
+    "3. 【画面配方卡】：",
+    "- 用量：未标注具体数量，但可以推测需要一定量的鸡肉、土豆、红椒、绿椒等食材。",
+    "- 火候/状态：鸡肉已经煮熟，调味汁均匀覆盖。",
+    "[13:48] 第二十道",
+  ].join("\n");
+  assert.equal(extractRecipeCardTranscript(text), "");
+});
+
+test("extractMultiDishOutline 从长合集时间戳提取多道菜目录", () => {
+  const text = [
+    "[00:00] 招待亲朋好友必吃的20道家常菜",
+    "[00:03] 第一道",
+    "[00:05] 五个女儿想吃黄焖鸡",
+    "[00:11] 鸡腿剁成大块",
+    "[00:35] 第二道",
+    "[00:36] 孩子以后想吃麻辣烫了",
+    "[00:42] 锅中水开",
+    "[00:58] 第三道",
+    "[00:59] 买回来的猪肉你就像我这样做",
+    "[01:04] 首先把猪肉切成长条",
+  ].join("\n");
+  const outline = extractMultiDishOutline(text);
+  assert.match(outline, /第一道 \[00:03-00:35\].*黄焖鸡/);
+  assert.match(outline, /第二道 \[00:35-00:58\].*麻辣烫/);
+  assert.match(outline, /第三道 \[00:58-01:04\].*猪肉/);
 });
 
 test("recipeCardCapturePoints 为片头和片尾配方卡预留时间点", () => {
