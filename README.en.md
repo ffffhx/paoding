@@ -61,7 +61,7 @@ Paoding combines automatic parsing with step-level cooking reasoning. You can fo
 | Area | What Paoding Provides |
 |---|---|
 | Smart import | Parse links, uploads, pasted text, web posts, screenshots, and recipe photos with live job progress and queueing. |
-| Visual fallback | Optional vision model support for on-screen subtitles, recipe images, step screenshots, and ingredient close-ups. |
+| Visual fallback | Optional vision model support for scene-change frames plus dedicated opening/ending recipe-card capture, on-screen subtitles, recipe images, step screenshots, and ingredient close-ups. Total sampled frames still stay under the configured cap. |
 | Cook mode | One step per screen, large type, keep-awake, swipe navigation, resume progress, highlighted ingredients, and source timestamp jumps. |
 | Explanations | Three-part reasoning for each step, key heat/time/quantity highlights, and tappable cooking terms. |
 | Technique library | Aggregates recurring techniques across recipes and can summarize when to use them, key cues, and common failure points. |
@@ -88,7 +88,7 @@ Requirements: Node 22+, `ffmpeg`, `yt-dlp` for online links, and an OpenAI-compa
 ```bash
 # LLM through Ollama's OpenAI-compatible endpoint
 ollama pull qwen2.5:14b
-ollama pull qwen2.5vl:7b   # optional vision model
+ollama pull qwen2.5vl:7b   # optional vision model for scene-change OCR, opening/ending recipe cards, and step images
 
 # Local speech recognition
 brew install whisper-cpp ffmpeg yt-dlp
@@ -133,7 +133,7 @@ If Ollama already runs on the host, the default Docker LLM base URL can point to
 ## Configuration Notes
 
 - Set `PAODING_API_TOKEN` for any LAN or public deployment. `PAODING_API_TOKENS=alice:token1,bob:token2` enables household user isolation.
-- Set `PAODING_VISION_MODEL` to enable screenshot/photo OCR and visual step images.
+- Set `PAODING_VISION_MODEL` to enable screenshot/photo OCR, scene-change video OCR, dedicated opening/ending recipe-card capture, and visual step images. The extra recipe-card quota is merged into the same frame cap.
 - Set `PAODING_COOKIES_FROM_BROWSER=chrome` if a video platform requires logged-in browser cookies.
 - Jobs, recipes, user data, and backups are stored as local files. See `.env.example` for paths and limits.
 
@@ -163,6 +163,6 @@ The test suite uses Node's built-in test runner and local fakes/stubs for extern
 
 ## Roadmap Snapshot
 
-- Done: text posts, video fallback, Android/PWA shell, sync and backup, editing, quantity scaling, shopping lists, dessert-focused tool/equipment lists with alternatives, Cooklang/schema.org export, optional visual OCR, step screenshots, weekly meal planning, multi-dish timelines, household isolation, Docker/Compose, source timestamp jumps, nutrition estimates, technique library, public share pages, print/PDF, Chinese-unit references, and frontend i18n infrastructure.
+- Done: text posts, video fallback, Android/PWA shell, sync and backup, editing, quantity scaling, shopping lists, dessert-focused tool/equipment lists with alternatives, Cooklang/schema.org export, optional visual OCR with scene-change sampling plus opening/ending recipe-card capture, step screenshots, weekly meal planning, multi-dish timelines, household isolation, Docker/Compose, source timestamp jumps, nutrition estimates, technique library, public share pages, print/PDF, Chinese-unit references, and frontend i18n infrastructure.
 - i18n status: `app/i18n.js`, `t()` fallback, zh/en dictionaries, the settings-page language selector, and userdata sync are in place. English UI coverage now includes settings, home/list views, recipe detail, cook-along mode, shopping/planning, techniques, the install banner, tag-edit modal, exported recipe text, toasts, and error prompts. Date and number formatting are intentionally not localized yet.
 - Next: date/number localization, more real-world video prompt tuning, broader technique vocabulary, and higher-quality technique matching.
