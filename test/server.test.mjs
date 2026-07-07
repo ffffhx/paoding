@@ -350,6 +350,41 @@ test("import 写入→列表可见→分享页→删除", async () => {
   assert.ok(!(await (await request("/api/recipes")).json()).some((r) => r.title === "测试菜X"));
 });
 
+test("tools 在备份导入、PUT 和读取边界统一清洗", async () => {
+  const dirtyTool = {
+    name: "<b>裱花袋</b>",
+    purpose: { text: "挤奶油<script>x()</script>" },
+    essential: "1",
+    substitute: { name: "保鲜袋剪角" },
+    substitute_note: ["线条不稳", "<img src=x onerror=1>"],
+    inferred: "true",
+  };
+  const imp = await request("/api/import", J({ recipes: [{ title: "工具脏数据菜", tools: [dirtyTool, { name: "" }, "bad"], steps: [] }] }));
+  assert.equal(imp.status, 200);
+  const saved = JSON.parse(fs.readFileSync(path.join(recipesDir, "工具脏数据菜.json"), "utf8"));
+  assert.deepEqual(saved.tools, [{
+    name: "裱花袋",
+    purpose: "挤奶油",
+    essential: true,
+    substitute: "保鲜袋剪角",
+    substitute_note: "线条不稳",
+    inferred: true,
+  }]);
+
+  const list = await (await request("/api/recipes")).json();
+  assert.deepEqual(list.find((r) => r.id === "工具脏数据菜").tools, saved.tools);
+
+  const put = await request("/api/recipes/" + encodeURIComponent("工具脏数据菜"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tools: { bad: true } }),
+  });
+  assert.equal(put.status, 200);
+  const afterPut = JSON.parse(fs.readFileSync(path.join(recipesDir, "工具脏数据菜.json"), "utf8"));
+  assert.equal(Object.prototype.hasOwnProperty.call(afterPut, "tools"), false);
+  fs.rmSync(path.join(recipesDir, "工具脏数据菜.json"), { force: true });
+});
+
 test("菜谱路由拒绝嵌套路径或编码斜杠别名", async () => {
   const id = "别名防护菜";
   const fp = path.join(recipesDir, `${id}.json`);

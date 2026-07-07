@@ -326,6 +326,7 @@ test("工具卡片和跟做工具提示支持替代与无替代原因", () => {
     tools: [
       { name: "Piping bag", purpose: "Pipe cream", essential: true, substitute: "Freezer bag with a cut corner", substitute_note: "Less precise edges", inferred: false },
       { name: "Chiffon pan", purpose: "Let batter climb while baking", essential: true, substitute: null, substitute_note: "A nonstick pan prevents the cake from climbing", inferred: true },
+      { name: "<b>Offset spatula</b>", purpose: { text: "Smooth <i>cream</i>" }, essential: "1", substitute: { name: "Spoon" }, substitute_note: ["Less flat", "<script>bad()</script>"], inferred: "1" },
     ],
   };
   const html = app.toolsCardHtml(r);
@@ -336,9 +337,15 @@ test("工具卡片和跟做工具提示支持替代与无替代原因", () => {
   assert.ok(html.includes("No alternative"));
   assert.ok(html.includes("Reason: A nonstick pan prevents"));
   assert.ok(html.includes("Inferred"));
+  assert.ok(html.includes("Offset spatula"));
+  assert.ok(html.includes("Alternative: Spoon"));
+  assert.ok(!html.includes("[object Object]"));
+  assert.ok(!html.includes("<script>"));
   assert.equal(app.toolsCardHtml({ title: "old recipe" }), "");
   assert.deepEqual(app.stepToolsFor(r.tools, { title: "Decorate", action: "Use Piping bag to pipe cream" }).map(t => t.name), ["Piping bag"]);
   assert.ok(app.stepToolsHtml(r, { action: "Bake in Chiffon pan" }).includes("Tools for this step"));
+  assert.ok(app.recipeToText(r, 1).includes("Offset spatula"));
+  assert.ok(!app.recipeToText(r, 1).includes("[object Object]"));
   app.setLanguage("zh");
 });
 

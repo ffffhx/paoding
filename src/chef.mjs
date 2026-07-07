@@ -70,18 +70,30 @@ export function normalizeSourceTime(st) {
 export function normalizeTools(tools) {
   if (!Array.isArray(tools)) return [];
   const isObj = (x) => x && typeof x === "object" && !Array.isArray(x);
-  const asString = (v) => (v == null ? "" : String(v).trim());
-  const asBool = (v) => v === true || String(v).toLowerCase() === "true";
+  const cleanText = (v, max = 240) => {
+    if (v == null) return "";
+    if (Array.isArray(v)) return v.map((x) => cleanText(x, max)).filter(Boolean).join("、").slice(0, max);
+    if (isObj(v)) return cleanText(v.text ?? v.name ?? v.description ?? v["@value"] ?? v.value, max);
+    return String(v)
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/[\u0000-\u001f\u007f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, max);
+  };
+  const asBool = (v) => v === true || v === 1 || ["true", "1"].includes(String(v).trim().toLowerCase());
   return tools.filter(isObj).map((tool) => {
-    const name = asString(tool.name);
+    const name = cleanText(tool.name, 80);
     if (!name) return null;
-    const substitute = asString(tool.substitute);
+    const substitute = cleanText(tool.substitute);
     return {
       name,
-      purpose: asString(tool.purpose),
+      purpose: cleanText(tool.purpose),
       essential: asBool(tool.essential),
       substitute: substitute || null,
-      substitute_note: asString(tool.substitute_note),
+      substitute_note: cleanText(tool.substitute_note),
       inferred: asBool(tool.inferred),
     };
   }).filter(Boolean);

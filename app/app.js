@@ -525,8 +525,35 @@ function nutritionHtml(r, factor) {
 function hasOwnToolsField(r) {
   return !!r && Object.prototype.hasOwnProperty.call(r, 'tools');
 }
+function cleanToolText(v, max = 240) {
+  if (v == null) return '';
+  if (Array.isArray(v)) return v.map(x => cleanToolText(x, max)).filter(Boolean).join('、').slice(0, max);
+  if (typeof v === 'object') return cleanToolText(v.text ?? v.name ?? v.description ?? v['@value'] ?? v.value, max);
+  return String(v)
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+function normalizeRecipeTool(t) {
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return null;
+  const name = cleanToolText(t.name, 80);
+  if (!name) return null;
+  const substitute = cleanToolText(t.substitute);
+  return {
+    name,
+    purpose: cleanToolText(t.purpose),
+    essential: t.essential === true || t.essential === 1 || ['true', '1'].includes(String(t.essential).trim().toLowerCase()),
+    substitute: substitute || null,
+    substitute_note: cleanToolText(t.substitute_note),
+    inferred: t.inferred === true || t.inferred === 1 || ['true', '1'].includes(String(t.inferred).trim().toLowerCase()),
+  };
+}
 function recipeTools(r) {
-  return Array.isArray(r?.tools) ? r.tools.filter(t => t && String(t.name || '').trim()) : [];
+  return Array.isArray(r?.tools) ? r.tools.map(normalizeRecipeTool).filter(Boolean) : [];
 }
 function toolSubstituteHtml(t) {
   const note = String(t.substitute_note || '').trim();

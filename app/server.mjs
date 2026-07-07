@@ -254,9 +254,17 @@ function recipeListIndex() {
 function invalidateRecipeListCache() {
   recipeListCache = { signature: "", recipes: null };
 }
+function normalizeRecipeToolsField(recipe) {
+  if (!recipe || typeof recipe !== "object") return recipe;
+  if (!Object.prototype.hasOwnProperty.call(recipe, "tools")) return recipe;
+  if (Array.isArray(recipe.tools)) recipe.tools = normalizeTools(recipe.tools);
+  else delete recipe.tools;
+  return recipe;
+}
 function writeRecipeFile(id, recipe) {
   const saved = { ...recipe };
   delete saved.id;
+  normalizeRecipeToolsField(saved);
   fs.writeFileSync(recipePath(id), JSON.stringify(saved, null, 2));
   invalidateRecipeListCache();
 }
@@ -268,7 +276,7 @@ function listRecipes() {
       try {
         const r = JSON.parse(fs.readFileSync(path.join(RECIPES_DIR, f), "utf8"));
         r.id = f.replace(/\.json$/, "");
-        return r;
+        return normalizeRecipeToolsField(r);
       } catch {
         return null;
       }
@@ -285,7 +293,7 @@ function loadRecipe(id) {
   try {
     const r = JSON.parse(fs.readFileSync(p, "utf8")); // 损坏文件也容错
     r.id = id;
-    return r;
+    return normalizeRecipeToolsField(r);
   } catch { return null; }
 }
 function recipePath(id) {

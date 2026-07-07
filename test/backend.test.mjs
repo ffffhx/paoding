@@ -257,11 +257,13 @@ test("normalizeTools 清洗工具清单并保留替代说明", () => {
   assert.deepEqual(normalizeTools([
     { name: " 裱花袋 ", purpose: "挤奶油", essential: true, substitute: "保鲜袋剪角", substitute_note: "线条不稳定", inferred: false },
     { name: "戚风模具", purpose: "帮助爬升", essential: "true", substitute: "  ", substitute_note: "防粘模具会影响爬升", inferred: "true" },
+    { name: "<b>抹刀</b>\n", purpose: { text: "整理 <i>奶油</i>" }, essential: "1", substitute: { name: "勺子" }, substitute_note: ["边缘粗糙", "<script>bad()</script>"], inferred: 1 },
     { name: "", purpose: "无效" },
     "bad",
   ]), [
     { name: "裱花袋", purpose: "挤奶油", essential: true, substitute: "保鲜袋剪角", substitute_note: "线条不稳定", inferred: false },
     { name: "戚风模具", purpose: "帮助爬升", essential: true, substitute: null, substitute_note: "防粘模具会影响爬升", inferred: true },
+    { name: "抹刀", purpose: "整理 奶油", essential: true, substitute: "勺子", substitute_note: "边缘粗糙", inferred: true },
   ]);
 });
 
