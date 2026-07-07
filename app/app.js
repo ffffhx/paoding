@@ -474,6 +474,35 @@ function hasI18nKey(key) {
   ));
 }
 function trOr(key, fallback, params) { return hasI18nKey(key) ? tr(key, params) : fallback; }
+function currentLocale(lang = settings.lang) {
+  return normalizeUiLang(lang) === 'en' ? 'en-US' : 'zh-CN';
+}
+function validDate(value) {
+  if (value == null || value === '') return null;
+  const d = Object.prototype.toString.call(value) === '[object Date]' ? new Date(value.getTime()) : new Date(value);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+function formatNumber(value, options = {}) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value ?? '');
+  try { return new Intl.NumberFormat(currentLocale(), options).format(n); }
+  catch { return String(n); }
+}
+function formatInteger(value) {
+  return formatNumber(value, { maximumFractionDigits: 0 });
+}
+function formatDateShort(value) {
+  const d = validDate(value);
+  if (!d) return '';
+  try { return new Intl.DateTimeFormat(currentLocale(), { month: 'short', day: 'numeric' }).format(d); }
+  catch { return `${d.getMonth() + 1}/${d.getDate()}`; }
+}
+function formatDateTimeShort(value) {
+  const d = validDate(value);
+  if (!d) return '';
+  try { return new Intl.DateTimeFormat(currentLocale(), { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(d); }
+  catch { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
+}
 function applyStaticI18n(root = document) {
   document.title = tr('app.title');
   root.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = tr(node.dataset.i18n); });
@@ -760,9 +789,9 @@ function nutritionSummaryHtml(summary, { prefix = '', averageBy = 1 } = {}) {
   const div = normalizeFactor(averageBy);
   const parts = NUTRITION_FIELDS.map(([k, label, unit]) => {
     const v = Math.round((summary.totals[k] || 0) / div * 10) / 10;
-    return `${trOr('nutrition.' + k, label)} ${v}${unit}`;
+    return `${trOr('nutrition.' + k, label)} ${formatNumber(v, { maximumFractionDigits: 1 })}${unit}`;
   });
-  const missing = summary.missing ? ` · ${esc(tr('nutrition.missingRecipes', { count: summary.missing }))}` : '';
+  const missing = summary.missing ? ` · ${esc(tr('nutrition.missingRecipes', { count: formatInteger(summary.missing) }))}` : '';
   return `<div class="plan-nutri">${prefix ? `<b>${esc(prefix)}</b> ` : ''}${parts.join(' · ')}${missing}</div>`;
 }
 function nutritionHtml(r, factor) {
@@ -1063,7 +1092,7 @@ function homeFilterChips(tagValues = []) {
   ];
 }
 function recipeListTimeText(totalMin, sort = filter.sort) {
-  if (totalMin != null) return tr('recipe.time.approxMin', { min: totalMin });
+  if (totalMin != null) return tr('recipe.time.approxMin', { min: formatInteger(totalMin) });
   return sort === 'time' ? tr('recipe.time.unknown') : '';
 }
 function recentJobStatusLabel(j) {
@@ -1074,6 +1103,16 @@ function recentJobTypeLabel(j) {
 }
 function recentJobTitle(j) {
   return j?.params?.filename || j?.params?.url || (j?.params?.input ? tr('jobs.title.pastedText') : recentJobTypeLabel(j));
+}
+function recentJobProgressLabel(j) {
+  if (j?.progress?.stage) return stageLabel(j.progress.stage, j.progress.message);
+  return j?.progress?.message || j?.error || recentJobStatusLabel(j);
+}
+function formatJobTime(j) {
+  return formatDateTimeShort(j?.updated_at || j?.updatedAt || j?.finished_at || j?.finishedAt || j?.started_at || j?.startedAt || j?.queued_at || j?.queuedAt || j?.created_at || j?.createdAt);
+}
+function recentJobMetaText(j) {
+  return [recentJobProgressLabel(j), formatJobTime(j)].filter(Boolean).join(' · ');
 }
 function renderFilters() {
   const tags = new Set(); recipes.forEach(r => (r.tags || []).forEach(t => tags.add(t)));
@@ -1120,7 +1159,7 @@ function renderRecentJobs(box) {
   if (!list.length) return;
   const rows = list.map(j => `<div class="job-row ${esc(j.status || '')}">
     <div><b>${esc(recentJobTypeLabel(j))}</b><span>${esc(recentJobTitle(j))}</span></div>
-    <em>${esc(j.progress?.message || j.error || recentJobStatusLabel(j))}</em>
+    <em>${esc(recentJobMetaText(j))}</em>
   </div>`).join('');
   box.insertAdjacentHTML('beforeend', `<div class="jobs-lite"><div class="jobs-hd">${esc(tr('jobs.header'))}</div>${rows}</div>`);
 }
@@ -1130,7 +1169,7 @@ function whyExcerpt(w) {
   return [w?.reason, w?.if_not, w?.cue].filter(Boolean).join(' ');
 }
 function techCountText(count, full = false) {
-  return tr(full ? 'tech.countFull' : 'tech.countShort', { count });
+  return tr(full ? 'tech.countFull' : 'tech.countShort', { count: formatInteger(count) });
 }
 function techRecipeStepText(recipe, step) {
   return tr('tech.recipeStep', { recipe, step });
@@ -1689,7 +1728,7 @@ function weekDays() {
   const days = [];
   for (let i = 0; i < 7; i++) {
     const dt = new Date(now); dt.setDate(now.getDate() + i);
-    days.push({ key: `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`, label: i === 0 ? tr('plan.today') : i === 1 ? tr('plan.tomorrow') : tr(wd[dt.getDay()]), date: `${dt.getMonth() + 1}/${dt.getDate()}` });
+    days.push({ key: `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`, label: i === 0 ? tr('plan.today') : i === 1 ? tr('plan.tomorrow') : tr(wd[dt.getDay()]), date: formatDateShort(dt) });
   }
   return days;
 }
@@ -1732,7 +1771,7 @@ function renderPlan() {
   $('#planClear') && ($('#planClear').onclick = async () => { if (!(await confirmModal(tr('plan.clear.confirm'), tr('shopping.clearAll')))) return; days.forEach(d => delete mealPlan[d.key]); saveMealPlan(); renderPlan(); });
 }
 function timelineOffsetText(v) {
-  return Number.isInteger(v) ? String(v) : String(Math.round(v * 10) / 10);
+  return Number.isInteger(v) ? formatInteger(v) : formatNumber(Math.round(v * 10) / 10, { maximumFractionDigits: 1 });
 }
 function showCookTimeline(key, dayRecipes) {
   const day = weekDays().find(d => d.key === key);
@@ -1883,7 +1922,7 @@ function computeKitchenStats({ recipes: recipeList = [], meta: metaMap = {}, fav
   };
 }
 function countText(n) {
-  return tr('kitchenStats.count', { count: n });
+  return tr('kitchenStats.count', { count: formatInteger(n) });
 }
 function kitchenStatsHtml(stats = computeKitchenStats({ recipes, meta, favRecipes, techniques })) {
   const cards = [
@@ -1896,10 +1935,10 @@ function kitchenStatsHtml(stats = computeKitchenStats({ recipes, meta, favRecipe
   ];
   return `<div class="kstats">
     <div class="kstats-head"><div><h2>${esc(tr('kitchenStats.title'))}</h2><p>${esc(tr('kitchenStats.desc'))}</p></div></div>
-    <div class="kstats-grid">${cards.map(([key, value, unit]) => `<div class="kstat"><span>${esc(tr(key))}</span><b>${esc(value)}</b><em>${esc(unit)}</em></div>`).join('')}</div>
+    <div class="kstats-grid">${cards.map(([key, value, unit]) => `<div class="kstat"><span>${esc(tr(key))}</span><b>${esc(formatInteger(value))}</b><em>${esc(unit)}</em></div>`).join('')}</div>
     <div class="kstats-top"><b>${esc(tr('kitchenStats.top'))}</b>
       ${stats.topRecipes.length ? `<ol>${stats.topRecipes.map(r => `<li><span>${esc(r.title)}</span><em>${esc(countText(r.count))}</em></li>`).join('')}</ol>` : `<p>${esc(tr('kitchenStats.empty'))}</p>`}
-      ${stats.legacyCookedCount ? `<p class="kstats-note">${esc(tr('kitchenStats.legacyNote', { count: stats.legacyCookedCount }))}</p>` : ''}
+      ${stats.legacyCookedCount ? `<p class="kstats-note">${esc(tr('kitchenStats.legacyNote', { count: formatInteger(stats.legacyCookedCount) }))}</p>` : ''}
     </div>
   </div>`;
 }
@@ -3065,7 +3104,7 @@ function paramsHtml(p) {
 }
 function timerDurationText(seconds) {
   const min = Math.floor(seconds / 60), sec = seconds % 60;
-  return `${min ? tr('cook.timer.minute', { n: min }) : ''}${sec ? tr('cook.timer.second', { n: sec }) : ''}`;
+  return `${min ? tr('cook.timer.minute', { n: formatInteger(min) }) : ''}${sec ? tr('cook.timer.second', { n: formatInteger(sec) }) : ''}`;
 }
 function timerHtml(p) { const s = parseSeconds(p && p.time); return s ? `<div class="timer"><button class="btn sm" id="timerBtn">${esc(tr('cook.timer.start', { duration: timerDurationText(s) }))}</button></div>` : ''; }
 // 复用同一个 AudioContext：浏览器对 AudioContext 数量有上限(~6)且不及时回收，每次响铃 new 一个响几次后就抛异常静默失败。
