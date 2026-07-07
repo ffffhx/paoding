@@ -961,6 +961,68 @@ test("pantry-ideas 走 LLM 并返回 AI 推荐标记", async () => {
   }
 });
 
+test("recipe-variant 复用结构化路径并落库清洗", async () => {
+  const id = "宫保鸡丁";
+  const fp = path.join(recipesDir, `${id}.json`);
+  fs.writeFileSync(fp, JSON.stringify({
+    title: id,
+    servings: "2人份",
+    ingredients: [{ name: "鸡腿肉", amount: "300克" }, { name: "生抽", amount: "2勺" }],
+    tools: [{ name: "炒锅", purpose: "翻炒", essential: true, substitute: "", substitute_note: "普通锅也可", inferred: false }],
+    steps: [{ index: 1, title: "炒", action: "鸡肉下锅，加生抽翻炒。", params: { heat: "中火" } }],
+  }, null, 2));
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    assert.ok(String(input).endsWith("/chat/completions"));
+    const body = JSON.parse(String(init.body || "{}"));
+    assert.equal(body.response_format?.type, "json_object");
+    const user = String(body.messages?.find((m) => m.role === "user")?.content || "");
+    assert.ok(user.includes("AI 菜谱变体任务"));
+    assert.ok(user.includes("低盐"));
+    assert.ok(user.includes("宫保鸡丁"));
+    calls++;
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: JSON.stringify({
+        title: "模型低盐鸡丁",
+        servings: "2人份",
+        total_time_min: 18,
+        difficulty: "medium",
+        cuisine: "川菜",
+        tags: ["低盐", "下饭"],
+        ingredients: [{ name: "鸡腿肉", amount: "300克", qty: 300, unit: "克" }, { name: "香醋", amount: "1勺", qty: 1, unit: "勺" }],
+        tools: [
+          { name: "炒锅", purpose: "翻炒鸡丁", essential: true, substitute: "", substitute_note: "普通炒锅即可", inferred: false },
+          { purpose: "缺名字应丢弃", essential: true },
+        ],
+        nutrition: { per_serving: { calories: "320 kcal", protein: "24g", fat: "12g", carbs: "22g", sodium: "480mg" } },
+        steps: [{ index: 1, title: "低盐调味", action: "少量生抽配香醋调味。", params: { heat: "中火" } }],
+      }) } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const res = await request("/api/recipe-variant", J({ recipeId: id, type: "low_salt" }));
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.recipe.title, "宫保鸡丁（低盐版）");
+    assert.equal(data.recipe.variant_of, id);
+    assert.equal(data.recipe.variant_type, "low_salt");
+    assert.equal(data.recipe.ai_variant, true);
+    assert.equal(calls, 1);
+
+    const saved = JSON.parse(fs.readFileSync(path.join(recipesDir, `${data.id}.json`), "utf8"));
+    assert.equal(saved.variant_of, id);
+    assert.equal(saved.variant_notice, "AI 改编，未经实做验证");
+    assert.deepEqual(saved.tools, [{ name: "炒锅", purpose: "翻炒鸡丁", essential: true, substitute: null, substitute_note: "普通炒锅即可", inferred: false }]);
+    assert.equal(saved.nutrition.per_serving.calories_kcal, 320);
+    assert.equal(saved.nutrition.per_serving.sodium_mg, 480);
+    fs.rmSync(path.join(recipesDir, `${data.id}.json`), { force: true });
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(fp, { force: true });
+  }
+});
+
 test("静态首页含庖丁", async () => {
   const r = await request("/");
   assert.equal(r.status, 200);

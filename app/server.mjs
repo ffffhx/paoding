@@ -8,7 +8,7 @@ import { loadConfig, loadEnvFiles } from "../src/config.mjs";
 import { processVideo, processText, processImages } from "../src/pipeline.mjs";
 import { chatJSON, chatText } from "../src/llm.mjs";
 import { DEPTHS, explainSteps } from "../src/explain.mjs";
-import { normalizeRecipePhases, normalizeTools } from "../src/chef.mjs";
+import { normalizeRecipePhases, normalizeTools, structureRecipe } from "../src/chef.mjs";
 import { assertPublicUrl } from "../src/urlSafety.mjs";
 import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 import { FileJobStore, createJobQueue, createJobRecord, publicJob, TERMINAL_JOB_STATUSES } from "../src/jobs.mjs";
@@ -523,7 +523,7 @@ const llmLimiter = createSlidingWindowRateLimiter({
 const LLM_ENDPOINTS = new Set([
   "/api/parse-url", "/api/parse-text", "/api/parse-file",
   "/api/parse-images",
-  "/api/ask", "/api/troubleshoot", "/api/nutrition", "/api/tools", "/api/pantry-ideas", "/api/overview", "/api/explain-recipe", "/api/import-recipe",
+  "/api/ask", "/api/troubleshoot", "/api/nutrition", "/api/tools", "/api/pantry-ideas", "/api/recipe-variant", "/api/overview", "/api/explain-recipe", "/api/import-recipe",
 ]);
 const LIMITED_READ_ENDPOINTS = new Set([
   "/api/techniques",
@@ -1109,6 +1109,77 @@ async function answerPantryIdeas({ pantry }) {
   return { body: { answer, ai: true } };
 }
 
+const RECIPE_VARIANT_TYPES = new Set(["vegetarian", "healthier", "low_salt", "replace"]);
+function recipeVariantSuffix(type, ingredient = "") {
+  if (type === "vegetarian") return "（素食版）";
+  if (type === "healthier") return "（更健康版）";
+  if (type === "low_salt") return "（低盐版）";
+  const target = String(ingredient || "").trim().slice(0, 24);
+  return target ? `（替换${target}版）` : "（替换食材版）";
+}
+function recipeVariantInstruction(type, ingredient = "") {
+  if (type === "vegetarian") return "把这道菜改成素食版本：去掉肉禽水产，优先用豆制品、菌菇、鸡蛋或蔬菜补充口感与鲜味；如果原菜含鸡蛋/奶制品，可保留，除非明显不适合。";
+  if (type === "healthier") return "把这道菜改成更健康版本：减少油、糖和高热量处理，保留核心风味；不要把菜改得失去原本风格。";
+  if (type === "low_salt") return "把这道菜改成低盐版本：减少盐、生抽、老抽、蚝油、豆瓣酱等高钠调味，改用酸香、香料、葱姜蒜、鲜味食材补味。";
+  return `把这道菜改成替换指定食材的版本：${String(ingredient || "用户指定食材").trim()}。若用户写了“原食材→目标食材”，按目标替换；否则给出合理替代。`;
+}
+function recipeVariantTitle(originalTitle, type, ingredient = "") {
+  const base = String(originalTitle || "菜谱").trim() || "菜谱";
+  const suffix = recipeVariantSuffix(type, ingredient);
+  return base.endsWith(suffix) ? base : `${base}${suffix}`;
+}
+function recipeVariantTranscript(original, type, ingredient = "") {
+  const source = {
+    title: original.title,
+    servings: original.servings,
+    total_time_min: original.total_time_min,
+    difficulty: original.difficulty,
+    cuisine: original.cuisine,
+    tags: original.tags,
+    batch_info: original.batch_info,
+    ingredients: original.ingredients,
+    tools: original.tools,
+    steps: original.steps,
+  };
+  return `【AI 菜谱变体任务】
+请基于下面这道原菜谱生成一个修改版，必须保持结构化菜谱可执行。
+变体目标：${recipeVariantInstruction(type, ingredient)}
+
+硬性要求：
+1. 标题使用「${recipeVariantTitle(original.title, type, ingredient)}」。
+2. 只围绕原菜谱合理改写食材、用量、步骤和工具；不要新增无法从目标推导的大段背景。
+3. 保留原菜的风格与关键判断，但所有不再适用的步骤必须同步修改。
+4. 输出必须符合结构化菜谱 schema，工具清单照常填写；不确定的营养数据不要编入正文。
+
+【原菜谱 JSON】
+${JSON.stringify(source, null, 2)}`;
+}
+async function createRecipeVariant({ recipeId, type, ingredient }) {
+  const original = loadRecipe(recipeId);
+  if (!original) return { code: 404, body: { error: "菜谱不存在" } };
+  const variantType = String(type || "").trim();
+  if (!RECIPE_VARIANT_TYPES.has(variantType)) return { code: 400, body: { error: "不支持的变体类型" } };
+  if (variantType === "replace" && !String(ingredient || "").trim()) return { code: 400, body: { error: "请提供要替换的食材" } };
+  const title = recipeVariantTitle(original.title, variantType, ingredient);
+  const recipe = await structureRecipe(config.llm, {
+    meta: { title, description: `AI 菜谱变体：${recipeVariantInstruction(variantType, ingredient)}` },
+    transcript: recipeVariantTranscript(original, variantType, ingredient),
+  });
+  recipe.title = title;
+  recipe.variant_of = original.id;
+  recipe.variant_type = variantType;
+  recipe.variant_ingredient = String(ingredient || "").trim().slice(0, 80) || undefined;
+  recipe.ai_variant = true;
+  recipe.variant_notice = "AI 改编，未经实做验证";
+  recipe.variant_created_at = nowISO();
+  recipe.created_at = recipe.created_at || recipe.variant_created_at;
+  recipe.source = original.source || recipe.source || "";
+  if (recipe.nutrition) recipe.nutrition = normalizeNutrition(recipe.nutrition);
+  const id = uniqueRecipeId(title);
+  writeRecipeFile(id, recipe);
+  return { body: { ok: true, id, recipe: { ...loadRecipe(id), id } } };
+}
+
 const AI_ENDPOINTS = {
   _ingredientAsrDefense: "食材名可能包含语音识别的同音错别字（如 白纸 实为 白芷、肉豆扣 实为 肉豆蔻）。先判断名字是否为误写：若是，回答开头先指出正确名称，再按正确食材给替代建议；若名字本身不是食材也无法推断，直说无法识别，不要硬编。",
   "/api/ask": {
@@ -1169,6 +1240,9 @@ const AI_ENDPOINTS = {
   },
   "/api/pantry-ideas": {
     handle: answerPantryIdeas,
+  },
+  "/api/recipe-variant": {
+    handle: createRecipeVariant,
   },
   "/api/overview": {
     recipe: { required: true },

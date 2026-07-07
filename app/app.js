@@ -48,6 +48,7 @@ const API = {
   nutrition: (recipeId) => F('/api/nutrition', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
   tools: (recipeId) => F('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
   pantryIdeas: (pantry) => F('/api/pantry-ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pantry }) }).then(j),
+  recipeVariant: (recipeId, type, ingredient = '') => F('/api/recipe-variant', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, type, ingredient }) }).then(j),
   overview: (recipeId) => F('/api/overview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
   explainRecipe: (recipeId, depth) => F('/api/explain-recipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, depth }) }).then(j),
   userdataGet: () => F('/api/userdata').then(r => r.json()).catch(() => ({ rev: 0 })),
@@ -1865,6 +1866,81 @@ async function editRecipeTags(r, onSaved) {
     } catch (e) { toast(tr('tag.saveFailed', { message: e.message })); }
   };
 }
+function recipeVariantSuffix(type, ingredient = '') {
+  if (type === 'vegetarian') return '（素食版）';
+  if (type === 'healthier') return '（更健康版）';
+  if (type === 'low_salt') return '（低盐版）';
+  const target = String(ingredient || '').trim().slice(0, 24);
+  return target ? `（替换${target}版）` : '（替换食材版）';
+}
+function variantTypeLabel(type) {
+  const key = type === 'vegetarian' ? 'variant.vegetarian' : type === 'healthier' ? 'variant.healthier' : type === 'low_salt' ? 'variant.low_salt' : 'variant.replace';
+  return tr(key);
+}
+function recipeVariantTitle(title, type, ingredient = '') {
+  const base = String(title || tr('recipe.untitled')).trim() || tr('recipe.untitled');
+  const suffix = recipeVariantSuffix(type, ingredient);
+  return base.endsWith(suffix) ? base : `${base}${suffix}`;
+}
+function variantsForRecipe(recipeId, list = recipes) {
+  const id = String(recipeId || '');
+  return (Array.isArray(list) ? list : []).filter(x => String(x.variant_of || '') === id);
+}
+function originalRecipeForVariant(r, list = recipes) {
+  return (Array.isArray(list) ? list : []).find(x => x.id === r?.variant_of) || null;
+}
+function variantNoticeHtml(r) {
+  if (!r?.ai_variant && !r?.variant_of) return '';
+  const orig = originalRecipeForVariant(r);
+  return `<div class="variant-note no-print">
+    <div><b>${esc(tr('variant.notice'))}</b>${orig ? `<span>${esc(tr('variant.original', { title: orig.title || r.variant_of }))}</span>` : ''}</div>
+    ${orig ? `<button class="btn ghost sm" id="variantOriginal">${esc(tr('variant.backOriginal'))}</button>` : ''}
+  </div>`;
+}
+function existingVariantsHtml(r) {
+  if (r?.variant_of) return '';
+  const list = variantsForRecipe(r.id);
+  if (!list.length) return '';
+  return `<div class="variant-list no-print">
+    <div class="variant-list-title">${esc(tr('variant.existing'))}</div>
+    ${list.map(v => `<button class="variant-row" data-id="${esc(v.id)}"><span>${esc(v.title || tr('recipe.untitled'))}</span><em>${esc(variantTypeLabel(v.variant_type))}</em></button>`).join('')}
+  </div>`;
+}
+function showVariantModal(r) {
+  const ov = openModal(`<h3 style="text-align:left">${esc(tr('variant.title'))}</h3>
+    <div class="variant-options">
+      <button class="btn ghost" data-v="vegetarian">${esc(tr('variant.vegetarian'))}</button>
+      <button class="btn ghost" data-v="healthier">${esc(tr('variant.healthier'))}</button>
+      <button class="btn ghost" data-v="low_salt">${esc(tr('variant.low_salt'))}</button>
+    </div>
+    <div class="variant-replace">
+      <input type="text" id="variantIngredient" placeholder="${esc(tr('variant.replace.placeholder'))}">
+      <button class="btn ghost" data-v="replace">${esc(tr('variant.replace'))}</button>
+    </div>
+    <div class="mrow"><button class="btn ghost" id="variantCancel">${esc(tr('common.cancel'))}</button></div>`, 'left');
+  const run = async (type, btn) => {
+    const ingredient = type === 'replace' ? ov.querySelector('#variantIngredient').value.trim() : '';
+    if (type === 'replace' && !ingredient) { ov.querySelector('#variantIngredient').focus(); return; }
+    const prev = btn.textContent;
+    ov.querySelectorAll('[data-v]').forEach(b => { b.disabled = true; });
+    btn.textContent = tr('variant.creating');
+    try {
+      const data = await API.recipeVariant(r.id, type, ingredient);
+      recipes = await API.list();
+      const created = recipes.find(x => x.id === data.id) || data.recipe;
+      ov.remove();
+      toast(tr('variant.created', { title: created?.title || recipeVariantTitle(r.title, type, ingredient) }));
+      if (created) openDetail(created);
+      else renderAll();
+    } catch (e) {
+      ov.querySelectorAll('[data-v]').forEach(b => { b.disabled = false; });
+      btn.textContent = prev;
+      toast(tr('variant.failed', { message: e.message }));
+    }
+  };
+  ov.querySelectorAll('[data-v]').forEach(btn => btn.onclick = () => run(btn.dataset.v, btn));
+  ov.querySelector('#variantCancel').onclick = () => ov.remove();
+}
 function openDetail(r, focusStepIndex = null) {
   const m = rmeta(r.id);
   const base = baseServings(r);
@@ -1899,10 +1975,13 @@ function openDetail(r, focusStepIndex = null) {
       <button class="btn ghost sm" id="btnOverview">${esc(tr('detail.overview'))}</button>
       <button class="btn ghost sm" id="btnNutri">${esc(tr('detail.nutrition'))}</button>
       ${!hasOwnToolsField(r) ? `<button class="btn ghost sm" id="btnTools">${esc(tr('detail.tools.addAi'))}</button>` : ''}
+      <button class="btn ghost sm" id="btnVariant">${esc(tr('detail.variant.button'))}</button>
       <button class="btn ghost sm" id="btnCookbooks">${esc(tr('cookbooks.detail.button'))}</button>
       <button class="btn ghost sm" id="btnTags">${esc(tr('detail.tags'))}</button>
       <button class="btn ghost sm" id="btnExport2">${esc(tr('detail.export'))}</button>
     </div>
+    ${variantNoticeHtml(r)}
+    ${existingVariantsHtml(r)}
     ${r.imported ? `<div class="import-note"><span>${esc(tr(importedNeedsWhy ? 'detail.imported.noWhy' : 'detail.imported.withWhy'))}</span>${importedNeedsWhy ? `<button class="btn ghost sm" id="btnImportExplain">${esc(tr('detail.imported.explain'))}</button>` : ''}</div>` : ''}
     <div id="aiBox" style="margin:8px 16px 0"></div>
     <div id="nutritionBox"></div>
@@ -2044,6 +2123,15 @@ function openDetail(r, focusStepIndex = null) {
     btn.disabled = false;
   };
   p.querySelector('#btnOverview').onclick = (e) => aiCall(e.currentTarget, () => API.overview(r.id), tr('detail.overview'), 'overview');
+  p.querySelector('#btnVariant').onclick = () => showVariantModal(r);
+  p.querySelector('#variantOriginal') && (p.querySelector('#variantOriginal').onclick = () => {
+    const orig = originalRecipeForVariant(r);
+    if (orig) { close(); openDetail(orig); }
+  });
+  p.querySelectorAll('.variant-row').forEach(row => row.onclick = () => {
+    const v = recipes.find(x => x.id === row.dataset.id);
+    if (v) { close(); openDetail(v); }
+  });
   p.querySelector('#btnCookbooks').onclick = () => showCookbookPicker(r);
   p.querySelector('#btnTags').onclick = () => editRecipeTags(r, (nextTags) => {
     r.tags = nextTags;

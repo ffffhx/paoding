@@ -594,6 +594,19 @@ test("食材库存匹配覆盖度并标记购物清单已有项", () => {
   assert.ok(app.shoppingTextBySection(shopping).includes("鸡蛋 2个（已有）"));
 });
 
+test("AI 菜谱变体标题与关联查询", () => {
+  assert.equal(app.recipeVariantTitle("宫保鸡丁", "vegetarian"), "宫保鸡丁（素食版）");
+  assert.equal(app.recipeVariantTitle("宫保鸡丁", "low_salt"), "宫保鸡丁（低盐版）");
+  assert.equal(app.recipeVariantTitle("宫保鸡丁", "replace", "鸡肉→豆腐"), "宫保鸡丁（替换鸡肉→豆腐版）");
+  const list = [
+    { id: "a", title: "原菜" },
+    { id: "b", title: "原菜（低盐版）", variant_of: "a", variant_type: "low_salt" },
+    { id: "c", title: "别的菜" },
+  ];
+  assert.deepEqual(Array.from(app.variantsForRecipe("a", list).map(x => x.id)), ["b"]);
+  assert.equal(app.originalRecipeForVariant(list[1], list).id, "a");
+});
+
 test("mergeUserDataConflict 按字段合并跨设备数据", () => {
   const merged = app.mergeUserDataConflict({
     rev: 3,
