@@ -1,5 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { extractFromHtml } from "../src/fetchText.mjs";
 import { toMarkdown } from "../src/render.mjs";
 import { isUrl, ytdlpArgs } from "../src/download.mjs";
@@ -11,6 +15,9 @@ import { createJobQueue } from "../src/jobs.mjs";
 import { fetchWithRetry } from "../src/fetchRetry.mjs";
 import { outputLanguageInstruction, withOutputLanguage } from "../src/outputLanguage.mjs";
 import { applyIngredientFixes, fixIngredientName, replaceIngredientTypos } from "../src/ingredientFix.mjs";
+
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
+const FAKE_FFMPEG = path.join(TEST_DIR, "fixtures", "bin", "fake-ffmpeg.mjs");
 
 test("isUrl 只认 http(s)", () => {
   assert.equal(isUrl("https://x.com"), true);
@@ -288,7 +295,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
 import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, inferBakingToolFallback } from "../src/chef.mjs";
-import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints } from "../src/vision.mjs";
+import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, mapLimitSettled, extractIngredientImages } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
   const out = parseWhisperJson({
@@ -495,6 +502,25 @@ test("candidateTimes 段内取样、偏向段末、夹回视频范围", () => {
   assert.ok(short.length >= 1);
 });
 
+test("mapLimitSettled 限制并发并把单项失败保留为 rejected", async () => {
+  let active = 0, maxActive = 0;
+  const calls = [];
+  const out = await mapLimitSettled([1, 2, 3, 4], 2, async (n) => {
+    calls.push(n);
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active--;
+    if (n === 3) throw new Error("bad item");
+    return n * 10;
+  });
+
+  assert.equal(maxActive, 2);
+  assert.deepEqual(calls.sort((a, b) => a - b), [1, 2, 3, 4]);
+  assert.deepEqual(out.map((r) => r.status), ["fulfilled", "fulfilled", "rejected", "fulfilled"]);
+  assert.deepEqual(out.filter((r) => r.status === "fulfilled").map((r) => r.value), [10, 20, 40]);
+});
+
 test("clampBbox 加边距/夹回图内/拒绝碎框", () => {
   const box = clampBbox([100, 100, 300, 260], 960, 540);
   assert.ok(box.x < 100 && box.y < 100, "应向外扩边距");
@@ -520,6 +546,84 @@ test("jpegSize 读 JPEG 宽高", () => {
   assert.deepEqual(jpegSize(b), { height: 540, width: 960 });
   assert.equal(jpegSize(Buffer.from([0x00, 0x01])), null);
   assert.equal(jpegSize(null), null);
+});
+
+test("extractIngredientImages 并发裁剪保留成功结果且单个食材失败不影响整批", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-ing-test-"));
+  const oldFetch = globalThis.fetch;
+  const oldFfmpeg = process.env.PAODING_FFMPEG_BIN;
+  const cropCalls = {};
+  let activeCrops = 0, maxActiveCrops = 0;
+  const respond = (content) => new Response(JSON.stringify({
+    choices: [{ message: { role: "assistant", content } }],
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
+
+  try {
+    process.env.PAODING_FFMPEG_BIN = FAKE_FFMPEG;
+    globalThis.fetch = async (input, init = {}) => {
+      assert.ok(String(input).endsWith("/chat/completions"));
+      const body = JSON.parse(String(init.body || "{}"));
+      const system = String(body.messages?.find((m) => m.role === "system")?.content || "");
+      const userMsg = body.messages?.find((m) => m.role === "user")?.content;
+      const userText = Array.isArray(userMsg)
+        ? String(userMsg.find((item) => item.type === "text")?.text || "")
+        : String(userMsg || "");
+
+      if (system.includes("给食材清单配图")) {
+        return respond(JSON.stringify({ 鸡蛋: 1, 番茄: 1, 小葱: 2, 盐: 0 }));
+      }
+      if (system.includes("视觉定位助手")) {
+        const name = userText.match(/「([^」]+)」/)?.[1] || "";
+        cropCalls[name] = (cropCalls[name] || 0) + 1;
+        activeCrops++;
+        maxActiveCrops = Math.max(maxActiveCrops, activeCrops);
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 15));
+        } finally {
+          activeCrops--;
+        }
+        if (name === "小葱") return respond("不是 JSON");
+        return respond(JSON.stringify({ found: true, bbox_2d: [10, 10, 120, 120] }));
+      }
+      return respond("{}");
+    };
+
+    const videoPath = path.join(root, "input.mp4");
+    const imagesDir = path.join(root, "images");
+    fs.writeFileSync(videoPath, "fake video\n");
+    fs.mkdirSync(imagesDir);
+    const recipe = {
+      ingredients: [
+        { name: "鸡蛋" },
+        { name: "番茄" },
+        { name: "小葱" },
+        { name: "盐" },
+      ],
+    };
+
+    const saved = await extractIngredientImages({
+      baseUrl: "http://vision.test/v1",
+      apiKey: "test-key",
+      model: "vision-stub",
+      ingredientConcurrency: 2,
+    }, videoPath, recipe, { duration: 20, imagesDir });
+
+    assert.equal(saved, 2);
+    assert.equal(recipe.ingredients[0].image, "ing-1.jpg");
+    assert.equal(recipe.ingredients[1].image, "ing-2.jpg");
+    assert.equal(recipe.ingredients[2].image, undefined);
+    assert.equal(recipe.ingredients[3].image, undefined);
+    assert.equal(cropCalls["小葱"], 1);
+    assert.ok(maxActiveCrops > 1, "定位阶段应并发执行");
+    assert.ok(maxActiveCrops <= 2, "定位阶段并发不应超过配置值");
+    assert.ok(fs.existsSync(path.join(imagesDir, "ing-1.jpg")));
+    assert.ok(fs.existsSync(path.join(imagesDir, "ing-2.jpg")));
+  } finally {
+    globalThis.fetch = oldFetch;
+    if (oldFfmpeg === undefined) delete process.env.PAODING_FFMPEG_BIN;
+    else process.env.PAODING_FFMPEG_BIN = oldFfmpeg;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("toMarkdown 带截图时嵌入图片", () => {

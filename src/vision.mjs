@@ -216,6 +216,47 @@ export function clampBbox(bbox, width, height, padRatio = 0.08) {
 
 const b64 = (p) => fs.readFileSync(p).toString("base64");
 
+function abortReason(signal) {
+  if (!signal?.aborted) return null;
+  return signal.reason instanceof Error ? signal.reason : new Error("操作已取消");
+}
+
+function throwIfAborted(signal) {
+  const reason = abortReason(signal);
+  if (reason) throw reason;
+}
+
+export async function mapLimitSettled(items, limit, fn, { signal } = {}) {
+  const list = Array.from(items || []);
+  if (!list.length) return [];
+  const workerCount = Math.max(1, Math.min(Math.floor(Number(limit)) || 1, list.length));
+  const results = new Array(list.length);
+  let next = 0;
+
+  async function worker() {
+    while (true) {
+      throwIfAborted(signal);
+      const index = next++;
+      if (index >= list.length) return;
+      try {
+        results[index] = { status: "fulfilled", value: await fn(list[index], index) };
+      } catch (e) {
+        if (signal?.aborted) throw e;
+        results[index] = { status: "rejected", reason: e };
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
+function ingredientCropConcurrency(vision) {
+  const raw = Number(vision?.ingredientConcurrency || process.env.PAODING_INGREDIENT_IMAGE_CONCURRENCY || 2);
+  if (!Number.isFinite(raw)) return 2;
+  return Math.max(2, Math.min(3, Math.floor(raw)));
+}
+
 function imageMime(file) {
   const ext = path.extname(file).toLowerCase();
   if (ext === ".png") return "image/png";
@@ -317,6 +358,17 @@ export async function extractIngredientImages(vision, videoPath, recipe, { durat
     }
     if (!frames.length) return 0;
 
+    const frameCache = new Map();
+    const frameInfo = (frame) => {
+      let cached = frameCache.get(frame.file);
+      if (!cached) {
+        const buf = fs.readFileSync(frame.file);
+        cached = { b64: buf.toString("base64"), dim: jpegSize(buf) };
+        frameCache.set(frame.file, cached);
+      }
+      return cached;
+    };
+
     // ---- 逐批标注：食材名 → 最清楚的帧（全局编号）----
     const names = ings.map((it) => it.name);
     const bestFrame = {}; // name -> frame（保留最先命中的：开头展示段优先，通常最干净）
@@ -328,7 +380,7 @@ export async function extractIngredientImages(vision, videoPath, recipe, { durat
         const ans = await chatVision(vision, {
           system: "你在帮做菜教程给食材清单配图。只输出 JSON，不要解释。",
           user: `这是做菜视频的 ${part.length} 张截图（编号 1~${part.length}）。这道菜的食材清单：${names.join("、")}。\n对每个食材：若它的【本体】（生料或独立摆放的样子，不是下锅后的成品）在某张图中清楚可见，给出看得最清楚的一张图的编号；看不到就填 0。只依据画面，绝不猜测。\n输出 JSON：{"食材名": 编号}`,
-          images: part.map((f) => b64(f.file)),
+          images: part.map((f) => frameInfo(f).b64),
           signal,
         });
         const map = parseModelJSON(ans) || {};
@@ -337,44 +389,45 @@ export async function extractIngredientImages(vision, videoPath, recipe, { durat
           if (!names.includes(name) || bestFrame[name] || !Number.isFinite(n) || n < 1 || n > part.length) continue;
           bestFrame[name] = part[n - 1];
         }
-      } catch {
+      } catch (e) {
+        if (signal?.aborted) throw e;
         // 单批失败不影响整体
       }
     }
 
     // ---- 对命中的食材：请模型框位置 → 裁特写；框不出就整帧 ----
     const hit = ings.filter((it) => bestFrame[it.name]);
-    for (let i = 0; i < hit.length; i++) {
-      const it = hit[i];
-      onProgress({ pct: 55 + Math.round((i / hit.length) * 40), message: `裁剪食材特写…（${i + 1}/${hit.length}）` });
+    let started = 0;
+    const cropResults = await mapLimitSettled(hit, ingredientCropConcurrency(vision), async (it) => {
+      const current = ++started;
+      onProgress({ pct: 55 + Math.round(((current - 1) / hit.length) * 40), message: `裁剪食材特写…（${current}/${hit.length}）` });
       const frame = bestFrame[it.name];
       const name = `ing-${ings.indexOf(it) + 1}.jpg`;
       const outPath = path.join(imagesDir, name);
-      try {
-        // 定位调用兼做第二道复核：批量标注阶段小模型偶有幻觉，这里单独盯着一张图再确认一次。
-        // found=false → 放弃该食材（宁缺毋滥）；found=true 但框不可用 → 退回整帧。
-        const ans = await chatVision(vision, {
-          system: "你是视觉定位助手。只依据画面、绝不猜测。只输出 JSON，不要解释。",
-          user: `图中有明确可见的「${it.name}」吗？有就框出来，输出 JSON：{"found": true, "bbox_2d": [x1, y1, x2, y2]}（像素坐标，左上角与右下角）。没有就输出 {"found": false}。`,
-          images: [b64(frame.file)],
-          signal,
+      // 定位调用兼做第二道复核：批量标注阶段小模型偶有幻觉，这里单独盯着一张图再确认一次。
+      // found=false → 放弃该食材（宁缺毋滥）；found=true 但框不可用 → 退回整帧。
+      const info = frameInfo(frame);
+      const ans = await chatVision(vision, {
+        system: "你是视觉定位助手。只依据画面、绝不猜测。只输出 JSON，不要解释。",
+        user: `图中有明确可见的「${it.name}」吗？有就框出来，输出 JSON：{"found": true, "bbox_2d": [x1, y1, x2, y2]}（像素坐标，左上角与右下角）。没有就输出 {"found": false}。`,
+        images: [info.b64],
+        signal,
+      });
+      const r = parseModelJSON(ans);
+      if (!r?.found) return 0;
+      const box = info.dim ? clampBbox(r.bbox_2d, info.dim.width, info.dim.height) : null;
+      let cropped = false;
+      if (box) {
+        await run(resolveFfmpegBin(), ["-y", "-i", frame.file, "-vf", `crop=${box.w}:${box.h}:${box.x}:${box.y}`, "-q:v", "3", outPath], signal).catch((e) => {
+          if (signal?.aborted) throw e;
         });
-        const r = parseModelJSON(ans);
-        if (!r?.found) continue;
-        const dim = jpegSize(fs.readFileSync(frame.file));
-        const box = dim ? clampBbox(r.bbox_2d, dim.width, dim.height) : null;
-        let cropped = false;
-        if (box) {
-          await run(resolveFfmpegBin(), ["-y", "-i", frame.file, "-vf", `crop=${box.w}:${box.h}:${box.x}:${box.y}`, "-q:v", "3", outPath], signal).catch(() => {});
-          cropped = fs.existsSync(outPath) && fs.statSync(outPath).size > 0;
-        }
-        if (!cropped) fs.copyFileSync(frame.file, outPath);
-        it.image = name;
-        saved++;
-      } catch {
-        // 本食材失败，跳过
+        cropped = fs.existsSync(outPath) && fs.statSync(outPath).size > 0;
       }
-    }
+      if (!cropped) fs.copyFileSync(frame.file, outPath);
+      it.image = name;
+      return 1;
+    }, { signal });
+    saved += cropResults.reduce((sum, r) => sum + (r.status === "fulfilled" ? Number(r.value) || 0 : 0), 0);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
