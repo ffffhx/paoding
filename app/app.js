@@ -1827,6 +1827,31 @@ function localDateKey(date) {
   if (!Number.isFinite(d.getTime())) return '';
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+function dateKeyFromParts(y, m, d) {
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+function parseDateKey(key) {
+  const m = String(key || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) } : null;
+}
+function addDaysToDateKey(key, days) {
+  const p = parseDateKey(key);
+  if (!p) return '';
+  const d = new Date(p.y, p.m - 1, p.d);
+  d.setDate(d.getDate() + days);
+  return localDateKey(d);
+}
+function startOfWeekKey(key) {
+  const p = parseDateKey(key);
+  if (!p) return '';
+  const d = new Date(p.y, p.m - 1, p.d);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return localDateKey(d);
+}
+function startOfMonthKey(key) {
+  const p = parseDateKey(key);
+  return p ? dateKeyFromParts(p.y, p.m, 1) : '';
+}
 function startOfWeek(date) {
   const d = startOfLocalDay(date);
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
@@ -1838,14 +1863,33 @@ function startOfMonth(date) {
   return d;
 }
 function normalizeCookedAt(value) {
-  const raw = Object.prototype.toString.call(value) === '[object Date]' ? value : value && typeof value === 'object' && !Array.isArray(value)
-    ? (value.cooked_at || value.cookedAt || value.at || value.time || value.date)
-    : value;
+  const raw = cookedAtRawValue(value);
   const t = Date.parse(raw);
   return Number.isFinite(t) ? new Date(t) : null;
 }
-function cookedHistoryForMeta(m) {
-  const history = [
+function cookedAtRawValue(value) {
+  return Object.prototype.toString.call(value) === '[object Date]' ? value : value && typeof value === 'object' && !Array.isArray(value)
+    ? (value.cooked_at || value.cookedAt || value.at || value.time || value.date)
+    : value;
+}
+function explicitCookedDateKey(value) {
+  const raw = cookedAtRawValue(value);
+  if (typeof raw !== 'string') return '';
+  const s = raw.trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|[T\s].*([+-]\d{2}:?\d{2})\s*$)/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : '';
+}
+function isCookedDateOnly(value) {
+  const raw = cookedAtRawValue(value);
+  return typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim());
+}
+function cookedEventFromValue(value) {
+  const at = normalizeCookedAt(value);
+  if (!at) return null;
+  return { at, dayKey: explicitCookedDateKey(value) || localDateKey(at), dateOnly: isCookedDateOnly(value) };
+}
+function rawCookedHistoryForMeta(m) {
+  return [
     ...(Array.isArray(m?.cooked_log) ? m.cooked_log : []),
     ...(Array.isArray(m?.cookedLog) ? m.cookedLog : []),
     ...(Array.isArray(m?.cooked_history) ? m.cooked_history : []),
@@ -1853,20 +1897,26 @@ function cookedHistoryForMeta(m) {
     ...(Array.isArray(m?.cooked_dates) ? m.cooked_dates : []),
     m?.cooked_at,
     m?.cookedAt,
-  ].filter(Boolean).map(normalizeCookedAt).filter(Boolean);
+  ].filter(Boolean);
+}
+function cookedHistoryEventsForMeta(m) {
+  const history = rawCookedHistoryForMeta(m).map(cookedEventFromValue).filter(Boolean);
   const seen = new Set();
   return history.filter((d) => {
-    const k = d.toISOString();
+    const k = d.at.toISOString();
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
-  }).sort((a, b) => a - b);
+  }).sort((a, b) => a.at - b.at);
+}
+function cookedHistoryForMeta(m) {
+  return cookedHistoryEventsForMeta(m).map(e => e.at);
 }
 function computeKitchenStats({ recipes: recipeList = [], meta: metaMap = {}, favRecipes: favs = [], techniques: techniqueList = [] } = {}, opts = {}) {
   const now = normalizeCookedAt(opts.now) || new Date();
-  const weekStart = startOfWeek(now).getTime();
-  const monthStart = startOfMonth(now).getTime();
-  const todayKey = localDateKey(now);
+  const todayKey = explicitCookedDateKey(opts.now) || localDateKey(now);
+  const weekStartKey = startOfWeekKey(todayKey);
+  const monthStartKey = startOfMonthKey(todayKey);
   const byId = new Map((Array.isArray(recipeList) ? recipeList : []).map(r => [String(r.id), r]));
   const cookedIds = new Set();
   const datedEvents = [];
@@ -1880,23 +1930,23 @@ function computeKitchenStats({ recipes: recipeList = [], meta: metaMap = {}, fav
   };
   for (const [idRaw, m] of Object.entries(metaMap && typeof metaMap === 'object' && !Array.isArray(metaMap) ? metaMap : {})) {
     const id = String(idRaw);
-    const history = cookedHistoryForMeta(m);
+    const history = m?.cooked === false ? [] : cookedHistoryEventsForMeta(m);
     if (m?.cooked || history.length) cookedIds.add(id);
     if (history.length) {
-      history.forEach(d => datedEvents.push({ recipeId: id, at: d }));
-      addRecipeCount(id, history.length, history[history.length - 1]);
+      history.forEach(e => datedEvents.push({ recipeId: id, at: e.at, dayKey: e.dayKey, dateOnly: e.dateOnly }));
+      addRecipeCount(id, history.length, history[history.length - 1].at);
     } else if (m?.cooked) {
       legacyCookedCount++;
       addRecipeCount(id, 1, null);
     }
   }
-  const dayKeys = new Set(datedEvents.map(e => localDateKey(e.at)).filter(Boolean));
+  const dayKeys = new Set(datedEvents.map(e => e.dayKey).filter(Boolean));
   let streakDays = 0;
   if (dayKeys.has(todayKey)) {
-    const cursor = startOfLocalDay(now);
-    while (dayKeys.has(localDateKey(cursor))) {
+    let cursorKey = todayKey;
+    while (dayKeys.has(cursorKey)) {
       streakDays++;
-      cursor.setDate(cursor.getDate() - 1);
+      cursorKey = addDaysToDateKey(cursorKey, -1);
     }
   }
   const mastered = new Set();
@@ -1911,8 +1961,8 @@ function computeKitchenStats({ recipes: recipeList = [], meta: metaMap = {}, fav
     .slice(0, 3)
     .map(x => ({ id: x.id, title: byId.get(x.id)?.title || x.id, count: x.count, lastCookedAt: x.lastAt ? new Date(x.lastAt).toISOString() : '' }));
   return {
-    weekCount: datedEvents.filter(e => e.at.getTime() >= weekStart && e.at.getTime() <= now.getTime()).length,
-    monthCount: datedEvents.filter(e => e.at.getTime() >= monthStart && e.at.getTime() <= now.getTime()).length,
+    weekCount: datedEvents.filter(e => e.dayKey >= weekStartKey && e.dayKey <= todayKey && (e.dateOnly || e.at.getTime() <= now.getTime())).length,
+    monthCount: datedEvents.filter(e => e.dayKey >= monthStartKey && e.dayKey <= todayKey && (e.dateOnly || e.at.getTime() <= now.getTime())).length,
     cookedRecipeCount: cookedIds.size,
     favoriteCount: Array.isArray(favs) ? favs.length : 0,
     masteredTechniqueCount: mastered.size,
@@ -2376,7 +2426,7 @@ function openDetail(r, focusStepIndex = null) {
   p.querySelector('#btnExport2').onclick = () => openExport(r, currentFactors());
   p.querySelector('#btnCook').onclick = () => { close(); openCook(r); };
   p.querySelector('#notes').oninput = (e) => { m.notes = e.target.value; saveMeta(); };
-  p.querySelector('#cookedBtn').onclick = (e) => { m.cooked = !m.cooked; if (m.cooked) m.cooked_at = new Date().toISOString(); saveMeta(); e.target.className = 'btn sm ' + (m.cooked ? '' : 'ghost'); e.target.textContent = m.cooked ? tr('detail.cooked') : tr('detail.markCooked'); renderRecipes(); };
+  p.querySelector('#cookedBtn').onclick = (e) => { m.cooked = !m.cooked; if (m.cooked) m.cooked_at = new Date().toISOString(); else { delete m.cooked_at; delete m.cookedAt; } saveMeta(); e.target.className = 'btn sm ' + (m.cooked ? '' : 'ghost'); e.target.textContent = m.cooked ? tr('detail.cooked') : tr('detail.markCooked'); renderRecipes(); };
   p.querySelectorAll('#rating .rs').forEach(rs => rs.onclick = () => { m.rating = +rs.dataset.r; saveMeta(); p.querySelectorAll('#rating .rs').forEach(x => x.classList.toggle('on', +x.dataset.r <= m.rating)); renderRecipes(); });
   if (base) p.querySelectorAll('.st').forEach(b => b.onclick = () => { factor = Math.max(0.5, factor + (b.dataset.s === '+' ? 0.5 : -0.5)); m.servingsFactor = factor; saveMeta(); p.querySelector('#svVal').textContent = Math.round(base * factor * 10) / 10; renderIng(); renderNutrition(); });
   if (hasPhases) p.querySelectorAll('.bst').forEach(b => b.onclick = () => {
@@ -2697,7 +2747,7 @@ function downloadFile(name, content, type) {
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 function openExport(r, factor) {
-  const safe = (r.title || 'recipe').replace(/[\/\\:*?"<>|]/g, '');
+  const safe = safeDownloadStem(r.title);
   const ov = openModal(`<h3 style="text-align:left">${esc(tr('export.title', { title: r.title || '' }))}</h3>
     <p style="color:var(--muted);font-size:13px;text-align:left;margin:0 0 12px">${esc(tr('export.chooseFormat'))}</p>
     <div style="display:flex;flex-direction:column;gap:8px">
@@ -2723,7 +2773,8 @@ function shareRecipeUrl(recipeId, { apiBase = settings.apiBase, origin = locatio
 function shortShareText(text, maxChars) {
   const s = String(text || '').replace(/\s+/g, ' ').trim();
   const n = Math.max(1, Number(maxChars) || 1);
-  return s.length <= n ? s : s.slice(0, Math.max(1, n - 1)).trimEnd() + '…';
+  if (shareTextWidthUnits(s) <= n) return s;
+  return sliceShareTextByUnits(s, n, '…');
 }
 function wrapShareText(text, maxChars, maxLines) {
   const s = String(text || '').replace(/\s+/g, ' ').trim();
@@ -2733,10 +2784,11 @@ function wrapShareText(text, maxChars, maxLines) {
   const out = [];
   let rest = s;
   while (rest && out.length < limit) {
-    if (rest.length <= n) { out.push(rest); rest = ''; break; }
-    let cut = n;
-    const space = rest.slice(0, n + 1).lastIndexOf(' ');
-    if (space >= Math.floor(n * 0.55)) cut = space;
+    if (shareTextWidthUnits(rest) <= n) { out.push(rest); rest = ''; break; }
+    let cut = shareSliceIndex(rest, n);
+    const head = rest.slice(0, cut);
+    const space = head.lastIndexOf(' ');
+    if (space >= 0 && shareTextWidthUnits(head.slice(0, space)) >= Math.floor(n * 0.55)) cut = space;
     out.push(rest.slice(0, cut).trim());
     rest = rest.slice(cut).trim();
   }
@@ -2745,6 +2797,44 @@ function wrapShareText(text, maxChars, maxLines) {
     out[out.length - 1] = last.length >= n ? last.slice(0, Math.max(1, n - 1)).trimEnd() + '…' : shortShareText(`${last} ${rest}`, n);
   }
   return out.map(line => shortShareText(line, n)).filter(Boolean);
+}
+function shareCharWidthUnits(ch) {
+  const cp = ch.codePointAt(0) || 0;
+  if (cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f)) return 0;
+  if (
+    (cp >= 0x1100 && cp <= 0x11ff) ||
+    (cp >= 0x2e80 && cp <= 0xa4cf) ||
+    (cp >= 0xac00 && cp <= 0xd7af) ||
+    (cp >= 0xf900 && cp <= 0xfaff) ||
+    (cp >= 0xfe10 && cp <= 0xfe6f) ||
+    (cp >= 0xff00 && cp <= 0xffef) ||
+    (cp >= 0x1f300 && cp <= 0x1faff)
+  ) return 2;
+  return 1;
+}
+function shareTextWidthUnits(text) {
+  let n = 0;
+  for (const ch of String(text || '')) n += shareCharWidthUnits(ch);
+  return n;
+}
+function shareSliceIndex(text, maxUnits) {
+  const s = String(text || '');
+  let used = 0, idx = 0;
+  for (const ch of s) {
+    const w = shareCharWidthUnits(ch);
+    if (used + w > maxUnits) break;
+    used += w;
+    idx += ch.length;
+  }
+  return idx;
+}
+function sliceShareTextByUnits(text, maxUnits, suffix = '') {
+  const s = String(text || '').trim();
+  const suffixUnits = shareTextWidthUnits(suffix);
+  const bodyUnits = Math.max(1, Number(maxUnits) || 1) - suffixUnits;
+  if (bodyUnits <= 0) return suffix || '';
+  const idx = shareSliceIndex(s, bodyUnits);
+  return (s.slice(0, idx).trimEnd() || s.slice(0, 1)) + suffix;
 }
 function shareCardStepImage(r) {
   return (r?.steps || []).find(s => s?.image) || null;
@@ -2758,7 +2848,7 @@ function shareCardIngredientText(i, factors) {
 function shareCardStepText(step, index) {
   const sep = settings.lang === 'en' ? ': ' : '：';
   const body = [step?.title, step?.action].filter(Boolean).join(sep).trim() || tr('tech.untitledStep');
-  return `${index + 1}. ${shortShareText(body, 42)}`;
+  return `${index + 1}. ${shortShareText(body, 62)}`;
 }
 function recipeShareCardLayout(r, factors = 1, opts = {}) {
   const width = Number(opts.width) || 1080;
@@ -2766,11 +2856,14 @@ function recipeShareCardLayout(r, factors = 1, opts = {}) {
   const maxHeight = Number(opts.maxHeight) || 1920;
   const margin = Number(opts.margin) || 72;
   const inner = width - margin * 2;
+  const colW = (inner - 34) / 2;
+  const titleMaxUnits = Number(opts.titleMaxUnits) || Math.floor(inner / 28);
+  const ingredientMaxUnits = Number(opts.ingredientMaxUnits) || Math.floor(colW / 13);
   const firstImage = shareCardStepImage(r);
   const maxIngredients = Number(opts.maxIngredients) || 32;
   const maxSteps = Number(opts.maxSteps) || 7;
-  const titleLines = wrapShareText(r?.title || tr('recipe.untitled'), 18, 3);
-  const ingredientTexts = (r?.ingredients || []).map(i => shareCardIngredientText(i, factors)).filter(Boolean);
+  const titleLines = wrapShareText(r?.title || tr('recipe.untitled'), titleMaxUnits, 3);
+  const ingredientTexts = (r?.ingredients || []).map(i => shortShareText(shareCardIngredientText(i, factors), ingredientMaxUnits)).filter(Boolean);
   const visibleIngredients = ingredientTexts.slice(0, maxIngredients);
   if (ingredientTexts.length > maxIngredients && visibleIngredients.length) {
     visibleIngredients[visibleIngredients.length - 1] = tr('shareCard.moreItems', { count: ingredientTexts.length - maxIngredients + 1 });
@@ -2790,7 +2883,7 @@ function recipeShareCardLayout(r, factors = 1, opts = {}) {
   y += Math.max(1, titleLines.length) * title.lineHeight + 24;
   const cover = { x: margin, y, w: inner, h: 360, kind: firstImage ? 'image' : 'placeholder', image: firstImage?.image || '' };
   y += cover.h + 38;
-  const ingredientSection = { x: margin, y, label: tr('shareCard.ingredients'), lineHeight: 32, columns: ingredientColumns, total: ingredientTexts.length };
+  const ingredientSection = { x: margin, y, label: tr('shareCard.ingredients'), lineHeight: 32, columns: ingredientColumns, total: ingredientTexts.length, maxLineUnits: ingredientMaxUnits };
   y += 30 + Math.max(1, ingredientRows) * ingredientSection.lineHeight + 34;
   const stepsSection = { x: margin, y, label: tr('shareCard.steps'), lineHeight: 36, lines: visibleSteps, total: stepTexts.length };
   y += 30 + Math.max(1, visibleSteps.length) * stepsSection.lineHeight + 44;
@@ -2803,7 +2896,7 @@ function recipeShareCardLayout(r, factors = 1, opts = {}) {
   };
   const height = Math.min(maxHeight, Math.max(minHeight, y + 120));
   footer.y = height - 118;
-  return { width, height, margin, inner, title, cover, ingredientSection, stepsSection, footer };
+  return { width, height, margin, inner, title: { ...title, maxLineUnits: titleMaxUnits }, cover, ingredientSection, stepsSection, footer };
 }
 function roundRectPath(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
@@ -2853,7 +2946,7 @@ function drawShareCardText(ctx, model) {
   const colW = (model.inner - 34) / 2;
   model.ingredientSection.columns.forEach((col, ci) => {
     col.forEach((lineText, i) => {
-      ctx.fillText(shortShareText(lineText, 24), model.ingredientSection.x + ci * (colW + 34), model.ingredientSection.y + 66 + i * model.ingredientSection.lineHeight);
+      ctx.fillText(lineText, model.ingredientSection.x + ci * (colW + 34), model.ingredientSection.y + 66 + i * model.ingredientSection.lineHeight);
     });
   });
   ctx.strokeStyle = line;
@@ -2910,7 +3003,17 @@ function canvasToPngBlob(canvas) {
   });
 }
 function safeDownloadStem(name) {
-  return (String(name || 'recipe').replace(/[\/\\:*?"<>|]/g, '').trim() || 'recipe').slice(0, 80);
+  const normalized = String(name || 'recipe').normalize ? String(name || 'recipe').normalize('NFKC') : String(name || 'recipe');
+  let stem = normalized
+    .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '')
+    .replace(/[\/\\:*?"<>|∕⁄／＼]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\.{2,}/g, '.')
+    .trim()
+    .replace(/^[.\s]+|[.\s]+$/g, '');
+  if (!stem) stem = 'recipe';
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(stem)) stem = `recipe-${stem}`;
+  return stem.slice(0, 80).trim() || 'recipe';
 }
 function downloadBlob(name, blob) {
   const a = document.createElement('a');
@@ -3170,14 +3273,17 @@ function confirmModal(title, okText = null) {
 }
 function isShortcutInputTarget(target) {
   const tag = String(target?.tagName || '').toUpperCase();
-  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || !!target?.isContentEditable;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || !!target?.isContentEditable || !!target?.closest?.('input,textarea,select,[contenteditable="true"]');
 }
 function isShortcutInteractiveTarget(target) {
   const tag = String(target?.tagName || '').toUpperCase();
-  return ['BUTTON', 'A'].includes(tag) || !!target?.role;
+  const role = target?.getAttribute?.('role') || target?.role || '';
+  return ['BUTTON', 'A', 'SUMMARY'].includes(tag) || ['button', 'tab', 'menuitem'].includes(String(role).toLowerCase()) || !!target?.closest?.('button,a,summary,[role="button"],[role="tab"],[role="menuitem"]');
 }
 function keyboardShortcutAction(e, ctx = {}) {
   const key = String(e?.key || '');
+  if (e?.defaultPrevented || e?.isComposing || key === 'Process' || key === 'Dead') return '';
+  if (e?.metaKey || e?.ctrlKey || e?.altKey) return '';
   if (isShortcutInputTarget(e?.target)) return '';
   if (key === 'Escape') return ctx.hasOverlay ? 'close_overlay' : '';
   if (isShortcutInteractiveTarget(e?.target)) return '';
@@ -3329,6 +3435,7 @@ function init() {
   Timers.restore(); // 恢复上次未结束的计时（刷新/被系统回收后不丢）
   // 无障碍：让 role=button/tab 的非原生控件(标签栏/深度选择等)支持键盘 Enter/Space 触发，而不只是鼠标/触屏点击。
   document.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.defaultPrevented) return;
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[role="button"],[role="tab"]')) { e.preventDefault(); e.target.click(); }
   });
   document.addEventListener('keydown', handleGlobalShortcut);
