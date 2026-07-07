@@ -416,6 +416,38 @@ test("processText 保留生活化定量并为模糊量写参考 note", async () 
   }
 });
 
+test("processText 将模型跳号步骤重编号为连续顺序", async () => {
+  const llm = await startLlmStub({
+    structuredRecipe: {
+      title: "跳号步骤测试菜",
+      servings: "2人份",
+      total_time_min: 20,
+      difficulty: "medium",
+      cuisine: "家常菜",
+      tags: ["测试"],
+      ingredients: [{ name: "鸡蛋", amount: "2个", qty: 2, unit: "个", note: "" }],
+      tools: [],
+      steps: [
+        { index: 1, title: "第一步", action: "准备。", params: {} },
+        { index: 7, title: "第二步", action: "加热。", params: {} },
+        { index: 13, title: "第三步", action: "完成。", params: {} },
+      ],
+    },
+  });
+  try {
+    await withIsolatedTmp(async (root) => {
+      const config = createConfig(root, llm.url);
+      const { recipe, files } = await processText("准备鸡蛋，加热后完成。", config);
+      assert.deepEqual(recipe.steps.map((s) => s.index), [1, 2, 3]);
+      const md = fs.readFileSync(files.md, "utf8");
+      assert.ok(md.includes("第 2 步 · 第二步"));
+      assert.ok(!md.includes("第 7 步"));
+    });
+  } finally {
+    await llm.close();
+  }
+});
+
 test("processText 保留批量制备和单份组装 phase 并落盘", async () => {
   const llm = await startLlmStub({
     structuredRecipe: {

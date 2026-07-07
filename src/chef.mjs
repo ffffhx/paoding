@@ -219,7 +219,7 @@ ${transcript}`;
   const isObj = (x) => x && typeof x === "object" && !Array.isArray(x);
   recipe.steps = (Array.isArray(recipe.steps) ? recipe.steps : []).filter(isObj);
   recipe.steps.forEach((s, i) => {
-    s.index = Number.isFinite(s.index) ? s.index : i + 1;
+    s.index = i + 1;
     if (!isObj(s.params)) s.params = {};
     const st = normalizeSourceTime(s.source_time);
     if (st) s.source_time = st;
