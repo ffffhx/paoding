@@ -365,10 +365,12 @@ export async function extractStepImages(vision, videoPath, recipe, { duration, i
           best = n;
         }
         const chosen = files[best - 1];
+        throwIfAborted(signal);
         const hash = crypto.createHash("md5").update(fs.readFileSync(chosen)).digest("hex");
         if (seen.has(hash)) continue;
         seen.add(hash);
         const name = `step-${s.index}.jpg`;
+        throwIfAborted(signal);
         fs.copyFileSync(chosen, path.join(imagesDir, name));
         s.image = name;
         saved++;
@@ -471,15 +473,19 @@ export async function extractIngredientImages(vision, videoPath, recipe, { durat
       });
       const r = parseModelJSON(ans);
       if (!r?.found) return 0;
+      throwIfAborted(signal);
       const box = info.dim ? clampBbox(r.bbox_2d, info.dim.width, info.dim.height) : null;
       let cropped = false;
       if (box) {
+        throwIfAborted(signal);
         await run(resolveFfmpegBin(), ["-y", "-i", frame.file, "-vf", `crop=${box.w}:${box.h}:${box.x}:${box.y}`, "-q:v", "3", outPath], signal).catch((e) => {
           if (signal?.aborted) throw e;
         });
         cropped = fs.existsSync(outPath) && fs.statSync(outPath).size > 0;
       }
+      throwIfAborted(signal);
       if (!cropped) fs.copyFileSync(frame.file, outPath);
+      throwIfAborted(signal);
       it.image = name;
       return 1;
     }, { signal });

@@ -900,6 +900,51 @@ test("extractIngredientImages 允许将食材图定位并发降到 1", async () 
   }
 });
 
+test("extractIngredientImages 取消后不继续写食材图片", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-ing-abort-test-"));
+  const oldFetch = globalThis.fetch;
+  const oldFfmpeg = process.env.PAODING_FFMPEG_BIN;
+  const ac = new AbortController();
+  const respond = (content) => new Response(JSON.stringify({
+    choices: [{ message: { role: "assistant", content } }],
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
+
+  try {
+    process.env.PAODING_FFMPEG_BIN = FAKE_FFMPEG;
+    globalThis.fetch = async (input, init = {}) => {
+      assert.ok(String(input).endsWith("/chat/completions"));
+      const body = JSON.parse(String(init.body || "{}"));
+      const system = String(body.messages?.find((m) => m.role === "system")?.content || "");
+      if (system.includes("给食材清单配图")) return respond(JSON.stringify({ 鸡蛋: 1 }));
+      if (system.includes("视觉定位助手")) {
+        ac.abort(new Error("stop-after-vl"));
+        return respond(JSON.stringify({ found: true, bbox_2d: [10, 10, 120, 120] }));
+      }
+      return respond("{}");
+    };
+
+    const videoPath = path.join(root, "input.mp4");
+    const imagesDir = path.join(root, "images");
+    fs.writeFileSync(videoPath, "fake video\n");
+    fs.mkdirSync(imagesDir);
+    const recipe = { ingredients: [{ name: "鸡蛋" }] };
+
+    await assert.rejects(() => extractIngredientImages({
+      baseUrl: "http://vision.test/v1",
+      apiKey: "test-key",
+      model: "vision-stub",
+    }, videoPath, recipe, { duration: 20, imagesDir, signal: ac.signal }), /stop-after-vl/);
+
+    assert.equal(recipe.ingredients[0].image, undefined);
+    assert.deepEqual(fs.readdirSync(imagesDir), []);
+  } finally {
+    globalThis.fetch = oldFetch;
+    if (oldFfmpeg === undefined) delete process.env.PAODING_FFMPEG_BIN;
+    else process.env.PAODING_FFMPEG_BIN = oldFfmpeg;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("toMarkdown 带截图时嵌入图片", () => {
   const md = toMarkdown({
     title: "红烧肉",
