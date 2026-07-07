@@ -2,6 +2,7 @@
 import { loadConfig } from "../src/config.mjs";
 import { processVideo } from "../src/pipeline.mjs";
 import { DEPTHS } from "../src/explain.mjs";
+import { formatTimingTable } from "../src/timings.mjs";
 
 const HELP = `庖丁 · 做菜视频解析引擎 (MVP)
 
@@ -72,6 +73,8 @@ async function main() {
     });
     const secs = ((Date.now() - t0) / 1000).toFixed(1);
     console.log(`\n\x1b[32m✓ 完成\x1b[0m 《${recipe.title}》 共 ${recipe.steps.length} 步，用时 ${secs}s`);
+    const timingTable = formatTimingTable(recipe.timings);
+    if (timingTable) console.log(timingTable);
     console.log(`  · Markdown: ${files.md}`);
     console.log(`  · JSON:     ${files.json}`);
   } catch (e) {

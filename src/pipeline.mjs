@@ -6,6 +6,7 @@ import { structureRecipe, clampStepTimes, sourceTimeCoverage } from "./chef.mjs"
 import { explainSteps } from "./explain.mjs";
 import { toMarkdown } from "./render.mjs";
 import { fetchArticleText, unusableRecipeTextReason } from "./fetchText.mjs";
+import { createStageTimer } from "./timings.mjs";
 import { extractFrames, visionTranscript, probeDuration, extractStepImages, extractIngredientImages, transcribeRecipeImage } from "./vision.mjs";
 
 const slug = (s) =>
@@ -55,21 +56,24 @@ async function withStageTimeout(label, minutes, parentSignal, fn) {
 export async function processVideo(input, config, { keepTranscript = false, onProgress = () => {}, signal } = {}) {
   const step = (n, msg) => console.log(`\x1b[36m[${n}/5]\x1b[0m ${msg}`);
   const emit = (stage, pct, message) => onProgress({ stage, pct: Math.round(pct), message });
+  const timer = createStageTimer();
 
   // vision = 抽帧读屏上字幕；images = 步骤/食材截图。两者都需要完整视频与视觉模型。
   const useVision = !!config.vision;
   const useImages = !!config.images;
   step(1, useVision || useImages ? "下载视频并抽取音频…" : "获取视频并抽取音频…");
   emit("acquire", 2, "准备中…");
-  const { audioPath, videoPath, meta, cleanup } = await acquire(input, config.ytdlp, (p) =>
-    emit("acquire", p.pct * 0.25, p.message), { wantVideo: useVision || useImages, signal },
+  const { audioPath, videoPath, meta, cleanup } = await timer.time("acquire", () =>
+    acquire(input, config.ytdlp, (p) =>
+      emit("acquire", p.pct * 0.25, p.message), { wantVideo: useVision || useImages, signal }),
   );
 
   try {
     step(2, "语音转文字（ASR）…");
     emit("transcribe", 25, "语音转文字…");
-    const asrOut = await transcribe(config.asr, audioPath, (p) =>
-      emit("transcribe", 25 + p.pct * 0.2, p.message), signal,
+    const asrOut = await timer.time("transcribe", () =>
+      transcribe(config.asr, audioPath, (p) =>
+        emit("transcribe", 25 + p.pct * 0.2, p.message), signal),
     );
     const segments = asrOut.segments || [];
     let transcript = asrOut.text;
@@ -80,10 +84,12 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
       step(2.5, "看画面读字幕（视觉）…");
       emit("vision", 46, "看画面读字幕…");
       try {
-        const frames = await extractFrames(videoPath, { max: config.vision.maxFrames, duration: meta.duration, signal });
-        visualNote = await visionTranscript(config.vision, frames, (p) =>
-          emit("vision", 46 + p.pct * 0.2, p.message), signal,
-        );
+        visualNote = await timer.time("vision", async () => {
+          const frames = await extractFrames(videoPath, { max: config.vision.maxFrames, duration: meta.duration, signal });
+          return visionTranscript(config.vision, frames, (p) =>
+            emit("vision", 46 + p.pct * 0.2, p.message), signal,
+          );
+        });
       } catch (e) {
         console.warn(`  · 视觉解析失败（跳过，仅用口播）：${e.message}`);
       }
@@ -98,16 +104,19 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
 
     step(3, "整理成结构化菜谱…");
     emit("structure", 68, "整理成步骤…");
-    const recipe = await structureRecipe(config.llm, { transcript: llmTranscript, meta, signal });
-    // 模型偶尔把 source_time 外推超过片长 → 用转写真实的最大时间戳硬校验
-    if (segments.length) clampStepTimes(recipe.steps, Math.max(...segments.map((s) => s.end)));
-    recipe.source_time_coverage = sourceTimeCoverage(recipe.steps);
+    const recipe = await timer.time("structure", async () => {
+      const out = await structureRecipe(config.llm, { transcript: llmTranscript, meta, signal });
+      // 模型偶尔把 source_time 外推超过片长 → 用转写真实的最大时间戳硬校验
+      if (segments.length) clampStepTimes(out.steps, Math.max(...segments.map((s) => s.end)));
+      out.source_time_coverage = sourceTimeCoverage(out.steps);
+      return out;
+    });
     console.log(`  · source_time 覆盖率：${recipe.source_time_coverage.summary}`);
     emit("structure", 80, "步骤已生成");
 
     step(4, `逐步生成「为什么」讲解（深度：${config.depth}）…`);
     emit("explain", 82, "逐步生成「为什么」…");
-    await explainSteps(config.llm, recipe, config.depth, signal);
+    await timer.time("explain", () => explainSteps(config.llm, recipe, config.depth, signal));
     emit("explain", useImages ? 88 : 98, "讲解已生成");
 
     fs.mkdirSync(config.outDir, { recursive: true });
@@ -119,6 +128,7 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
       fs.writeFileSync(`${base}.json`, JSON.stringify(recipe, null, 2));
       fs.writeFileSync(`${base}.md`, toMarkdown(recipe, input, path.basename(base)));
     };
+    recipe.timings = timer.snapshot();
     writeOutputs();
 
     // 步骤状态图 + 食材图：截到几张算几张，任何失败只降级为无图，不毁掉整趟解析
@@ -130,7 +140,7 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
         if (duration) {
           fs.rmSync(base, { recursive: true, force: true }); // 同名菜谱重复解析：清掉旧图，别新旧混杂
           fs.mkdirSync(base, { recursive: true });
-          await withStageTimeout(
+          await timer.time("step_images", () => withStageTimeout(
             "步骤截图",
             timeoutMinutes("PAODING_STEP_IMAGE_TIMEOUT_MIN", 3),
             signal,
@@ -138,8 +148,8 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
               duration, imagesDir: base, signal: stageSignal,
               onProgress: (p) => emit("images", 88 + p.pct * 0.05, p.message),
             }),
-          );
-          await withStageTimeout(
+          ));
+          await timer.time("ingredient_images", () => withStageTimeout(
             "食材截图",
             timeoutMinutes("PAODING_INGREDIENT_IMAGE_TIMEOUT_MIN", 3),
             signal,
@@ -147,9 +157,10 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
               duration, segments, imagesDir: base, signal: stageSignal,
               onProgress: (p) => emit("images", 93 + p.pct * 0.05, p.message),
             }),
-          );
+          ));
           // 一张都没截到就删掉空目录
           if (!fs.readdirSync(base).length) fs.rmdirSync(base);
+          recipe.timings = timer.snapshot();
           writeOutputs();
         }
       } catch (e) {
@@ -158,6 +169,7 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
     }
 
     step(5, "写出结果…");
+    recipe.timings = timer.snapshot({ includeTotal: true });
     writeOutputs();
     emit("done", 100, "完成");
 
@@ -171,12 +183,13 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
 // 用于小红书图文/公众号/下厨房等没有音频的来源，跳过下载与转写。
 export async function processText(input, config, { onProgress = () => {}, signal } = {}) {
   const emit = (stage, pct, message) => onProgress({ stage, pct: Math.round(pct), message });
+  const timer = createStageTimer();
   const isUrl = /^https?:\/\//i.test(input);
   let title = "", text = "";
 
   if (isUrl) {
     emit("acquire", 6, "抓取网页文字…");
-    ({ title, text } = await fetchArticleText(input, config.ytdlp || {}));
+    ({ title, text } = await timer.time("acquire", () => fetchArticleText(input, config.ytdlp || {})));
     const unusableReason = unusableRecipeTextReason({ title, text });
     if (unusableReason) {
       throw new Error(`${unusableReason}。可直接复制帖子文字，用「粘贴文字」解析。`);
@@ -187,17 +200,20 @@ export async function processText(input, config, { onProgress = () => {}, signal
   }
 
   emit("structure", 40, "整理成步骤…");
-  const recipe = await structureRecipe(config.llm, { transcript: text, meta: { title, description: text.slice(0, 2000) }, signal });
+  const recipe = await timer.time("structure", () =>
+    structureRecipe(config.llm, { transcript: text, meta: { title, description: text.slice(0, 2000) }, signal }),
+  );
   for (const step of recipe.steps || []) delete step.source_time;
   delete recipe.source_time_coverage;
   emit("structure", 60, "步骤已生成");
 
   emit("explain", 65, "逐步生成「为什么」…");
-  await explainSteps(config.llm, recipe, config.depth, signal);
+  await timer.time("explain", () => explainSteps(config.llm, recipe, config.depth, signal));
   emit("explain", 96, "讲解已生成");
 
   recipe.source = isUrl ? input : "（粘贴文字）";
   recipe.created_at = new Date().toISOString();
+  recipe.timings = timer.snapshot({ includeTotal: true });
   fs.mkdirSync(config.outDir, { recursive: true });
   const base = path.join(config.outDir, slug(recipe.title || title));
   fs.writeFileSync(`${base}.json`, JSON.stringify(recipe, null, 2));
@@ -218,36 +234,40 @@ function usableImageTranscript(text) {
 // 图片来源没有可靠视频时间轴，所有步骤都不保留 source_time。
 export async function processImages(paths, config, { onProgress = () => {}, signal } = {}) {
   const emit = (stage, pct, message) => onProgress({ stage, pct: Math.round(pct), message });
+  const timer = createStageTimer();
   const files = Array.isArray(paths) ? paths : [];
   if (!config.vision) throw new Error("需配置视觉模型后才能拍照/图片导入。");
   if (!files.length) throw new Error("请至少提供一张菜谱图片。");
 
   const parts = [];
-  for (let i = 0; i < files.length; i++) {
-    emit("vision", 5 + (i / files.length) * 35, `识别第 ${i + 1}/${files.length} 张图片…`);
-    const text = await transcribeRecipeImage(config.vision, files[i], { index: i + 1, total: files.length, signal });
-    if (usableImageTranscript(text)) parts.push(`【第 ${i + 1} 张图】\n${text.trim()}`);
-  }
+  await timer.time("vision", async () => {
+    for (let i = 0; i < files.length; i++) {
+      emit("vision", 5 + (i / files.length) * 35, `识别第 ${i + 1}/${files.length} 张图片…`);
+      const text = await transcribeRecipeImage(config.vision, files[i], { index: i + 1, total: files.length, signal });
+      if (usableImageTranscript(text)) parts.push(`【第 ${i + 1} 张图】\n${text.trim()}`);
+    }
+  });
   const transcript = parts.join("\n\n").trim();
   if (!usableImageTranscript(transcript)) throw new Error("图片中未识别到菜谱内容。");
 
   emit("structure", 50, "整理成步骤…");
-  const recipe = await structureRecipe(config.llm, {
+  const recipe = await timer.time("structure", () => structureRecipe(config.llm, {
     transcript,
     meta: { title: "图片导入菜谱", description: transcript.slice(0, 2000) },
     signal,
-  });
+  }));
   for (const step of recipe.steps || []) delete step.source_time;
   emit("structure", 68, "步骤已生成");
 
   emit("explain", 72, "逐步生成「为什么」…");
-  await explainSteps(config.llm, recipe, config.depth, signal);
+  await timer.time("explain", () => explainSteps(config.llm, recipe, config.depth, signal));
   emit("explain", 96, "讲解已生成");
 
   recipe.source = "（图片导入）";
   recipe.source_type = "image";
   recipe.imported = true;
   recipe.created_at = new Date().toISOString();
+  recipe.timings = timer.snapshot({ includeTotal: true });
 
   fs.mkdirSync(config.outDir, { recursive: true });
   const base = path.join(config.outDir, slug(recipe.title || "图片导入菜谱"));
