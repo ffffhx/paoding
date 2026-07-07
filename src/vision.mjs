@@ -218,10 +218,11 @@ export function candidateTimes([start, end], duration, n = 4) {
 
 export function stepImageCandidateCount(sourceTime, duration) {
   const d = Number(duration);
-  if (Number.isFinite(d) && d > 0 && d <= 180) return 1;
   if (!Array.isArray(sourceTime) || sourceTime.length < 2) return 1;
   const span = Math.max(0, Number(sourceTime[1]) - Number(sourceTime[0]));
-  if (!Number.isFinite(span) || span <= 10) return 1;
+  if (!Number.isFinite(span)) return 1;
+  if (Number.isFinite(d) && d > 0 && d <= 180) return span >= 8 ? 2 : 1;
+  if (span <= 10) return 1;
   if (span <= 25) return 2;
   return 4;
 }
@@ -347,8 +348,9 @@ export async function extractStepImages(vision, videoPath, recipe, { duration, i
         if (files.length === 1) {
           const ans = await chatVision(vision, {
             system: "你在帮做菜教程挑选步骤配图。只输出 JSON，不要解释。",
-            user: `这是一张候选步骤图。步骤：「${s.title || ""}：${s.action || ""}」${cue}。\n它是否清晰展示这一步的操作或完成状态？食物/锅具应为主体；黑屏、转场、片头片尾、纯人脸特写、不相关画面都算不合适。\n输出 JSON：{"ok": true 或 false}`,
+            user: `这是一张候选步骤图。步骤：「${s.title || ""}：${s.action || ""}」${cue}。\n它是否适合作为这一步的配图？只要相关食物、锅具、手部操作或完成状态清楚可见即可；允许讲解人同时出镜。黑屏、转场、片头片尾、纯人脸且看不到相关食物/锅具、不相关画面都算不合适。\n输出 JSON：{"ok": true 或 false}`,
             images: [b64(files[0])],
+            temperature: 0,
             signal,
           });
           const parsed = parseModelJSON(ans);
@@ -356,8 +358,9 @@ export async function extractStepImages(vision, videoPath, recipe, { duration, i
         } else {
           const ans = await chatVision(vision, {
             system: "你在帮做菜教程挑选步骤配图。只输出 JSON，不要解释。",
-            user: `这是同一做菜步骤时间段内按先后截取的 ${files.length} 张图（编号 1~${files.length}）。步骤：「${s.title || ""}：${s.action || ""}」${cue}。\n选出最能清晰展示这一步操作或完成状态的一张（画面清楚、食物为主体；避开人脸特写、转场、黑屏、片头片尾）。都不合适就选 0。\n输出 JSON：{"best": 编号}`,
+            user: `这是同一做菜步骤时间段内按先后截取的 ${files.length} 张图（编号 1~${files.length}）。步骤：「${s.title || ""}：${s.action || ""}」${cue}。\n选出最适合作为这一步配图的一张：相关食物、锅具、手部操作或完成状态要清楚可见；允许讲解人同时出镜。避开黑屏、转场、片头片尾、纯人脸且看不到相关食物/锅具、不相关画面。都不合适就选 0。\n输出 JSON：{"best": 编号}`,
             images: files.map(b64),
+            temperature: 0,
             signal,
           });
           const n = Number(parseModelJSON(ans)?.best);

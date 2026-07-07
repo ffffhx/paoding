@@ -668,8 +668,10 @@ test("candidateTimes 段内取样、偏向段末、夹回视频范围", () => {
   assert.ok(short.length >= 1);
 });
 
-test("stepImageCandidateCount 短视频使用单候选帧，长视频按步骤跨度扩展", () => {
-  assert.equal(stepImageCandidateCount([0, 30], 133), 1);
+test("stepImageCandidateCount 短视频宽时间段用双候选，长视频按步骤跨度扩展", () => {
+  assert.equal(stepImageCandidateCount([0, 6], 133), 1);
+  assert.equal(stepImageCandidateCount([0, 30], 133), 2);
+  assert.equal(stepImageCandidateCount([52, 60], 133), 2);
   assert.equal(stepImageCandidateCount([10, 18], 600), 1);
   assert.equal(stepImageCandidateCount([10, 30], 600), 2);
   assert.equal(stepImageCandidateCount([10, 60], 600), 4);
@@ -708,8 +710,8 @@ test("extractStepImages 单候选帧也经视觉复核，不合适则不配图",
     fs.mkdirSync(imagesDir);
     const recipe = {
       steps: [
-        { index: 1, title: "黑屏转场", action: "转场字幕", params: {}, source_time: [0, 30] },
-        { index: 2, title: "炒鸡蛋", action: "把鸡蛋炒到凝固", params: { cue: "蛋液凝固" }, source_time: [30, 60] },
+        { index: 1, title: "黑屏转场", action: "转场字幕", params: {}, source_time: [0, 6] },
+        { index: 2, title: "炒鸡蛋", action: "把鸡蛋炒到凝固", params: { cue: "蛋液凝固" }, source_time: [30, 36] },
       ],
     };
 
@@ -724,6 +726,65 @@ test("extractStepImages 单候选帧也经视觉复核，不合适则不配图",
     assert.equal(recipe.steps[0].image, undefined);
     assert.equal(recipe.steps[1].image, "step-2.jpg");
     assert.ok(fs.existsSync(path.join(imagesDir, "step-2.jpg")));
+  } finally {
+    globalThis.fetch = oldFetch;
+    if (oldFfmpeg === undefined) delete process.env.PAODING_FFMPEG_BIN;
+    else process.env.PAODING_FFMPEG_BIN = oldFfmpeg;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("extractStepImages 短视频宽时间段用双候选且允许不配图", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-step-wide-test-"));
+  const oldFetch = globalThis.fetch;
+  const oldFfmpeg = process.env.PAODING_FFMPEG_BIN;
+  const imageCounts = [];
+  const respond = (content) => new Response(JSON.stringify({
+    choices: [{ message: { role: "assistant", content } }],
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
+
+  try {
+    process.env.PAODING_FFMPEG_BIN = FAKE_FFMPEG;
+    globalThis.fetch = async (input, init = {}) => {
+      assert.ok(String(input).endsWith("/chat/completions"));
+      const body = JSON.parse(String(init.body || "{}"));
+      const system = String(body.messages?.find((m) => m.role === "system")?.content || "");
+      const userMsg = body.messages?.find((m) => m.role === "user")?.content;
+      const userText = Array.isArray(userMsg)
+        ? String(userMsg.find((item) => item.type === "text")?.text || "")
+        : String(userMsg || "");
+      const imageCount = Array.isArray(userMsg)
+        ? userMsg.filter((item) => item.type === "image_url").length
+        : 0;
+      if (system.includes("挑选步骤配图")) {
+        imageCounts.push(imageCount);
+        return respond(JSON.stringify({ best: userText.includes("调制料汁") ? 1 : 0 }));
+      }
+      return respond("{}");
+    };
+
+    const videoPath = path.join(root, "input.mp4");
+    const imagesDir = path.join(root, "images");
+    fs.writeFileSync(videoPath, "fake video\n");
+    fs.mkdirSync(imagesDir);
+    const recipe = {
+      steps: [
+        { index: 1, title: "调制料汁", action: "加入生抽蚝油搅匀", params: {}, source_time: [52, 60] },
+        { index: 2, title: "片尾试吃", action: "无关讲解", params: {}, source_time: [100, 120] },
+      ],
+    };
+
+    const saved = await extractStepImages({
+      baseUrl: "http://vision.test/v1",
+      apiKey: "test-key",
+      model: "vision-stub",
+    }, videoPath, recipe, { duration: 133, imagesDir });
+
+    assert.deepEqual(imageCounts, [2, 2]);
+    assert.equal(saved, 1);
+    assert.equal(recipe.steps[0].image, "step-1.jpg");
+    assert.equal(recipe.steps[1].image, undefined);
+    assert.ok(fs.existsSync(path.join(imagesDir, "step-1.jpg")));
   } finally {
     globalThis.fetch = oldFetch;
     if (oldFfmpeg === undefined) delete process.env.PAODING_FFMPEG_BIN;
