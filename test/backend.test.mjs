@@ -295,7 +295,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
 import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, inferBakingToolFallback } from "../src/chef.mjs";
-import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, mapLimitSettled, extractIngredientImages } from "../src/vision.mjs";
+import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, ensureRecipeCardMarker, mapLimitSettled, extractIngredientImages } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
   const out = parseWhisperJson({
@@ -486,6 +486,18 @@ test("recipeCardCapturePoints 为片头和片尾配方卡预留时间点", () =>
   assert.equal(long.length, 8);
   assert.ok(long.some((p) => p.kind === "tail" && p.time >= 7199));
   assert.equal(recipeCardCapturePoints(null, { max: 8 }).length, 0);
+});
+
+test("ensureRecipeCardMarker 为漏标的配方表视觉转录补标记", () => {
+  const text = [
+    "万能面包配方表",
+    "高粉：150g 牛奶：75g 白砂糖：60g",
+    "奶粉：5g 盐：4g 黄油：36g",
+  ].join("\n");
+  assert.equal(ensureRecipeCardMarker(text), `【画面配方卡】\n${text}`);
+  assert.equal(ensureRecipeCardMarker(`【画面配方卡】\n${text}`), `【画面配方卡】\n${text}`);
+  assert.equal(ensureRecipeCardMarker("配方表：无明确信息"), "配方表：无明确信息");
+  assert.equal(ensureRecipeCardMarker("今天分享一个面包配方，揉到出膜。"), "今天分享一个面包配方，揉到出膜。");
 });
 
 test("candidateTimes 段内取样、偏向段末、夹回视频范围", () => {

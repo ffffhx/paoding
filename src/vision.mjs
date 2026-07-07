@@ -147,7 +147,7 @@ export async function visionTranscript(vision, frames, onProgress = () => {}, si
         images: frames.slice(i, i + batch),
         signal,
       });
-      if (text && !text.includes("本组无有用信息")) parts.push(text.trim());
+      if (text && !text.includes("本组无有用信息")) parts.push(ensureRecipeCardMarker(text.trim()));
     } catch (e) {
       // 单批失败不影响整体
     }
@@ -156,6 +156,15 @@ export async function visionTranscript(vision, frames, onProgress = () => {}, si
 }
 
 /* ================= 画面截图：步骤状态图 + 食材图 ================= */
+
+export function ensureRecipeCardMarker(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed || trimmed.includes("【画面配方卡】")) return trimmed;
+  if (!/(配方表|配方卡|配料表|材料表|用料表|食材清单)/.test(trimmed)) return trimmed;
+  const amounts = trimmed.match(/\d+(?:\.\d+)?\s*(?:g|克|kg|千克|ml|毫升|L|升|个|只|枚|颗|勺|匙|杯|份)/gi) || [];
+  if (amounts.length < 3) return trimmed;
+  return `【画面配方卡】\n${trimmed}`;
+}
 
 const FRAME_WIDTH = 960; // 落盘/喂 VL 的统一宽度：手机展示够清晰，单张 ~100KB
 
