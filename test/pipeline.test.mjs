@@ -102,7 +102,7 @@ function stubExplanations() {
   };
 }
 
-async function startLlmStub({ malformedFirst = false, imageText = "", structuredRecipe = null } = {}) {
+async function startLlmStub({ malformedFirst = false, imageText = "", visionFrameText = "", structuredRecipe = null } = {}) {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   const requests = [];
@@ -122,8 +122,10 @@ async function startLlmStub({ malformedFirst = false, imageText = "", structured
       content = "这不是 JSON";
     } else if (system.includes("菜谱图片转录助手")) {
       content = imageText || "标题：集成测试番茄炒蛋\n食材：鸡蛋3个，番茄2个\n步骤：1. 打散鸡蛋。2. 炒番茄出汁。3. 合炒调味。";
+    } else if (system.includes("做菜视频按时间顺序截取")) {
+      content = visionFrameText || "（本组无有用信息）";
     } else if (system.includes("专业中餐厨师兼菜谱编辑")) {
-      content = JSON.stringify(structuredRecipe || stubRecipe());
+      content = JSON.stringify((typeof structuredRecipe === "function" ? structuredRecipe(body) : structuredRecipe) || stubRecipe());
     } else if (system.includes("食品科学")) {
       content = JSON.stringify(stubExplanations());
     } else {
@@ -301,6 +303,49 @@ test("processVideo 使用可注入二进制跑通本地视频管线并清理临�
       assert.ok(fs.existsSync(files.json));
       assert.ok(fs.existsSync(files.md));
       assertNoNewPaodingTmp(root, before);
+    });
+  } finally {
+    await llm.close();
+  }
+});
+
+test("processVideo 将画面配方卡作为高优先级结构化输入", async () => {
+  const llm = await startLlmStub({
+    visionFrameText: "【画面配方卡】\n茉莉奶绿配方\n茉莉茶汤 1300毫升\n牛奶 400毫升\n糖浆 120毫升",
+    structuredRecipe: (body) => {
+      const user = String(body.messages?.find((m) => m.role === "user")?.content || "");
+      assert.ok(user.includes("【画面配方卡 / 配料表（高优先级）】"));
+      assert.ok(user.includes("用量以它为准"));
+      assert.ok(user.includes("茉莉茶汤 1300毫升"));
+      return {
+        title: "茉莉奶绿",
+        servings: "约4杯",
+        total_time_min: 10,
+        difficulty: "easy",
+        cuisine: "饮品",
+        tags: ["饮品", "奶茶"],
+        ingredients: [
+          { name: "茉莉茶汤", amount: "1300毫升", qty: 1300, unit: "毫升", note: "出处：画面配方卡" },
+          { name: "牛奶", amount: "400毫升", qty: 400, unit: "毫升", note: "出处：画面配方卡" },
+        ],
+        tools: [],
+        steps: [
+          { index: 1, title: "混合", action: "按配方卡用量混合茶汤、牛奶和糖浆。", params: { cue: "颜色均匀" }, source_time: [0, 10] },
+        ],
+      };
+    },
+  });
+  try {
+    await withIsolatedTmp(async (root) => {
+      const config = addVision(createConfig(root, llm.url), llm.url);
+      const { recipe } = await withEnv({ PAODING_FFMPEG_BIN: FAKE_FFMPEG }, () =>
+        processVideo("https://93.184.216.34/watch?v=card", config, { keepTranscript: true }),
+      );
+
+      assert.equal(recipe.title, "茉莉奶绿");
+      assert.equal(recipe.ingredients[0].amount, "1300毫升");
+      assert.equal(recipe.ingredients[0].note, "出处：画面配方卡");
+      assert.ok(recipe._transcript.includes("【画面配方卡】"));
     });
   } finally {
     await llm.close();

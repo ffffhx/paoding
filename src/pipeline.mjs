@@ -44,7 +44,7 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
       step(2.5, "看画面读字幕（视觉）…");
       emit("vision", 46, "看画面读字幕…");
       try {
-        const frames = await extractFrames(videoPath, { max: config.vision.maxFrames, signal });
+        const frames = await extractFrames(videoPath, { max: config.vision.maxFrames, duration: meta.duration, signal });
         visualNote = await visionTranscript(config.vision, frames, (p) =>
           emit("vision", 46 + p.pct * 0.2, p.message), signal,
         );

@@ -20,23 +20,110 @@ function resolveFfmpegBin() {
   return process.env.PAODING_FFMPEG_BIN || "ffmpeg";
 }
 
+const roundTime = (t) => Math.round(t * 10) / 10;
+
+function spreadTimes(start, end, count, minGap = 1) {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || count <= 0 || end < start) return [];
+  const raw = [];
+  const span = Math.max(0, end - start);
+  for (let i = 0; i < count; i++) raw.push(roundTime(start + ((i + 0.5) * span) / count));
+  const out = [];
+  for (const t of raw) {
+    if (!out.some((x) => Math.abs(x - t) < minGap)) out.push(t);
+  }
+  return out;
+}
+
+// 读屏 OCR 的专项补抽点：开头少量帧 + 片尾配方卡帧。
+// 片尾窗口为最后 20%，普通长视频至少覆盖最后 30 秒；短视频只按比例取，避免全片都被补抽占满。
+export function recipeCardCapturePoints(duration, {
+  max = 8,
+  headCount = 2,
+  tailCount = 6,
+  headSeconds = 5,
+  tailRatio = 0.2,
+  minTailSeconds = 30,
+  minGapSeconds = 1,
+} = {}) {
+  const d = Number(duration);
+  const capNum = Number(max);
+  const cap = Math.max(0, Math.floor(Number.isFinite(capNum) ? capNum : headCount + tailCount));
+  if (!Number.isFinite(d) || d <= 1 || cap <= 0) return [];
+
+  const reserve = Math.min(headCount + tailCount, cap);
+  let head = reserve >= tailCount + 1 ? Math.min(headCount, reserve - tailCount) : (reserve >= 3 ? 1 : 0);
+  let tail = reserve - head;
+  if (tail > tailCount) {
+    head = Math.min(headCount, head + tail - tailCount);
+    tail = tailCount;
+  }
+
+  const safeEnd = Math.max(0.6, d - 0.5);
+  const headEnd = Math.min(headSeconds, safeEnd);
+  const tailWindow = d < minTailSeconds ? Math.max(1, d * tailRatio) : Math.max(d * tailRatio, minTailSeconds);
+  const tailStart = Math.max(0.5, d - tailWindow);
+
+  const points = [
+    ...spreadTimes(0.5, headEnd, head, minGapSeconds).map((time) => ({ kind: "head", time })),
+    ...spreadTimes(tailStart, safeEnd, tail, minGapSeconds).map((time) => ({ kind: "tail", time })),
+  ].sort((a, b) => a.time - b.time);
+
+  const out = [];
+  for (const p of points) {
+    if (!out.some((x) => Math.abs(x.time - p.time) < minGapSeconds)) out.push(p);
+  }
+  return out;
+}
+
+async function extractVisionFrameAt(ffmpeg, videoPath, tSec, outPath, signal) {
+  await run(ffmpeg, ["-y", "-ss", String(tSec), "-i", videoPath, "-frames:v", "1", "-vf", "scale=768:-1", "-q:v", "3", outPath], signal);
+  return fs.existsSync(outPath) && fs.statSync(outPath).size > 0;
+}
+
 // 从视频抽关键帧：优先场景切换、抽不到再退回固定间隔；缩放到 768 宽、限量。返回 base64 jpg 数组。
-export async function extractFrames(videoPath, { max = 20, signal } = {}) {
+export async function extractFrames(videoPath, { max = 20, duration = null, signal } = {}) {
   const ffmpeg = resolveFfmpegBin();
+  const maxFrames = Math.max(0, Math.floor(Number(max) || 0));
+  if (!maxFrames) return [];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-frames-"));
-  const pattern = path.join(dir, "f-%04d.jpg");
-  const collect = () => fs.readdirSync(dir).filter((f) => f.endsWith(".jpg")).sort();
+  const scenePattern = path.join(dir, "scene-%04d.jpg");
+  const collect = (prefix) => fs.readdirSync(dir).filter((f) => f.startsWith(prefix) && f.endsWith(".jpg")).sort();
   try {
+    const d = Number.isFinite(Number(duration)) && Number(duration) > 0
+      ? Number(duration)
+      : await probeDuration(videoPath, signal).catch(() => null);
+    const minSceneBudget = maxFrames > 8 ? 3 : Math.min(2, Math.floor(maxFrames / 2));
+    const cardPoints = recipeCardCapturePoints(d, { max: Math.max(0, maxFrames - minSceneBudget) });
+    const sceneBudget = Math.max(0, maxFrames - cardPoints.length);
+
     // 场景切换抽帧
-    await run(ffmpeg, ["-y", "-i", videoPath, "-vf", "select='gt(scene,0.3)',scale=768:-1", "-vsync", "vfr", "-frames:v", String(max), pattern], signal).catch(() => {});
-    let files = collect();
-    if (files.length < 3) {
-      // 兜底：每 6 秒一帧
-      files.forEach((f) => fs.rmSync(path.join(dir, f), { force: true }));
-      await run(ffmpeg, ["-y", "-i", videoPath, "-vf", "fps=1/6,scale=768:-1", "-frames:v", String(max), pattern], signal);
-      files = collect();
+    if (sceneBudget > 0) {
+      await run(ffmpeg, ["-y", "-i", videoPath, "-vf", "select='gt(scene,0.3)',scale=768:-1", "-vsync", "vfr", "-frames:v", String(sceneBudget), scenePattern], signal).catch(() => {});
     }
-    return files.slice(0, max).map((f) => fs.readFileSync(path.join(dir, f)).toString("base64"));
+    let sceneFiles = collect("scene-");
+    if (sceneBudget > 0 && sceneFiles.length < Math.min(3, sceneBudget)) {
+      // 兜底：每 6 秒一帧
+      sceneFiles.forEach((f) => fs.rmSync(path.join(dir, f), { force: true }));
+      await run(ffmpeg, ["-y", "-i", videoPath, "-vf", "fps=1/6,scale=768:-1", "-frames:v", String(sceneBudget), scenePattern], signal);
+      sceneFiles = collect("scene-");
+    }
+
+    const headFiles = [], tailFiles = [];
+    for (let i = 0; i < cardPoints.length; i++) {
+      const p = cardPoints[i];
+      const name = `${p.kind}-${String(i + 1).padStart(2, "0")}.jpg`;
+      const file = path.join(dir, name);
+      try {
+        if (await extractVisionFrameAt(ffmpeg, videoPath, p.time, file, signal)) {
+          (p.kind === "head" ? headFiles : tailFiles).push(name);
+        }
+      } catch {
+        // 单个补抽点失败不影响其它帧
+      }
+    }
+
+    const files = [...headFiles, ...sceneFiles, ...tailFiles].slice(0, maxFrames);
+    return files.map((f) => fs.readFileSync(path.join(dir, f)).toString("base64"));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -50,7 +137,7 @@ export async function visionTranscript(vision, frames, onProgress = () => {}, si
     onProgress({ pct: Math.round((i / frames.length) * 100), message: `看画面读字幕…（${Math.min(i + batch, frames.length)}/${frames.length}）` });
     try {
       const text = await chatVision(vision, {
-        system: "你在看一段做菜视频按时间顺序截取的若干帧。请抽出两类信息：\n1) 画面上出现的所有文字（字幕、标题、用量/火候标注等），逐字照抄，别改写。\n2) 画面里能明确看到的食材、操作动作、火候/状态。\n只写你真的看到的，绝不脑补。简洁中文，分点。看不到有用信息就回「（本组无有用信息）」。",
+        system: "你在看一段做菜视频按时间顺序截取的若干帧。请抽出两类信息：\n1) 画面上出现的所有文字（字幕、标题、用量/火候标注等），逐字照抄，别改写。\n2) 画面里能明确看到的食材、操作动作、火候/状态。\n如果遇到整屏文字、列表排版、配料表、配方卡这类高价值画面，必须逐字完整转录（尤其是用量数字与单位），并用「【画面配方卡】」标记该段。\n只写你真的看到的，绝不脑补。简洁中文，分点。看不到有用信息就回「（本组无有用信息）」。",
         user: "这些是按时间先后排列的截图：",
         images: frames.slice(i, i + batch),
         signal,

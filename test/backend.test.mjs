@@ -238,8 +238,8 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
-import { normalizeSourceTime, clampStepTimes, normalizeTools } from "../src/chef.mjs";
-import { candidateTimes, clampBbox, jpegSize } from "../src/vision.mjs";
+import { normalizeSourceTime, clampStepTimes, normalizeTools, extractRecipeCardTranscript } from "../src/chef.mjs";
+import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
   const out = parseWhisperJson({
@@ -297,6 +297,33 @@ test("normalizeTools 清洗工具清单并保留替代说明", () => {
     { name: "戚风模具", purpose: "帮助爬升", essential: true, substitute: null, substitute_note: "防粘模具会影响爬升", inferred: true },
     { name: "抹刀", purpose: "整理 奶油", essential: true, substitute: "勺子", substitute_note: "边缘粗糙", inferred: true },
   ]);
+});
+
+test("extractRecipeCardTranscript 提取画面配方卡段落", () => {
+  const text = [
+    "[00:00] 口播说牛奶大约一杯",
+    "【画面观察 / 屏上文字】",
+    "普通字幕：搅拌均匀",
+    "【画面配方卡】",
+    "牛奶 400毫升",
+    "茉莉茶汤 1300毫升",
+    "【其它画面】",
+    "倒入杯中",
+  ].join("\n");
+  assert.equal(extractRecipeCardTranscript(text), "【画面配方卡】\n牛奶 400毫升\n茉莉茶汤 1300毫升");
+});
+
+test("recipeCardCapturePoints 为片头和片尾配方卡预留时间点", () => {
+  const points = recipeCardCapturePoints(120, { max: 8 });
+  assert.equal(points.length, 8);
+  assert.deepEqual(points.map((p) => p.kind), ["head", "head", "tail", "tail", "tail", "tail", "tail", "tail"]);
+  assert.ok(points.slice(0, 2).every((p) => p.time >= 0.5 && p.time <= 5));
+  assert.ok(points.slice(2).every((p) => p.time >= 90 && p.time <= 119.5));
+  for (let i = 1; i < points.length; i++) assert.ok(points[i].time > points[i - 1].time);
+
+  const short = recipeCardCapturePoints(20, { max: 4 });
+  assert.ok(short.some((p) => p.kind === "tail" && p.time >= 16 && p.time <= 19.5));
+  assert.equal(recipeCardCapturePoints(null, { max: 8 }).length, 0);
 });
 
 test("candidateTimes 段内取样、偏向段末、夹回视频范围", () => {
