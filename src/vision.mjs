@@ -301,7 +301,7 @@ export async function mapLimitSettled(items, limit, fn, { signal } = {}) {
 function ingredientCropConcurrency(vision) {
   const raw = Number(vision?.ingredientConcurrency || process.env.PAODING_INGREDIENT_IMAGE_CONCURRENCY || 2);
   if (!Number.isFinite(raw)) return 2;
-  return Math.max(2, Math.min(3, Math.floor(raw)));
+  return Math.max(1, Math.min(3, Math.floor(raw)));
 }
 
 function imageMime(file) {
