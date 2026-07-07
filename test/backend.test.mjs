@@ -294,7 +294,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
-import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, inferBakingToolFallback } from "../src/chef.mjs";
+import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, inferBakingToolFallback, annotateRecipeCardSources } from "../src/chef.mjs";
 import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, ensureRecipeCardMarker, mapLimitSettled, extractIngredientImages, visionTranscript } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
@@ -497,8 +497,34 @@ test("ensureRecipeCardMarker 为漏标的配方表视觉转录补标记", () => 
   ].join("\n");
   assert.equal(ensureRecipeCardMarker(text), `【画面配方卡】\n${text}`);
   assert.equal(ensureRecipeCardMarker(`【画面配方卡】\n${text}`), `【画面配方卡】\n${text}`);
+  assert.equal(ensureRecipeCardMarker(`${text}\n【画面配方卡】`), `【画面配方卡】\n${text}`);
   assert.equal(ensureRecipeCardMarker("配方表：无明确信息"), "配方表：无明确信息");
   assert.equal(ensureRecipeCardMarker("今天分享一个面包配方，揉到出膜。"), "今天分享一个面包配方，揉到出膜。");
+});
+
+test("annotateRecipeCardSources 按配方卡用量为食材补出处 note", () => {
+  const recipe = {
+    ingredients: [
+      { name: "高筋面粉", amount: "150克", qty: 150, unit: "克", note: "" },
+      { name: "牛奶", amount: "75克（可用水替代）", qty: 75, unit: "克", note: "可用0.9倍水替代" },
+      { name: "盐", amount: "少许", qty: null, unit: "", note: "" },
+      { name: "橄榄油", amount: "10克", qty: 10, unit: "克", note: "" },
+    ],
+  };
+  annotateRecipeCardSources(recipe, [
+    "【画面配方卡】",
+    "万能面包配方表",
+    "高粉：150g",
+    "牛奶：75g",
+    "盐：4g",
+  ].join("\n"));
+  assert.equal(recipe.ingredients[0].note, "出处：画面配方卡");
+  assert.equal(recipe.ingredients[1].note, "可用0.9倍水替代；出处：画面配方卡");
+  assert.equal(recipe.ingredients[2].note, "");
+  assert.equal(recipe.ingredients[3].note, "");
+  annotateRecipeCardSources(recipe, "【画面配方卡】\n高粉：150g\n牛奶：75g");
+  assert.equal(recipe.ingredients[0].note, "出处：画面配方卡");
+  assert.equal(recipe.ingredients[1].note, "可用0.9倍水替代；出处：画面配方卡");
 });
 
 test("visionTranscript 小批量读屏避免配方卡被多图稀释", async () => {

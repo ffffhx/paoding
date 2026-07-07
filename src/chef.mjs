@@ -336,6 +336,51 @@ export function extractRecipeCardTranscript(transcript) {
   return out.join("\n").trim();
 }
 
+const RECIPE_CARD_SOURCE_NOTE = "出处：画面配方卡";
+const AMOUNT_TOKEN_RE = /\d+(?:\.\d+)?\s*(?:kg|千克|公斤|g|克|ml|毫升|L|升|个|只|枚|颗|勺|匙|杯|份)/gi;
+
+function normalizeAmountText(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/公斤|千克/g, "kg")
+    .replace(/毫升/g, "ml")
+    .replace(/克/g, "g")
+    .replace(/升/g, "l")
+    .replace(/\s+/g, "");
+}
+
+function amountTokens(...values) {
+  const tokens = new Set();
+  for (const value of values) {
+    for (const match of String(value || "").match(AMOUNT_TOKEN_RE) || []) {
+      tokens.add(normalizeAmountText(match));
+    }
+  }
+  return [...tokens].filter(Boolean);
+}
+
+function appendRecipeCardSource(note) {
+  const current = cleanText(note, 240);
+  if (current.includes(RECIPE_CARD_SOURCE_NOTE)) return current;
+  return current ? `${current}；${RECIPE_CARD_SOURCE_NOTE}` : RECIPE_CARD_SOURCE_NOTE;
+}
+
+export function annotateRecipeCardSources(recipe, cardTranscript) {
+  if (!recipe || typeof recipe !== "object" || !Array.isArray(recipe.ingredients)) return recipe;
+  const cardText = normalizeAmountText(cardTranscript);
+  if (!cardText.includes(normalizeAmountText("【画面配方卡】"))) return recipe;
+
+  for (const ing of recipe.ingredients) {
+    if (!ing || typeof ing !== "object" || Array.isArray(ing)) continue;
+    const qtyUnit = Number.isFinite(Number(ing.qty)) && ing.unit ? `${ing.qty}${ing.unit}` : "";
+    const tokens = amountTokens(ing.amount, qtyUnit);
+    if (tokens.length && tokens.some((token) => cardText.includes(token))) {
+      ing.note = appendRecipeCardSource(ing.note);
+    }
+  }
+  return recipe;
+}
+
 export async function structureRecipe(llm, { transcript, meta, signal }) {
   const cardTranscript = extractRecipeCardTranscript(transcript);
   const cardBlock = cardTranscript ? `【画面配方卡 / 配料表（高优先级）】
@@ -363,6 +408,7 @@ ${transcript}`;
   });
   recipe.ingredients = (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).filter(isObj);
   applyIngredientFixes(recipe);
+  annotateRecipeCardSources(recipe, cardTranscript);
   recipe.tools = inferBakingToolFallback(recipe, recipe.tools);
   normalizeRecipePhases(recipe);
   if (!Array.isArray(recipe.tags)) recipe.tags = [];
