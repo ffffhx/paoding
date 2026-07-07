@@ -1110,11 +1110,16 @@ async function answerPantryIdeas({ pantry }) {
 }
 
 const RECIPE_VARIANT_TYPES = new Set(["vegetarian", "healthier", "low_salt", "replace"]);
-function recipeVariantSuffix(type, ingredient = "") {
+function recipeVariantSuffix(type, ingredient = "", lang = "zh") {
+  const english = lang === "en";
+  if (english && type === "vegetarian") return " (vegetarian)";
+  if (english && type === "healthier") return " (healthier)";
+  if (english && type === "low_salt") return " (lower-salt)";
   if (type === "vegetarian") return "（素食版）";
   if (type === "healthier") return "（更健康版）";
   if (type === "low_salt") return "（低盐版）";
   const target = String(ingredient || "").trim().slice(0, 24);
+  if (english) return target ? ` (${target} replacement)` : " (ingredient replacement)";
   return target ? `（替换${target}版）` : "（替换食材版）";
 }
 function recipeVariantInstruction(type, ingredient = "") {
@@ -1123,12 +1128,15 @@ function recipeVariantInstruction(type, ingredient = "") {
   if (type === "low_salt") return "把这道菜改成低盐版本：减少盐、生抽、老抽、蚝油、豆瓣酱等高钠调味，改用酸香、香料、葱姜蒜、鲜味食材补味。";
   return `把这道菜改成替换指定食材的版本：${String(ingredient || "用户指定食材").trim()}。若用户写了“原食材→目标食材”，按目标替换；否则给出合理替代。`;
 }
-function recipeVariantTitle(originalTitle, type, ingredient = "") {
+function recipeVariantTitle(originalTitle, type, ingredient = "", lang = "zh") {
   const base = String(originalTitle || "菜谱").trim() || "菜谱";
-  const suffix = recipeVariantSuffix(type, ingredient);
+  const suffix = recipeVariantSuffix(type, ingredient, lang);
   return base.endsWith(suffix) ? base : `${base}${suffix}`;
 }
-function recipeVariantTranscript(original, type, ingredient = "") {
+function recipeVariantNotice(lang = "zh") {
+  return lang === "en" ? "AI adapted, not tested in a real kitchen" : "AI 改编，未经实做验证";
+}
+function recipeVariantTranscript(original, type, ingredient = "", title = recipeVariantTitle(original.title, type, ingredient)) {
   const source = {
     title: original.title,
     servings: original.servings,
@@ -1146,7 +1154,7 @@ function recipeVariantTranscript(original, type, ingredient = "") {
 变体目标：${recipeVariantInstruction(type, ingredient)}
 
 硬性要求：
-1. 标题使用「${recipeVariantTitle(original.title, type, ingredient)}」。
+1. 标题使用「${title}」。
 2. 只围绕原菜谱合理改写食材、用量、步骤和工具；不要新增无法从目标推导的大段背景。
 3. 保留原菜的风格与关键判断，但所有不再适用的步骤必须同步修改。
 4. 输出必须符合结构化菜谱 schema，工具清单照常填写；不确定的营养数据不要编入正文。
@@ -1160,17 +1168,18 @@ async function createRecipeVariant({ recipeId, type, ingredient }) {
   const variantType = String(type || "").trim();
   if (!RECIPE_VARIANT_TYPES.has(variantType)) return { code: 400, body: { error: "不支持的变体类型" } };
   if (variantType === "replace" && !String(ingredient || "").trim()) return { code: 400, body: { error: "请提供要替换的食材" } };
-  const title = recipeVariantTitle(original.title, variantType, ingredient);
+  const outputLang = config.llm.outputLang || "zh";
+  const title = recipeVariantTitle(original.title, variantType, ingredient, outputLang);
   const recipe = await structureRecipe(config.llm, {
     meta: { title, description: `AI 菜谱变体：${recipeVariantInstruction(variantType, ingredient)}` },
-    transcript: recipeVariantTranscript(original, variantType, ingredient),
+    transcript: recipeVariantTranscript(original, variantType, ingredient, title),
   });
   recipe.title = title;
   recipe.variant_of = original.id;
   recipe.variant_type = variantType;
   recipe.variant_ingredient = String(ingredient || "").trim().slice(0, 80) || undefined;
   recipe.ai_variant = true;
-  recipe.variant_notice = "AI 改编，未经实做验证";
+  recipe.variant_notice = recipeVariantNotice(outputLang);
   recipe.variant_created_at = nowISO();
   recipe.created_at = recipe.created_at || recipe.variant_created_at;
   recipe.source = original.source || recipe.source || "";

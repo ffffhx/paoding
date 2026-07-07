@@ -374,6 +374,7 @@ function recipeIngredientCoverage(recipe, pantryItems = pantry, opts = {}) {
   return { hit, total, coverage: total ? hit / total : 0, matched, missing };
 }
 function rankRecipesByPantry(list = recipes, pantryItems = pantry, opts = {}) {
+  if (!normalizePantry(pantryItems).length) return [];
   return (Array.isArray(list) ? list : []).map(r => ({ recipe: r, ...recipeIngredientCoverage(r, pantryItems, opts) }))
     .filter(x => x.total > 0)
     .sort((a, b) => b.coverage - a.coverage || b.hit - a.hit || a.missing.length - b.missing.length || String(a.recipe?.title || '').localeCompare(String(b.recipe?.title || ''), 'zh-CN'));
@@ -1867,11 +1868,11 @@ async function editRecipeTags(r, onSaved) {
   };
 }
 function recipeVariantSuffix(type, ingredient = '') {
-  if (type === 'vegetarian') return '（素食版）';
-  if (type === 'healthier') return '（更健康版）';
-  if (type === 'low_salt') return '（低盐版）';
+  if (type === 'vegetarian') return tr('variant.suffix.vegetarian');
+  if (type === 'healthier') return tr('variant.suffix.healthier');
+  if (type === 'low_salt') return tr('variant.suffix.low_salt');
   const target = String(ingredient || '').trim().slice(0, 24);
-  return target ? `（替换${target}版）` : '（替换食材版）';
+  return target ? tr('variant.suffix.replaceNamed', { ingredient: target }) : tr('variant.suffix.replace');
 }
 function variantTypeLabel(type) {
   const key = type === 'vegetarian' ? 'variant.vegetarian' : type === 'healthier' ? 'variant.healthier' : type === 'low_salt' ? 'variant.low_salt' : 'variant.replace';

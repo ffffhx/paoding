@@ -990,13 +990,20 @@ test("recipe-variant 复用结构化路径并落库清洗", async () => {
         difficulty: "medium",
         cuisine: "川菜",
         tags: ["低盐", "下饭"],
-        ingredients: [{ name: "鸡腿肉", amount: "300克", qty: 300, unit: "克" }, { name: "香醋", amount: "1勺", qty: 1, unit: "勺" }],
+        batch_info: { yield: "一份低盐调味汁", makes_servings: "2", makes_note: "按两人份推算（推算）", serving_desc: "每份鸡肉配半份调味汁" },
+        ingredients: [
+          { name: "香醋汁", amount: "1份", qty: 1, unit: "份", phase: "batch" },
+          { name: "鸡腿肉", amount: "300克", qty: 300, unit: "克", phase: "serving" },
+        ],
         tools: [
           { name: "炒锅", purpose: "翻炒鸡丁", essential: true, substitute: "", substitute_note: "普通炒锅即可", inferred: false },
           { purpose: "缺名字应丢弃", essential: true },
         ],
         nutrition: { per_serving: { calories: "320 kcal", protein: "24g", fat: "12g", carbs: "22g", sodium: "480mg" } },
-        steps: [{ index: 1, title: "低盐调味", action: "少量生抽配香醋调味。", params: { heat: "中火" } }],
+        steps: [
+          { index: 1, title: "调汁", action: "香醋调成低盐汁。", params: {}, phase: "batch" },
+          { index: 2, title: "低盐调味", action: "鸡肉下锅后用低盐汁调味。", params: { heat: "中火" }, phase: "serving" },
+        ],
       }) } }],
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   };
@@ -1016,10 +1023,71 @@ test("recipe-variant 复用结构化路径并落库清洗", async () => {
     assert.deepEqual(saved.tools, [{ name: "炒锅", purpose: "翻炒鸡丁", essential: true, substitute: null, substitute_note: "普通炒锅即可", inferred: false }]);
     assert.equal(saved.nutrition.per_serving.calories_kcal, 320);
     assert.equal(saved.nutrition.per_serving.sodium_mg, 480);
+    assert.equal(saved.batch_info.makes_servings, 2);
+    assert.deepEqual(saved.ingredients.map((x) => x.phase), ["batch", "serving"]);
+    assert.deepEqual(saved.steps.map((x) => x.phase), ["batch", "serving"]);
     fs.rmSync(path.join(recipesDir, `${data.id}.json`), { force: true });
   } finally {
     globalThis.fetch = originalFetch;
     fs.rmSync(fp, { force: true });
+  }
+});
+
+test("recipe-variant 英文输出语言使用英文标题后缀和标注", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-variant-en-"));
+  const originalFetch = globalThis.fetch;
+  try {
+    const port = 41995;
+    const recipes2 = path.join(root, "recipes");
+    fs.mkdirSync(recipes2, { recursive: true });
+    fs.writeFileSync(path.join(recipes2, "Kung-Pao-Chicken.json"), JSON.stringify({
+      title: "Kung Pao Chicken",
+      servings: "2 servings",
+      ingredients: [{ name: "chicken", amount: "300g" }],
+      steps: [{ index: 1, title: "Stir-fry", action: "Stir-fry chicken." }],
+    }, null, 2));
+    const { handleRequest: h } = await importServerWithEnv({
+      PAODING_PORT: String(port),
+      PAODING_HOST: "127.0.0.1",
+      PAODING_RECIPES_DIR: recipes2,
+      PAODING_USERDATA_FILE: path.join(root, "ud.json"),
+      PAODING_API_TOKEN: "",
+      PAODING_API_TOKENS: "",
+      PAODING_LLM_RATE_LIMIT_PER_MIN: "1000",
+      PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL || "http://localhost:11434/v1",
+      PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY || "test",
+      PAODING_OUTPUT_LANG: "en",
+    });
+    globalThis.fetch = async (input, init = {}) => {
+      assert.ok(String(input).endsWith("/chat/completions"));
+      const body = JSON.parse(String(init.body || "{}"));
+      const user = String(body.messages?.find((m) => m.role === "user")?.content || "");
+      assert.ok(user.includes("Kung Pao Chicken (lower-salt)"));
+      return new Response(JSON.stringify({
+        choices: [{ message: { role: "assistant", content: JSON.stringify({
+          title: "Model title should be overridden",
+          servings: "2 servings",
+          difficulty: "easy",
+          cuisine: "Chinese",
+          tags: ["lower salt"],
+          ingredients: [{ name: "chicken", amount: "300g", qty: 300, unit: "g" }],
+          tools: [],
+          steps: [{ index: 1, title: "Season lightly", action: "Use less soy sauce.", params: {} }],
+        }) } }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+
+    const res = await requestWith(h, "/api/recipe-variant", J({ recipeId: "Kung-Pao-Chicken", type: "low_salt" }), port);
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.recipe.title, "Kung Pao Chicken (lower-salt)");
+    assert.equal(data.recipe.variant_notice, "AI adapted, not tested in a real kitchen");
+    const saved = JSON.parse(fs.readFileSync(path.join(recipes2, `${data.id}.json`), "utf8"));
+    assert.equal(saved.title, "Kung Pao Chicken (lower-salt)");
+    assert.equal(saved.variant_notice, "AI adapted, not tested in a real kitchen");
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

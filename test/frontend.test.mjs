@@ -581,6 +581,16 @@ test("食材库存匹配覆盖度并标记购物清单已有项", () => {
   assert.equal(strictCoverage.total, 4);
   assert.equal(strictCoverage.hit, 1);
 
+  const fullCoverage = app.recipeIngredientCoverage({
+    title: "葱花蛋",
+    ingredients: [{ name: "鸡蛋" }, { name: "小葱" }, { name: "盐", amount: "适量" }],
+  }, pantry, { ignoreLooseSeasonings: true });
+  assert.equal(fullCoverage.total, 2);
+  assert.equal(fullCoverage.hit, 2);
+  assert.equal(fullCoverage.coverage, 1);
+  assert.deepEqual(Array.from(fullCoverage.missing), []);
+  assert.deepEqual(Array.from(app.rankRecipesByPantry([recipe], [], { ignoreLooseSeasonings: true })), []);
+
   const ranked = app.rankRecipesByPantry([
     recipe,
     { title: "葱花蛋", ingredients: [{ name: "鸡蛋" }, { name: "小葱" }] },
@@ -598,6 +608,10 @@ test("AI 菜谱变体标题与关联查询", () => {
   assert.equal(app.recipeVariantTitle("宫保鸡丁", "vegetarian"), "宫保鸡丁（素食版）");
   assert.equal(app.recipeVariantTitle("宫保鸡丁", "low_salt"), "宫保鸡丁（低盐版）");
   assert.equal(app.recipeVariantTitle("宫保鸡丁", "replace", "鸡肉→豆腐"), "宫保鸡丁（替换鸡肉→豆腐版）");
+  app.setLanguage("en");
+  assert.equal(app.recipeVariantTitle("Kung Pao Chicken", "low_salt"), "Kung Pao Chicken (lower-salt)");
+  assert.equal(app.recipeVariantTitle("Kung Pao Chicken", "replace", "chicken -> tofu"), "Kung Pao Chicken (chicken -> tofu replacement)");
+  app.setLanguage("zh");
   const list = [
     { id: "a", title: "原菜" },
     { id: "b", title: "原菜（低盐版）", variant_of: "a", variant_type: "low_salt" },
