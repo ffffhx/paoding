@@ -61,11 +61,50 @@ function correctionNote(original) {
   return `转写作「${original}」，已按烹饪常识纠正。`;
 }
 
+function hasCorrectionFor(note, original) {
+  const current = String(note || "");
+  return current.includes(`转写作「${original}」`) && current.includes("已按烹饪常识纠正");
+}
+
 function appendCorrectionNote(note, original) {
   const add = correctionNote(original);
   const current = String(note || "").trim();
-  if (current.includes(add)) return current;
+  if (current.includes(add) || hasCorrectionFor(current, original)) return current;
   return current ? `${current}；${add}` : add;
+}
+
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function genericCorrectionOriginal(note) {
+  const raw = String(note || "");
+  return SORTED_TYPOS.find((typo) =>
+    new RegExp(`${escapeRegExp(typo)}[（(][^）)]*转写作「原词」`).test(raw)
+  ) || null;
+}
+
+function replaceIngredientTyposInNote(note) {
+  const raw = String(note || "");
+  if (!raw) return { note: raw, originals: [] };
+  const genericOriginal = genericCorrectionOriginal(raw);
+  const protectedParts = [];
+  let text = raw.replace(/转写作「[^」]*」/g, (part) => {
+    const token = `__PAODING_CORRECTION_${protectedParts.length}__`;
+    protectedParts.push([token, part]);
+    return token;
+  });
+  const originals = [];
+  for (const typo of SORTED_TYPOS) {
+    if (!text.includes(typo)) continue;
+    text = text.replaceAll(typo, INGREDIENT_TYPO_MAP.get(typo));
+    originals.push(typo);
+  }
+  for (const [token, part] of protectedParts) text = text.replaceAll(token, part);
+  if (originals.length && text.includes("转写作「原词」")) {
+    text = text.replace("转写作「原词」", `转写作「${genericOriginal || originals[0]}」`);
+  }
+  return { note: text, originals };
 }
 
 export function applyIngredientFixes(recipe) {
@@ -80,6 +119,13 @@ export function applyIngredientFixes(recipe) {
       ing.note = appendCorrectionNote(ing.note, fixed.original);
       for (const typo of SORTED_TYPOS) {
         if (fixed.original.includes(typo)) correctedTypos.add(typo);
+      }
+    }
+    for (const ing of recipe.ingredients) {
+      if (!ing || typeof ing !== "object" || Array.isArray(ing)) continue;
+      const noteFixed = replaceIngredientTyposInNote(ing.note);
+      if (noteFixed.originals.length) {
+        ing.note = noteFixed.originals.reduce((note, original) => appendCorrectionNote(note, original), noteFixed.note);
       }
     }
   }
