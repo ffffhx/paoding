@@ -1758,6 +1758,133 @@ function pickRecipeForDay(key) {
   ov.querySelector('#pkClose').onclick = () => ov.remove();
 }
 
+/* ================= 我的厨房统计 ================= */
+function startOfLocalDay(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function localDateKey(date) {
+  const d = new Date(date);
+  if (!Number.isFinite(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function startOfWeek(date) {
+  const d = startOfLocalDay(date);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return d;
+}
+function startOfMonth(date) {
+  const d = startOfLocalDay(date);
+  d.setDate(1);
+  return d;
+}
+function normalizeCookedAt(value) {
+  const raw = Object.prototype.toString.call(value) === '[object Date]' ? value : value && typeof value === 'object' && !Array.isArray(value)
+    ? (value.cooked_at || value.cookedAt || value.at || value.time || value.date)
+    : value;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? new Date(t) : null;
+}
+function cookedHistoryForMeta(m) {
+  const history = [
+    ...(Array.isArray(m?.cooked_log) ? m.cooked_log : []),
+    ...(Array.isArray(m?.cookedLog) ? m.cookedLog : []),
+    ...(Array.isArray(m?.cooked_history) ? m.cooked_history : []),
+    ...(Array.isArray(m?.cookedHistory) ? m.cookedHistory : []),
+    ...(Array.isArray(m?.cooked_dates) ? m.cooked_dates : []),
+    m?.cooked_at,
+    m?.cookedAt,
+  ].filter(Boolean).map(normalizeCookedAt).filter(Boolean);
+  const seen = new Set();
+  return history.filter((d) => {
+    const k = d.toISOString();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).sort((a, b) => a - b);
+}
+function computeKitchenStats({ recipes: recipeList = [], meta: metaMap = {}, favRecipes: favs = [], techniques: techniqueList = [] } = {}, opts = {}) {
+  const now = normalizeCookedAt(opts.now) || new Date();
+  const weekStart = startOfWeek(now).getTime();
+  const monthStart = startOfMonth(now).getTime();
+  const todayKey = localDateKey(now);
+  const byId = new Map((Array.isArray(recipeList) ? recipeList : []).map(r => [String(r.id), r]));
+  const cookedIds = new Set();
+  const datedEvents = [];
+  let legacyCookedCount = 0;
+  const recipeCounts = new Map();
+  const addRecipeCount = (id, n, lastAt = null) => {
+    const prev = recipeCounts.get(id) || { id, count: 0, lastAt: 0 };
+    prev.count += n;
+    if (lastAt) prev.lastAt = Math.max(prev.lastAt, lastAt.getTime());
+    recipeCounts.set(id, prev);
+  };
+  for (const [idRaw, m] of Object.entries(metaMap && typeof metaMap === 'object' && !Array.isArray(metaMap) ? metaMap : {})) {
+    const id = String(idRaw);
+    const history = cookedHistoryForMeta(m);
+    if (m?.cooked || history.length) cookedIds.add(id);
+    if (history.length) {
+      history.forEach(d => datedEvents.push({ recipeId: id, at: d }));
+      addRecipeCount(id, history.length, history[history.length - 1]);
+    } else if (m?.cooked) {
+      legacyCookedCount++;
+      addRecipeCount(id, 1, null);
+    }
+  }
+  const dayKeys = new Set(datedEvents.map(e => localDateKey(e.at)).filter(Boolean));
+  let streakDays = 0;
+  if (dayKeys.has(todayKey)) {
+    const cursor = startOfLocalDay(now);
+    while (dayKeys.has(localDateKey(cursor))) {
+      streakDays++;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+  }
+  const mastered = new Set();
+  for (const t of Array.isArray(techniqueList) ? techniqueList : []) {
+    const name = String(t?.technique || t?.name || '').trim();
+    if (!name) continue;
+    const hit = (t.occurrences || []).some(o => cookedIds.has(String(o?.recipeId || '')) || [...cookedIds].some(id => byId.get(id)?.title && byId.get(id).title === o?.recipeTitle));
+    if (hit) mastered.add(name);
+  }
+  const topRecipes = [...recipeCounts.values()]
+    .sort((a, b) => b.count - a.count || b.lastAt - a.lastAt || String(byId.get(a.id)?.title || a.id).localeCompare(String(byId.get(b.id)?.title || b.id), settings.lang === 'en' ? 'en' : 'zh-CN'))
+    .slice(0, 3)
+    .map(x => ({ id: x.id, title: byId.get(x.id)?.title || x.id, count: x.count, lastCookedAt: x.lastAt ? new Date(x.lastAt).toISOString() : '' }));
+  return {
+    weekCount: datedEvents.filter(e => e.at.getTime() >= weekStart && e.at.getTime() <= now.getTime()).length,
+    monthCount: datedEvents.filter(e => e.at.getTime() >= monthStart && e.at.getTime() <= now.getTime()).length,
+    cookedRecipeCount: cookedIds.size,
+    favoriteCount: Array.isArray(favs) ? favs.length : 0,
+    masteredTechniqueCount: mastered.size,
+    streakDays,
+    topRecipes,
+    legacyCookedCount,
+  };
+}
+function countText(n) {
+  return tr('kitchenStats.count', { count: n });
+}
+function kitchenStatsHtml(stats = computeKitchenStats({ recipes, meta, favRecipes, techniques })) {
+  const cards = [
+    ['kitchenStats.week', stats.weekCount, tr('kitchenStats.times')],
+    ['kitchenStats.month', stats.monthCount, tr('kitchenStats.times')],
+    ['kitchenStats.cooked', stats.cookedRecipeCount, tr('kitchenStats.recipes')],
+    ['kitchenStats.favorites', stats.favoriteCount, tr('kitchenStats.recipes')],
+    ['kitchenStats.techniques', stats.masteredTechniqueCount, tr('kitchenStats.techniquesUnit')],
+    ['kitchenStats.streak', stats.streakDays, tr('kitchenStats.days')],
+  ];
+  return `<div class="kstats">
+    <div class="kstats-head"><div><h2>${esc(tr('kitchenStats.title'))}</h2><p>${esc(tr('kitchenStats.desc'))}</p></div></div>
+    <div class="kstats-grid">${cards.map(([key, value, unit]) => `<div class="kstat"><span>${esc(tr(key))}</span><b>${esc(value)}</b><em>${esc(unit)}</em></div>`).join('')}</div>
+    <div class="kstats-top"><b>${esc(tr('kitchenStats.top'))}</b>
+      ${stats.topRecipes.length ? `<ol>${stats.topRecipes.map(r => `<li><span>${esc(r.title)}</span><em>${esc(countText(r.count))}</em></li>`).join('')}</ol>` : `<p>${esc(tr('kitchenStats.empty'))}</p>`}
+      ${stats.legacyCookedCount ? `<p class="kstats-note">${esc(tr('kitchenStats.legacyNote', { count: stats.legacyCookedCount }))}</p>` : ''}
+    </div>
+  </div>`;
+}
+
 /* ================= 设置 ================= */
 function settingsLanguageRowHtml() {
   return `<div class="setrow" style="flex-direction:column;align-items:stretch"><div><div class="lbl">${esc(tr('settings.language.label'))}</div><div class="desc">${esc(tr('settings.language.desc'))}</div></div>
@@ -1770,6 +1897,7 @@ function renderSettings() {
   const box = $('#view-settings');
   const sw = (on) => `<div class="switch ${on ? 'on' : ''}"></div>`;
   box.innerHTML = `
+    ${kitchenStatsHtml()}
     <div class="setrow"><div><div class="lbl">${esc(tr('settings.theme.label'))}</div><div class="desc">${esc(tr('settings.theme.desc'))}</div></div>${sw(settings.theme === 'dark')}<span class="hidden" data-k="theme"></span></div>
     <div class="setrow"><div><div class="lbl">${esc(tr('settings.tts.label'))}</div><div class="desc">${esc(tr('settings.tts.desc'))}</div></div>${sw(settings.tts)}<span class="hidden" data-k="tts"></span></div>
     ${settingsLanguageRowHtml()}

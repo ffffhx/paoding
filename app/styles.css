@@ -346,6 +346,22 @@ html[data-theme="dark"] .job-row.running::after,html[data-theme="dark"] .job-row
 
 .setrow{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:10px;gap:12px}
 .setrow .lbl{font-size:15px}.setrow .desc{color:var(--muted);font-size:12px;margin-top:2px}
+.kstats{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:14px;margin-bottom:12px}
+.kstats-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+.kstats-head h2{margin:0;font-size:18px;line-height:1.25}
+.kstats-head p{margin:3px 0 0;color:var(--muted);font-size:12px;line-height:1.45}
+.kstats-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.kstat{border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 9px;min-width:0}
+.kstat span,.kstat em{display:block;color:var(--muted);font-size:11px;font-style:normal;line-height:1.25}
+.kstat b{display:block;margin:3px 0;font-size:24px;line-height:1;font-variant-numeric:tabular-nums;color:var(--tomato)}
+.kstats-top{border-top:1px solid var(--line);margin-top:12px;padding-top:11px}
+.kstats-top>b{display:block;font-size:13px;color:var(--muted);margin-bottom:8px}
+.kstats-top ol{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:7px}
+.kstats-top li{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px}
+.kstats-top li span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kstats-top li em{font-style:normal;color:var(--muted);font-size:12px;flex-shrink:0}
+.kstats-top p{margin:0;color:var(--muted);font-size:13px;line-height:1.5}
+.kstats-note{margin-top:8px!important;font-size:12px!important}
 .switch{width:48px;height:28px;border-radius:999px;background:var(--line);position:relative;flex-shrink:0;transition:background .15s}
 .switch.on{background:var(--herb)}
 .switch::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:left .15s}
@@ -441,6 +457,7 @@ html[data-theme="dark"] .hl{color:var(--amber)}
 
 @media (max-width: 520px){
   .nutrition-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kstats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .recipe-tools{flex-wrap:wrap}
   .recipe-tools input,.recipe-tools select{width:100%;min-width:0}
   .pantry-add{grid-template-columns:1fr}

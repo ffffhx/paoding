@@ -417,6 +417,73 @@ test("技法页辅助文案切 en 后输出英文 UI 文案", () => {
   app.setLanguage("zh");
 });
 
+test("computeKitchenStats 空数据返回零值和空 top", () => {
+  const stats = app.computeKitchenStats({}, { now: "2026-03-01T12:00:00+08:00" });
+  assert.equal(stats.weekCount, 0);
+  assert.equal(stats.monthCount, 0);
+  assert.equal(stats.cookedRecipeCount, 0);
+  assert.equal(stats.favoriteCount, 0);
+  assert.equal(stats.masteredTechniqueCount, 0);
+  assert.equal(stats.streakDays, 0);
+  assert.deepEqual(Array.from(stats.topRecipes), []);
+});
+
+test("computeKitchenStats 统计老数据、多次打卡、跨月 streak 和掌握技法", () => {
+  const stats = app.computeKitchenStats({
+    recipes: [
+      { id: "a", title: "番茄炒蛋" },
+      { id: "b", title: "红烧肉" },
+      { id: "c", title: "清炒菜心" },
+      { id: "d", title: "未做菜" },
+    ],
+    meta: {
+      a: {
+        cooked: true,
+        cooked_history: ["2026-02-27T08:00:00+08:00", "2026-02-28T08:00:00+08:00"],
+        cooked_at: "2026-03-01T08:00:00+08:00",
+      },
+      b: { cooked: true, cooked_at: "2026-02-01T08:00:00+08:00" },
+      c: { cooked: true },
+      d: {},
+    },
+    favRecipes: ["a", "d"],
+    techniques: [
+      { technique: "焯水", occurrences: [{ recipeId: "a" }, { recipeId: "d" }] },
+      { technique: "勾芡", occurrences: [{ recipeId: "d" }] },
+      { technique: "快炒", occurrences: [{ recipeId: "c" }] },
+    ],
+  }, { now: "2026-03-01T12:00:00+08:00" });
+  assert.equal(stats.weekCount, 3);
+  assert.equal(stats.monthCount, 1);
+  assert.equal(stats.cookedRecipeCount, 3);
+  assert.equal(stats.favoriteCount, 2);
+  assert.equal(stats.masteredTechniqueCount, 2);
+  assert.equal(stats.streakDays, 3);
+  assert.equal(stats.legacyCookedCount, 1);
+  assert.deepEqual(Array.from(stats.topRecipes.map(r => `${r.title}:${r.count}`)), ["番茄炒蛋:3", "红烧肉:1", "清炒菜心:1"]);
+});
+
+test("kitchenStatsHtml 切 en 后输出英文统计文案", () => {
+  app.setLanguage("en");
+  const html = app.kitchenStatsHtml({
+    weekCount: 1,
+    monthCount: 2,
+    cookedRecipeCount: 3,
+    favoriteCount: 4,
+    masteredTechniqueCount: 5,
+    streakDays: 6,
+    topRecipes: [{ title: "Egg", count: 2 }],
+    legacyCookedCount: 1,
+  });
+  assert.ok(html.includes("My Kitchen"));
+  assert.ok(html.includes("This week"));
+  assert.ok(html.includes("Most cooked"));
+  assert.ok(html.includes("Egg"));
+  assert.ok(html.includes("2 times"));
+  assert.ok(html.includes("older cooked records"));
+  app.setLanguage("zh");
+});
+
 test("summarizeMealNutrition 按每道菜份量系数汇总并统计缺失", () => {
   const summary = app.summarizeMealNutrition([
     { id: "a", nutrition: { per_serving: { calories_kcal: 100, protein_g: 8, fat_g: 3, carbs_g: 12, sodium_mg: 200 } } },
