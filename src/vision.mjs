@@ -343,8 +343,17 @@ export async function extractStepImages(vision, videoPath, recipe, { duration, i
         }
         if (!files.length) continue;
         let best = 1;
-        if (files.length > 1) {
-          const cue = s.params?.cue ? `，到位标准：「${s.params.cue}」` : "";
+        const cue = s.params?.cue ? `，到位标准：「${s.params.cue}」` : "";
+        if (files.length === 1) {
+          const ans = await chatVision(vision, {
+            system: "你在帮做菜教程挑选步骤配图。只输出 JSON，不要解释。",
+            user: `这是一张候选步骤图。步骤：「${s.title || ""}：${s.action || ""}」${cue}。\n它是否清晰展示这一步的操作或完成状态？食物/锅具应为主体；黑屏、转场、片头片尾、纯人脸特写、不相关画面都算不合适。\n输出 JSON：{"ok": true 或 false}`,
+            images: [b64(files[0])],
+            signal,
+          });
+          const parsed = parseModelJSON(ans);
+          if (parsed?.ok !== true && Number(parsed?.best) !== 1) continue;
+        } else {
           const ans = await chatVision(vision, {
             system: "你在帮做菜教程挑选步骤配图。只输出 JSON，不要解释。",
             user: `这是同一做菜步骤时间段内按先后截取的 ${files.length} 张图（编号 1~${files.length}）。步骤：「${s.title || ""}：${s.action || ""}」${cue}。\n选出最能清晰展示这一步操作或完成状态的一张（画面清楚、食物为主体；避开人脸特写、转场、黑屏、片头片尾）。都不合适就选 0。\n输出 JSON：{"best": 编号}`,
