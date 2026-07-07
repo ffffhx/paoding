@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { processImages, processText, processVideo } from "../src/pipeline.mjs";
+import { transcribe } from "../src/transcribe.mjs";
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const BIN_DIR = path.join(TEST_DIR, "fixtures", "bin");
@@ -477,6 +478,33 @@ test("whisper 空转写会报错且不留下 paoding 临时文件", async () => 
       );
     });
     assertNoNewPaodingTmp(root, before);
+  });
+});
+
+test("whisper Metal 崩溃时自动使用 CPU 重试", async () => {
+  await withIsolatedTmp(async (root) => {
+    const whisperModel = path.join(root, "fake-whisper-model.bin");
+    const audioPath = path.join(root, "audio.mp3");
+    const argsFile = path.join(root, "whisper-args.jsonl");
+    fs.writeFileSync(whisperModel, "fake model\n");
+    fs.writeFileSync(audioPath, "fake audio\n");
+
+    const out = await withEnv({
+      PAODING_FAKE_WHISPER_GPU_FAIL_UNLESS_NO_GPU: "1",
+      PAODING_FAKE_WHISPER_ARGS_FILE: argsFile,
+    }, () => transcribe({
+      provider: "local",
+      whisperBin: FAKE_WHISPER,
+      whisperModel,
+      ffmpegBin: FAKE_FFMPEG,
+      lang: "zh",
+    }, audioPath));
+
+    assert.match(out.text, /准备鸡蛋和番茄/);
+    const calls = fs.readFileSync(argsFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].includes("--no-gpu"), false);
+    assert.equal(calls[1].includes("--no-gpu"), true);
   });
 });
 

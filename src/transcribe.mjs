@@ -49,19 +49,45 @@ function resolveFfmpegBin(asr = {}) {
   return asr.ffmpegBin || process.env.PAODING_FFMPEG_BIN || "ffmpeg";
 }
 
-function transcribeLocal(asr, audioPath, onProgress = () => {}, signal) {
-  return new Promise((resolve, reject) => {
-    const bin = resolveWhisperBin(asr);
-    if (!asr.whisperModel || !fs.existsSync(asr.whisperModel)) {
-      return reject(
-        new Error(
-          `未找到 whisper 模型文件（PAODING_WHISPER_MODEL=${asr.whisperModel || "未设置"}）。\n` +
-            "  下载示例：见 README「全本地模式」。",
-        ),
-      );
+async function transcribeLocal(asr, audioPath, onProgress = () => {}, signal) {
+  const bin = resolveWhisperBin(asr);
+  if (!asr.whisperModel || !fs.existsSync(asr.whisperModel)) {
+    throw new Error(
+      `未找到 whisper 模型文件（PAODING_WHISPER_MODEL=${asr.whisperModel || "未设置"}）。\n` +
+        "  下载示例：见 README「全本地模式」。",
+    );
+  }
+
+  try {
+    return await runWhisperLocal(bin, asr, audioPath, onProgress, signal, { noGpu: !!asr.whisperNoGpu });
+  } catch (e) {
+    if (!asr.whisperNoGpu && isWhisperGpuFailure(e)) {
+      onProgress({ pct: 1, message: "语音转文字…（GPU 不可用，改用 CPU）" });
+      return runWhisperLocal(bin, asr, audioPath, onProgress, signal, { noGpu: true });
     }
-    const outBase = path.join(os.tmpdir(), `paoding-asr-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
+    throw e;
+  }
+}
+
+function isWhisperGpuFailure(error) {
+  const stderr = String(error?.stderr || "");
+  return (
+    error?.signal === "SIGSEGV" ||
+    error?.code === 139 ||
+    /ggml_metal|Metal|failed to allocate buffer/i.test(stderr)
+  );
+}
+
+function whisperStatus(code, signal) {
+  if (signal) return `信号 ${signal}`;
+  return `退出码 ${code}`;
+}
+
+function runWhisperLocal(bin, asr, audioPath, onProgress = () => {}, signal, { noGpu = false } = {}) {
+  return new Promise((resolve, reject) => {
+    const outBase = path.join(os.tmpdir(), `paoding-asr-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}${noGpu ? "-cpu" : ""}`);
     const args = [
+      ...(noGpu ? ["--no-gpu"] : []),
       "-m", asr.whisperModel,
       "-f", audioPath,
       "-l", asr.lang || "zh",
@@ -78,11 +104,15 @@ function transcribeLocal(asr, audioPath, onProgress = () => {}, signal) {
     child.on("error", (e) =>
       reject(new Error(`调用 ${bin} 失败：${e.message}（brew install whisper-cpp）`)),
     );
-    child.on("close", (code) => {
+    child.on("close", (code, closeSignal) => {
       const jsonPath = `${outBase}.json`;
-      if (code !== 0) {
+      if (code !== 0 || closeSignal) {
         fs.rmSync(jsonPath, { force: true }); // 失败时也清掉可能已半写的输出，别在 tmp 里留垃圾
-        return reject(new Error(`whisper.cpp 退出码 ${code}：${err.slice(0, 400)}`));
+        const e = new Error(`whisper.cpp ${whisperStatus(code, closeSignal)}：${err.slice(-800)}`);
+        e.code = code;
+        e.signal = closeSignal;
+        e.stderr = err;
+        return reject(e);
       }
       try {
         const out = parseWhisperJson(JSON.parse(fs.readFileSync(jsonPath, "utf8")));

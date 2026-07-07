@@ -65,6 +65,7 @@ export function loadConfig() {
       model: process.env.PAODING_ASR_MODEL || "whisper-1",
       whisperBin: process.env.PAODING_WHISPER_BIN || "whisper-cli",
       whisperModel: process.env.PAODING_WHISPER_MODEL || "",
+      whisperNoGpu: /^(1|true|yes)$/i.test(process.env.PAODING_WHISPER_NO_GPU || ""),
       ffmpegBin: process.env.PAODING_FFMPEG_BIN || "ffmpeg",
       lang: process.env.PAODING_ASR_LANG || "zh",
     },

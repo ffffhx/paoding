@@ -9,6 +9,13 @@ if (process.env.PAODING_FAKE_WHISPER_FAIL === "1") {
 
 const args = process.argv.slice(2);
 if (!args.length) process.exit(0);
+if (process.env.PAODING_FAKE_WHISPER_ARGS_FILE) {
+  fs.appendFileSync(process.env.PAODING_FAKE_WHISPER_ARGS_FILE, `${JSON.stringify(args)}\n`);
+}
+if (process.env.PAODING_FAKE_WHISPER_GPU_FAIL_UNLESS_NO_GPU === "1" && !args.includes("--no-gpu")) {
+  console.error("ggml_metal_buffer_init: error: failed to allocate buffer, size = 7.33 MiB");
+  process.exit(139);
+}
 const outIndex = args.indexOf("-of");
 if (outIndex === -1 || !args[outIndex + 1]) {
   console.error("fake whisper missing -of");
