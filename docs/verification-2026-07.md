@@ -7,9 +7,60 @@
 - 第十五批：完成工具兜底、`source_time` 覆盖、食材图性能和配方卡 K1 正向复验；最终 `npm test` 157/157。
 - 第十六批：完成 B站、无口播纯字幕、图文 URL 兜底三条中文平台真实验证；最终 `npm test` 161/161。
 - 第十七批：完成管线分阶段耗时埋点、同视频性能基线、TOP 瓶颈优化、降质优化回滚和抖音路径探测；最终 `npm test` 167/167。
+- 第十八批：完成讲解阶段优化、审查插队 3 个确认问题修复及 2 个疑点低风险修复；最终 `npm test` 172/172。
 - 修复：所有代码修复均已 `npm test` 全绿后单独 commit。
-- 收尾：保留 2 组代表产物在 `recipes/`；第十五至十七批产物在 gitignored 的 `paoding-out/`；未执行 `git push`。
-- 额度：当前环境没有可查询 weekly 百分比的本地接口；按第十七批 Q1-Q4 完成后收尾。
+- 收尾：保留 2 组代表产物在 `recipes/`；第十五至十八批产物在 gitignored 的 `paoding-out/`；未执行 `git push`。
+- 额度：当前环境没有可查询 weekly 百分比的本地接口；按第十八批 R1-R3 完成后收尾。
+
+## 第十八批讲解优化与收官修复
+
+按 `docs/handoff-2026-07-batch18.md` 的 R1 → R3 执行，并在 R2 前插入独立审查实例确认的 3 个真问题修复。每个代码修复均在测试全绿后单独提交；未执行 `git push`。当前环境仍没有可查询 weekly 百分比的本地接口。
+
+### R1 讲解阶段优化
+
+代码审查确认：旧版 `explainSteps` 已经是整份菜谱单次 LLM 请求，不存在“逐步骤串行请求”问题。R1 先尝试 4 步分批、最多 2 批并发，真实同视频复验不成立，已回滚：
+
+| 尝试 | Commit | 同视频结果 | 结论 |
+|---|---|---|---|
+| 分批并发讲解 | `9140626` | `paoding-out/batch18-explain-opt`，9 步，`explain=91.9s`，慢于 Batch17 同视频 `78.7s` | 未带来性能收益，已用 `c24a7f7` 回滚 |
+| 紧凑 prompt + 单次请求 | `fae8be8` | `paoding-out/batch18-explain-compact`，8 步，`explain=52.3s`，总计 `537.6s` | 通过，保留 |
+
+正式保留方案是压缩 system/user prompt、改为紧凑 JSON 输入，并要求 `reason/if_not/cue` 各一句。与第十七批同视频优化后结果对比：
+
+| 指标 | Batch17 优化后 | Batch18 紧凑讲解 | 变化 |
+|---|---:|---:|---:|
+| total | 582.1s | 537.6s | -44.5s |
+| explain | 78.7s | 52.3s | -26.4s |
+| 步骤数 | 8 | 8 | 持平 |
+| why 覆盖 | 8/8 | 8/8 | 持平 |
+| risk/confidence | 8/8 | 8/8 | 持平 |
+
+质量检查：保留结果 8/8 步均有 `why.reason/if_not/cue`、`risk_level` 和 `confidence`；讲解较短但仍具体到“包菜脆嫩”“调料均匀”“花椒香气”等步骤状态。`source_time_coverage` 本次为 6/8，属于结构化阶段 LLM/视觉输入波动，不是讲解阶段改动造成；未因 R1 质量下降回退。
+
+### 插队审查修复
+
+独立审查实例确认的 3 个真问题均已修复：
+
+| Commit | 严重度 | 问题 | 修复 | 验证 |
+|---|---|---|---|---|
+| `73a8b2e` | 高 | URL 文字兜底把标题里的“教程/菜谱”当强信号，可能放行 CSR 壳/导航页；标题或页脚含误拒词又可能误拒合法页。 | 可用性改为正文级信号：正文需有用量数字 + 烹饪动词密度；标题只做加分；误拒词仅在正文占比高时拒绝。 | `node --test test/backend.test.mjs`，`npm test` |
+| `dfabbfc` | 高 | 配方卡出处只要食材名或任意用量命中整段卡文本就标，盐 4g/模型盐 2g 会误标。 | 改为配方卡同行/续行窗口匹配：食材名或常见简称与模型用量 token 必须在同一条目或续行内同时出现。 | `node --test test/backend.test.mjs`，`npm test` |
+| `09dfc66` | 中 | 第十七批短视频单候选步骤图跳过 VL 后，黑屏/转场/人脸帧可能被硬配。 | 单候选帧也走一次轻量 VL yes/no；不合适、非法 JSON 或请求失败均不配图。 | `node --test test/backend.test.mjs`，`npm test` |
+
+两个疑点也已低风险修复：
+
+| Commit | 内容 | 验证 |
+|---|---|---|
+| `295be70` | 食材图定位并发下限从 2 改为 1，允许用户用 `ingredientConcurrency: 1` 或环境变量降到串行。 | `node --test test/backend.test.mjs`，`npm test` |
+| `43a2cf7` | 图片阶段在 VL 返回后、裁剪/复制写盘前再次检查 AbortSignal，避免阶段超时后后台任务继续给 recipe 挂图或写图片。 | `node --test test/backend.test.mjs`，`npm test` |
+
+注：`09dfc66` 出于质量保护恢复了短视频单候选步骤图的 VL 复核，因此第十七批 `step_images=1.0s` 是历史性能点，不应作为最新代码的步骤图耗时预期；后续若继续优化步骤图，需要在“过 VL 质量门槛”前提下重新测量。
+
+### R3 收尾验证
+
+- `node --test test/backend.test.mjs`：50/50 通过。
+- `npm test`：172/172 通过。
+- R2 总交付报告新增于 `docs/delivery-2026-07.md`。
 
 ## 第十七批性能优化与抖音探测
 
