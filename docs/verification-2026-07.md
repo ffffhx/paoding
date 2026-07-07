@@ -4,9 +4,90 @@
 
 - L1 环境自检：真实 29 秒油泼豆腐视频首跑暴露 whisper.cpp Metal 后端崩溃；修复后全链路跑通（下载、ASR、视觉读屏、结构化、讲解、截图、Markdown/JSON）。
 - L2 真实视频：完成 3 条矩阵视频端到端验证，另有 1 条烘焙候选因 YouTube 403 放弃并换源。
-- 修复：3 个独立代码修复均已 `npm test` 全绿后单独 commit。
-- 收尾：保留 2 组代表产物在 `recipes/`；未执行 `git push`。
+- 第十五批：完成工具兜底、`source_time` 覆盖、食材图性能和配方卡 K1 正向复验；最终 `npm test` 157/157。
+- 第十六批：完成 B站、无口播纯字幕、图文 URL 兜底三条中文平台真实验证；最终 `npm test` 161/161。
+- 修复：所有代码修复均已 `npm test` 全绿后单独 commit。
+- 收尾：保留 2 组代表产物在 `recipes/`；第十五、十六批产物在 gitignored 的 `paoding-out/`；未执行 `git push`。
 - 额度：当前环境没有可查询 weekly 百分比的本地接口；按交接要求完成 3 条真实矩阵验证后收尾。
+
+## 第十六批中文平台验证
+
+按 `docs/handoff-2026-07-batch16.md` 的 P1 → P4 顺序执行。中文平台真实验证覆盖 B站视频、无口播纯字幕视频、图文 URL 兜底。每个代码修复均在 `npm test` 全绿后单独提交；最终本批收尾前 `npm test` 为 161/161 通过。未执行 `git push`。当前环境仍没有可查询 weekly 百分比的本地接口，按三条真实入口验证完成后收尾。
+
+### P1 B站 + cookies
+
+搜索与 cookies 结果：
+
+| 命令/动作 | 结果 |
+|---|---|
+| `yt-dlp "bilisearch5:家常菜 教程"` | B站搜索返回 HTTP 412。 |
+| `yt-dlp --cookies-from-browser chrome "bilisearch5:家常菜 教程"` | 仍遇到 412；verbose 日志显示本机 Chrome cookies 里大量条目无法解密，实际可用 cookies 为 0。 |
+| `yt-dlp "bilisearch10:快手菜 教程"` 等换词搜索 | 可返回候选，选中 `BV1mAGjzBEaZ` / `av114814995141749`，标题《【2分钟爆炒出饭店味！手撕包菜】》，时长 133.8 秒。 |
+
+正式全链路命令：
+
+```bash
+PAODING_INGREDIENT_IMAGE_TIMEOUT_MIN=1 node bin/paoding.mjs "http://www.bilibili.com/video/av114814995141749" --images --keep-transcript --out paoding-out/batch16-p1
+```
+
+结果：成功输出《手撕包菜》，8 个食材、7 个步骤，`source_time_coverage` 为 7/7。B站视频下载、中文 ASR、视觉读屏、结构化和 Markdown/JSON 均跑通；步骤图阶段在超时保护下产出 `step-1.jpg` 到 `step-3.jpg`，其余步骤图跳过，不阻塞主结果落盘。
+
+本项暴露 2 个真实问题并已修复：
+
+| 问题 | 修复 | Commit | 验证 |
+|---|---|---|---|
+| B站 412 报错缺少用户可操作提示 | yt-dlp 错误格式化增加 B站 412 说明，提示设置 `PAODING_COOKIES_FROM_BROWSER=chrome`、确认浏览器登录，并说明 cookies 可能解密失败或过期。 | `58b7818` | `node --test test/backend.test.mjs test/pipeline.test.mjs`，`npm test` 159/159 |
+| `--images` 图片阶段可能长时间阻塞 JSON/MD | 视频管线改为解释完成后先写 JSON/MD；步骤截图和食材图增加阶段级超时，图片失败只降级为 warning。 | `58b7818` | `node --test test/backend.test.mjs test/pipeline.test.mjs`，`npm test` 159/159 |
+
+### P2 无口播纯字幕
+
+由于 B站相关搜索多次受 412 影响，本项用公开无口播中文烹饪视频验证同一产品能力：
+
+```bash
+node bin/paoding.mjs "https://www.youtube.com/watch?v=6fmfB1D4rAk" --keep-transcript --out paoding-out/batch16-p2
+```
+
+视频为《【沉浸式做粉】鲜虾肉末汤米粉，酸辣开胃瞬间治愈 | 无声烹饪 ASMR Cooking: Savory Shrimp & Pork Rice Noodle Soup (No Talking)》，时长 136 秒。结果：成功输出《鲜虾肉末汤米粉》，11 个食材、6 个步骤，`source_time_coverage` 为 5/6。
+
+关键观察：
+
+- ASR 仅 89 字，主要是重复的“字幕志愿者 李宗盛”，没有可用口播信息。
+- 视觉读屏 693 字，识别出“猪肉沫”“酱油”“加入水”“水开放入米粉”“葱花、小米辣、白胡椒”等关键画面文字，足以支撑结构化菜谱。
+- 仍有少量视觉误读和用量缺失，成品可用但需要标注“视频未明确”的食材较多。
+
+### P3 小红书图文兜底
+
+小红书真实入口验证结论：
+
+| 输入 | 结果 |
+|---|---|
+| 小红书搜索页 `https://www.xiaohongshu.com/search_result?...` | 公开 HTML 主要是应用壳，未获得稳定公开 note 链接。 |
+| `https://www.xiaohongshu.com/explore/65f6a74b0000000012035a67` | yt-dlp 返回 `No video formats found!`；网页文字是“小红书 - 你访问的页面不见了”和页脚导航，旧逻辑会误把 745 字站点样板当正文。 |
+
+已修复 URL 文字兜底质量门槛：页面不存在、登录墙、站点样板、缺少菜谱信号时直接失败，并提示用户复制帖子文字到“粘贴文字”解析。
+
+| 问题 | 修复 | Commit | 验证 |
+|---|---|---|---|
+| 图文 fallback 接受小红书空壳/404 页脚 | 增加 `unusableRecipeTextReason`，拒绝页面不存在、登录墙、样板导航和缺少菜谱信号的网页文本。 | `5fc62b3` | `node --test test/backend.test.mjs test/pipeline.test.mjs`，`npm test` 160/160 |
+| 文字/图文来源没有真实时间轴，模型仍可能编造 `source_time` | `processText` 对文字来源统一删除步骤级 `source_time` 和覆盖率字段，只给真实视频保留时间戳。 | `211be17` | `node --test test/pipeline.test.mjs`，`npm test` 161/161 |
+
+正向兜底复验使用公开菜谱文章：
+
+```bash
+curl -sS -X POST "http://127.0.0.1:4186/api/parse-url" \
+  -H "Content-Type: application/json" \
+  --data '{"url":"https://www.douguo.com/cookbook/3201014.html","images":false}'
+```
+
+结果：yt-dlp 对文章 URL 报 `Unsupported URL` 后，服务继续走网页文字抽取和文字管线。最终任务 `83e3fcb5-939e-44de-bbf6-bbb3c5a1c4ba` 完成，输出《高钙豆乳云朵面包》，9 个食材、11 个步骤；复验 JSON 中 0 个步骤带 `source_time`，且无 `source_time_coverage` 字段。产物位于 `paoding-out/batch16-p3-recipes/高钙豆乳云朵面包.{json,md}`。
+
+## 第十六批修复清单
+
+| Commit | 类型 | 内容 | 验证 |
+|---|---|---|---|
+| `58b7818` | 稳定性/错误提示 | 视频主结果先落盘，图片阶段增加超时降级；B站 412 增加 cookies 友好提示。 | `node --test test/backend.test.mjs test/pipeline.test.mjs`，`npm test` 159/159 |
+| `5fc62b3` | 图文兜底 | URL 文字抽取拒绝小红书空壳、404 页脚、登录墙和缺少菜谱信号的样板页。 | `node --test test/backend.test.mjs test/pipeline.test.mjs`，`npm test` 160/160 |
+| `211be17` | 时间戳诚实性 | 文字/图文来源删除模型编造的 `source_time` 和覆盖率，只在视频来源保留真实时间轴。 | `node --test test/pipeline.test.mjs`，`npm test` 161/161 |
 
 ## 第十五批补充验证
 
@@ -89,5 +170,6 @@ node bin/paoding.mjs "https://www.youtube.com/watch?v=Hh0HZPaxyEo" --images --ke
 
 1. 普通调味料 ASR 近音词仍有缺口，如油泼豆腐里“盐/鸡精/生抽”等被识别成近音词后未完全纠正。建议扩充低风险调味料词表，但要避免把真实“白汤/烟熏”等误改。
 2. `source_time` 仍坚持诚实原则：第十五批已加强 prompt 并增加覆盖率统计，但模型确实找不到真实时间标记时仍会留空，不做后处理外推。
-3. 食材图阶段已改为受控并发并减少重复工作；若后续真实长视频仍慢，再考虑阶段级 timeout 或更细进度日志。
+3. 食材图阶段已改为受控并发并减少重复工作；第十六批进一步增加阶段级 timeout 和主结果先落盘，避免图片阶段阻塞 JSON/MD。
 4. 第十五批已完成真实配方卡 K1 正向复验，并补齐烘焙工具兜底；后续应继续覆盖其它类型配方卡（饮品、片尾材料清单、竖屏短视频）避免只对面包样本过拟合。
+5. 第十六批确认中文平台入口可跑通核心路径，但 B站搜索和 Chrome cookies 受 HTTP 412/本机 cookies 解密失败影响仍不稳定；小红书公开页经常只有应用壳或登录墙，产品上应继续强化“复制正文解析”的引导。
