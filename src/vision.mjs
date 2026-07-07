@@ -134,10 +134,12 @@ export async function extractFrames(videoPath, { max = 20, duration = null, sign
   }
 }
 
+export const VISION_TRANSCRIPT_BATCH_SIZE = 3;
+
 // 视觉模型逐批读帧：抽屏上文字（字幕/用量标注）+ 画面里能确认的食材/动作/火候，拼成「画面转写」。
 export async function visionTranscript(vision, frames, onProgress = () => {}, signal) {
   if (!frames.length) return "";
-  const batch = 6, parts = [];
+  const batch = VISION_TRANSCRIPT_BATCH_SIZE, parts = [];
   for (let i = 0; i < frames.length; i += batch) {
     onProgress({ pct: Math.round((i / frames.length) * 100), message: `看画面读字幕…（${Math.min(i + batch, frames.length)}/${frames.length}）` });
     try {

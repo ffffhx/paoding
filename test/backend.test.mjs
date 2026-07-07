@@ -295,7 +295,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
 import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, inferBakingToolFallback } from "../src/chef.mjs";
-import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, ensureRecipeCardMarker, mapLimitSettled, extractIngredientImages } from "../src/vision.mjs";
+import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, ensureRecipeCardMarker, mapLimitSettled, extractIngredientImages, visionTranscript } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
   const out = parseWhisperJson({
@@ -499,6 +499,46 @@ test("ensureRecipeCardMarker 为漏标的配方表视觉转录补标记", () => 
   assert.equal(ensureRecipeCardMarker(`【画面配方卡】\n${text}`), `【画面配方卡】\n${text}`);
   assert.equal(ensureRecipeCardMarker("配方表：无明确信息"), "配方表：无明确信息");
   assert.equal(ensureRecipeCardMarker("今天分享一个面包配方，揉到出膜。"), "今天分享一个面包配方，揉到出膜。");
+});
+
+test("visionTranscript 小批量读屏避免配方卡被多图稀释", async () => {
+  const originalFetch = globalThis.fetch;
+  const batchSizes = [];
+  const progress = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const body = JSON.parse(String(init.body || "{}"));
+    const userContent = body.messages?.find((m) => m.role === "user")?.content || [];
+    const imageCount = userContent.filter((part) => part?.type === "image_url").length;
+    batchSizes.push(imageCount);
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          role: "assistant",
+          content: imageCount <= 3
+            ? "万能面包配方表\n高粉：150g 牛奶：75g 白砂糖：60g"
+            : "这个配方表可以做出千变万化的面包来",
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const frames = Array.from({ length: 6 }, (_, i) => Buffer.from(`frame-${i}`).toString("base64"));
+    const text = await visionTranscript(
+      { baseUrl: "http://vision-stub.test/v1", apiKey: "test", model: "stub-vision" },
+      frames,
+      (p) => progress.push(p.message),
+    );
+    assert.deepEqual(batchSizes, [3, 3]);
+    assert.deepEqual(progress, ["看画面读字幕…（3/6）", "看画面读字幕…（6/6）"]);
+    assert.match(text, /【画面配方卡】/);
+    assert.match(text, /高粉：150g/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("candidateTimes 段内取样、偏向段末、夹回视频范围", () => {
