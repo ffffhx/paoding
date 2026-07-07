@@ -287,7 +287,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
-import { normalizeSourceTime, clampStepTimes, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript } from "../src/chef.mjs";
+import { normalizeSourceTime, clampStepTimes, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, inferBakingToolFallback } from "../src/chef.mjs";
 import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
@@ -346,6 +346,56 @@ test("normalizeTools 清洗工具清单并保留替代说明", () => {
     { name: "戚风模具", purpose: "帮助爬升", essential: true, substitute: null, substitute_note: "防粘模具会影响爬升", inferred: true },
     { name: "抹刀", purpose: "整理 奶油", essential: true, substitute: "勺子", substitute_note: "边缘粗糙", inferred: true },
   ]);
+});
+
+test("inferBakingToolFallback 为甜品烘焙步骤补齐缺失工具且不重复已有工具", () => {
+  const recipe = {
+    title: "松软戚风蛋糕",
+    cuisine: "烘焙",
+    tags: ["甜品", "蛋糕"],
+    ingredients: [
+      { name: "低筋面粉", amount: "80克" },
+      { name: "鸡蛋", amount: "5个" },
+    ],
+    tools: [
+      {
+        name: "烤箱",
+        purpose: "烘烤蛋糕",
+        essential: true,
+        substitute: null,
+        substitute_note: "需要稳定烘烤温度",
+        inferred: false,
+      },
+    ],
+    steps: [
+      { title: "打发", action: "用电动打蛋器打发蛋白。" },
+      { title: "混合", action: "低筋面粉过筛后倒入蛋黄盆，用刮刀翻拌均匀。" },
+      { title: "烘烤", action: "面糊倒入模具，送入预热好的烤箱烘烤。" },
+      { title: "冷却", action: "出炉后倒扣在烤架上放凉，再脱模。" },
+    ],
+  };
+
+  const tools = inferBakingToolFallback(recipe, recipe.tools);
+  const names = tools.map((tool) => tool.name);
+  assert.equal(names.filter((name) => name === "烤箱").length, 1);
+  for (const name of ["打蛋器", "模具", "筛网", "耐热盆", "烤架", "刮刀"]) {
+    assert.ok(names.includes(name), `应补齐 ${name}`);
+    assert.equal(tools.find((tool) => tool.name === name).inferred, true);
+  }
+});
+
+test("inferBakingToolFallback 非甜品不因打蛋/过筛误补烘焙工具", () => {
+  const recipe = {
+    title: "家常蒸水蛋",
+    cuisine: "家常菜",
+    tags: ["快手", "蒸菜"],
+    ingredients: [{ name: "鸡蛋", amount: "3个" }],
+    steps: [
+      { title: "打蛋", action: "鸡蛋打散后用滤网过筛，倒入碗中。" },
+      { title: "蒸制", action: "放入蒸锅，小火蒸到凝固。" },
+    ],
+  };
+  assert.deepEqual(inferBakingToolFallback(recipe, []), []);
 });
 
 test("normalizeRecipePhases 清洗批量/单份 phase 并拒绝半拆", () => {

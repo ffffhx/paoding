@@ -112,6 +112,85 @@ export function normalizeTools(tools) {
   }).filter(Boolean);
 }
 
+const BAKING_CONTEXT_RE = /甜品|甜点|点心|蛋糕|戚风|海绵蛋糕|慕斯|饼干|曲奇|塔|派|面包|吐司|烘焙|裱花|淡奶油|巧克力|可可|糖霜|糖艺|蛋白霜|玛芬|布丁|泡芙|酥皮|雪媚娘|马卡龙|司康|可颂|蛋挞|芝士蛋糕|提拉米苏|低筋面粉|高筋面粉|吉利丁|糖粉/;
+const BAKING_PROCESS_RE = /烤箱|烘烤|发酵|醒发|打发|过筛|裱花|脱模|入模|模具|蛋糕体|翻拌/;
+const BAKING_INGREDIENT_RE = /面粉|黄油|奶油|蛋白|蛋黄|白糖|糖粉|可可|酵母|吉利丁|巧克力/;
+
+const BAKING_TOOL_RULES = [
+  {
+    name: "打蛋器",
+    aliases: ["打蛋器", "打发器", "电动打蛋器", "手动打蛋器", "厨师机"],
+    pattern: /打发|打蛋|蛋白[^，。；\n]{0,12}发泡|发泡/,
+    purpose: "打发蛋白、奶油或蛋液，形成稳定泡沫结构",
+    substitute: "手动打蛋器",
+    substitute_note: "可行但耗时费力，打发稳定性更差。",
+  },
+  {
+    name: "模具",
+    aliases: ["模具", "戚风模", "蛋糕模", "吐司盒", "慕斯圈", "塔模", "纸杯模"],
+    pattern: /模具|脱模|入模|倒入[^，。；\n]{0,12}模|蛋糕模|戚风模|吐司盒|慕斯圈|塔模/,
+    purpose: "承托面糊并帮助成型",
+    substitute: null,
+    substitute_note: "烘焙成型和受热高度依赖对应尺寸、材质的模具，普通容器难以稳定替代。",
+  },
+  {
+    name: "筛网",
+    aliases: ["筛网", "面粉筛", "粉筛", "细筛"],
+    pattern: /过筛|筛入|面粉筛|粉筛/,
+    purpose: "筛散粉类，减少结块并让面糊更细腻",
+    substitute: "细目滤网",
+    substitute_note: "可代替过筛，但效率和均匀度略差。",
+  },
+  {
+    name: "烤箱",
+    aliases: ["烤箱"],
+    pattern: /烤箱|烘烤|预热[^，。；\n]{0,12}度|上下火/,
+    purpose: "提供稳定温度完成烘烤",
+    substitute: null,
+    substitute_note: "烘烤温度、上下火和空间受热环境难以等价替代。",
+  },
+  {
+    name: "深烤盘",
+    aliases: ["深烤盘", "深盘", "水浴盘"],
+    pattern: /水浴|水浴法|隔水烤/,
+    purpose: "盛热水做水浴，稳定温度并防止表面开裂",
+    substitute: "深耐热烤盘",
+    substitute_note: "需要足够深度和耐热性，水位不足会削弱水浴效果。",
+  },
+  {
+    name: "裱花袋",
+    aliases: ["裱花袋", "裱花嘴", "挤花袋"],
+    pattern: /裱花|挤花|挤入[^，。；\n]{0,8}袋/,
+    purpose: "挤出奶油、面糊或装饰线条",
+    substitute: "保鲜袋剪小口",
+    substitute_note: "可临时代替，但线条粗细和稳定性较差。",
+  },
+  {
+    name: "耐热盆",
+    aliases: ["耐热盆", "耐热碗", "打蛋盆", "搅拌盆"],
+    pattern: /隔水|融化|盆中|蛋白盆|蛋黄盆|打蛋盆|搅拌盆/,
+    purpose: "承装并混合材料，或用于隔水加热融化",
+    substitute: "耐热碗",
+    substitute_note: "容量较小会影响搅拌和隔水受热，必须确认材质耐热。",
+  },
+  {
+    name: "烤架",
+    aliases: ["烤架", "晾架", "冷却架"],
+    pattern: /倒扣|晾架|冷却架|烤架|放凉/,
+    purpose: "烘烤后架空散热，避免底部回潮或塌陷",
+    substitute: null,
+    substitute_note: "需要架空通风支撑，平放盘中会影响散热和成品形态。",
+  },
+  {
+    name: "刮刀",
+    aliases: ["刮刀", "抹刀", "硅胶刮刀"],
+    pattern: /翻拌|切拌|刮刀|抹刀/,
+    purpose: "翻拌面糊并刮净盆壁，减少消泡",
+    substitute: "饭勺或硅胶铲",
+    substitute_note: "可临时代替，但边缘贴合度差，容易消泡或混合不均。",
+  },
+];
+
 const VALID_PHASES = new Set(["batch", "serving"]);
 
 function cleanText(v, max = 240) {
@@ -126,6 +205,52 @@ function cleanText(v, max = 240) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max);
+}
+
+function recipeText(recipe, { includeSteps = true } = {}) {
+  if (!recipe || typeof recipe !== "object") return "";
+  const values = [];
+  values.push(recipe.title, recipe.cuisine);
+  if (Array.isArray(recipe.tags)) values.push(...recipe.tags);
+  if (Array.isArray(recipe.ingredients)) {
+    for (const ing of recipe.ingredients) values.push(ing?.name, ing?.amount, ing?.note);
+  }
+  if (includeSteps && Array.isArray(recipe.steps)) {
+    for (const step of recipe.steps) values.push(step?.title, step?.action, step?.params);
+  }
+  return cleanText(values, 8000);
+}
+
+function hasBakingContext(recipe) {
+  const allText = recipeText(recipe);
+  if (BAKING_CONTEXT_RE.test(allText)) return true;
+  return BAKING_PROCESS_RE.test(recipeText(recipe, { includeSteps: true })) && BAKING_INGREDIENT_RE.test(allText);
+}
+
+function toolExists(tools, rule) {
+  const text = cleanText(tools.map((tool) => `${tool.name} ${tool.purpose}`).join(" "), 4000);
+  return [rule.name, ...rule.aliases].some((alias) => text.includes(alias));
+}
+
+export function inferBakingToolFallback(recipe, tools = recipe?.tools) {
+  const normalized = normalizeTools(tools);
+  if (!hasBakingContext(recipe)) return normalized;
+
+  const stepText = recipeText({ steps: recipe?.steps || [] });
+  const additions = [];
+  for (const rule of BAKING_TOOL_RULES) {
+    if (!rule.pattern.test(stepText)) continue;
+    if (toolExists([...normalized, ...additions], rule)) continue;
+    additions.push({
+      name: rule.name,
+      purpose: rule.purpose,
+      essential: true,
+      substitute: rule.substitute,
+      substitute_note: rule.substitute_note,
+      inferred: true,
+    });
+  }
+  return [...normalized, ...additions];
 }
 
 function normalizeBatchInfo(info) {
@@ -227,7 +352,7 @@ ${transcript}`;
   });
   recipe.ingredients = (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).filter(isObj);
   applyIngredientFixes(recipe);
-  recipe.tools = normalizeTools(recipe.tools);
+  recipe.tools = inferBakingToolFallback(recipe, recipe.tools);
   normalizeRecipePhases(recipe);
   if (!Array.isArray(recipe.tags)) recipe.tags = [];
   if (!recipe.difficulty) recipe.difficulty = "medium";
