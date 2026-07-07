@@ -415,6 +415,54 @@ test("processText 保留生活化定量并为模糊量写参考 note", async () 
   }
 });
 
+test("processText 保留批量制备和单份组装 phase 并落盘", async () => {
+  const llm = await startLlmStub({
+    structuredRecipe: {
+      title: "茉莉奶绿",
+      servings: "1杯",
+      total_time_min: 12,
+      difficulty: "easy",
+      cuisine: "饮品",
+      tags: ["饮品", "奶茶"],
+      batch_info: {
+        yield: "一壶茶汤（约1300毫升）",
+        makes_servings: 4,
+        makes_note: "按每杯250毫升推算（推算）",
+        serving_desc: "以下为单杯用量",
+      },
+      ingredients: [
+        { name: "茉莉茶叶", amount: "20克", qty: 20, unit: "克", note: "", phase: "batch" },
+        { name: "热水", amount: "1300毫升", qty: 1300, unit: "毫升", note: "", phase: "batch" },
+        { name: "茶汤", amount: "250毫升", qty: 250, unit: "毫升", note: "", phase: "serving" },
+        { name: "牛奶", amount: "100毫升", qty: 100, unit: "毫升", note: "", phase: "serving" },
+      ],
+      tools: [],
+      steps: [
+        { index: 1, title: "泡茶汤", action: "茶叶加热水焖泡。", params: { time: "8分钟" }, phase: "batch" },
+        { index: 2, title: "单杯组装", action: "杯中加入茶汤和牛奶。", params: {}, phase: "serving" },
+      ],
+    },
+  });
+  try {
+    await withIsolatedTmp(async (root) => {
+      const config = createConfig(root, llm.url);
+      const { recipe, files } = await processText("先泡一壶茶汤，再按每杯组装奶绿。", config);
+
+      assert.equal(recipe.batch_info.makes_servings, 4);
+      assert.deepEqual(recipe.ingredients.map((i) => i.phase), ["batch", "batch", "serving", "serving"]);
+      assert.deepEqual(recipe.steps.map((s) => s.phase), ["batch", "serving"]);
+      const saved = JSON.parse(fs.readFileSync(files.json, "utf8"));
+      assert.equal(saved.batch_info.yield, "一壶茶汤（约1300毫升）");
+      assert.equal(saved.steps[1].phase, "serving");
+      const structurePrompt = llm.requests.find((r) => String(r.messages?.[0]?.content || "").includes("专业中餐厨师兼菜谱编辑"));
+      assert.ok(String(structurePrompt.messages[0].content).includes("先批量制备基底"));
+      assert.ok(String(structurePrompt.messages[0].content).includes('"phase": "batch"'));
+    });
+  } finally {
+    await llm.close();
+  }
+});
+
 test("whisper 空转写会报错且不留下 paoding 临时文件", async () => {
   await withIsolatedTmp(async (root) => {
     const before = new Set(paodingTmpEntries(root));

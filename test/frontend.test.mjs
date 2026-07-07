@@ -109,6 +109,50 @@ test("scaledAmount 结构化优先，文本兜底", () => {
   assert.equal(app.scaledAmount({ amount: "500克" }, 2), "1000克");
 });
 
+test("phase 菜谱分组、双缩放和购物清单换算", () => {
+  const recipe = {
+    title: "茉莉奶绿",
+    batch_info: { yield: "一壶茶汤（约1300毫升）", makes_servings: 4, makes_note: "按每杯250毫升推算（推算）" },
+    ingredients: [
+      { name: "茉莉茶叶", qty: 20, unit: "克", amount: "20克", phase: "batch" },
+      { name: "热水", qty: 1300, unit: "毫升", amount: "1300毫升", phase: "batch" },
+      { name: "茶汤", qty: 250, unit: "毫升", amount: "250毫升", phase: "serving" },
+      { name: "牛奶", qty: 100, unit: "毫升", amount: "100毫升", phase: "serving" },
+    ],
+    steps: [
+      { index: 1, title: "泡茶", action: "泡茶汤", phase: "batch" },
+      { index: 2, title: "组装", action: "加入茶汤和牛奶", phase: "serving" },
+    ],
+  };
+  const groups = app.recipePhaseGroups(recipe);
+  assert.equal(groups.hasPhases, true);
+  assert.deepEqual(Array.from(groups.ingredients.batch.map(x => x.item.name)), ["茉莉茶叶", "热水"]);
+  assert.equal(app.scaledIngredientAmount(recipe.ingredients[0], { batchFactor: 2, servingFactor: 3 }), "40克");
+  assert.equal(app.scaledIngredientAmount(recipe.ingredients[3], { batchFactor: 2, servingFactor: 3 }), "300毫升");
+  assert.equal(app.batchInfoText(recipe, 2), "一壶茶汤（约1300毫升） · 约供 8 份 · 按每杯250毫升推算（推算）");
+
+  const items = app.shoppingItemsForRecipe(recipe, { batchFactor: 2, servingFactor: 3 });
+  assert.deepEqual(Array.from(items.map(x => `${x.name}:${x.amount}`)), [
+    "茉莉茶叶:40克",
+    "热水:2600毫升",
+    "茶汤:750毫升",
+    "牛奶:300毫升",
+  ]);
+
+  const cookSteps = app.cookStepsForRecipe(recipe);
+  assert.equal(cookSteps.length, 3);
+  assert.equal(cookSteps[1].divider, true);
+  assert.equal(cookSteps[2].title, "组装");
+
+  const partial = app.recipePhaseGroups({
+    ingredients: [{ name: "茶叶", phase: "batch" }, { name: "牛奶" }],
+    steps: [{ title: "做", phase: "batch" }],
+  });
+  assert.equal(partial.hasPhases, false);
+  assert.equal(partial.ingredients.batch.length, 2);
+  assert.equal(app.cookStepsForRecipe({ steps: [{ index: 1, title: "普通", action: "做" }] }).length, 1);
+});
+
 test("unitReferencesFor 匹配中餐常用单位并避免英文误命中", () => {
   const units = app.unitReferencesFor("生抽 2勺，水 100ml，肉 2两").map(ref => ref.unit);
   assert.deepEqual(Array.from(units), ["勺", "两", "毫升"]);

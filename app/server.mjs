@@ -8,7 +8,7 @@ import { loadConfig, loadEnvFiles } from "../src/config.mjs";
 import { processVideo, processText, processImages } from "../src/pipeline.mjs";
 import { chatJSON, chatText } from "../src/llm.mjs";
 import { DEPTHS, explainSteps } from "../src/explain.mjs";
-import { normalizeTools } from "../src/chef.mjs";
+import { normalizeRecipePhases, normalizeTools } from "../src/chef.mjs";
 import { assertPublicUrl } from "../src/urlSafety.mjs";
 import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 import { FileJobStore, createJobQueue, createJobRecord, publicJob, TERMINAL_JOB_STATUSES } from "../src/jobs.mjs";
@@ -262,10 +262,15 @@ function normalizeRecipeToolsField(recipe) {
   else delete recipe.tools;
   return recipe;
 }
+function normalizeRecipeFields(recipe) {
+  normalizeRecipeToolsField(recipe);
+  normalizeRecipePhases(recipe);
+  return recipe;
+}
 function writeRecipeFile(id, recipe) {
   const saved = { ...recipe };
   delete saved.id;
-  normalizeRecipeToolsField(saved);
+  normalizeRecipeFields(saved);
   fs.writeFileSync(recipePath(id), JSON.stringify(saved, null, 2));
   invalidateRecipeListCache();
 }
@@ -296,7 +301,7 @@ function listRecipes() {
       try {
         const r = JSON.parse(fs.readFileSync(path.join(RECIPES_DIR, f), "utf8"));
         r.id = f.replace(/\.json$/, "");
-        return normalizeRecipeToolsField(r);
+        return normalizeRecipeFields(r);
       } catch {
         return null;
       }
@@ -313,7 +318,7 @@ function loadRecipe(id) {
   try {
     const r = JSON.parse(fs.readFileSync(p, "utf8")); // 损坏文件也容错
     r.id = id;
-    return normalizeRecipeToolsField(r);
+    return normalizeRecipeFields(r);
   } catch { return null; }
 }
 function recipePath(id) {

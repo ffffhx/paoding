@@ -427,6 +427,55 @@ function scaledAmount(i, f) {
   if (i && Number.isFinite(i.qty)) return (Math.round(i.qty * f * 100) / 100) + (i.unit || '');
   return scaleAmount(i && i.amount, f);
 }
+const VALID_RECIPE_PHASES = new Set(['batch', 'serving']);
+function recipePhaseGroups(r) {
+  const withIndex = (list) => (Array.isArray(list) ? list : []).map((item, idx) => ({ item, idx })).filter(x => x.item && typeof x.item === 'object');
+  const ingredients = withIndex(r?.ingredients);
+  const steps = withIndex(r?.steps);
+  const all = [...ingredients, ...steps];
+  const phases = new Set(all.map(x => x.item.phase).filter(p => VALID_RECIPE_PHASES.has(p)));
+  const hasPhases = all.length > 0 && all.every(x => VALID_RECIPE_PHASES.has(x.item.phase)) && phases.has('batch') && phases.has('serving');
+  return {
+    hasPhases,
+    ingredients: {
+      batch: hasPhases ? ingredients.filter(x => x.item.phase === 'batch') : ingredients,
+      serving: hasPhases ? ingredients.filter(x => x.item.phase === 'serving') : [],
+    },
+    steps: {
+      batch: hasPhases ? steps.filter(x => x.item.phase === 'batch') : steps,
+      serving: hasPhases ? steps.filter(x => x.item.phase === 'serving') : [],
+    },
+  };
+}
+function phaseFactor(phase, factors) {
+  if (factors && typeof factors === 'object') {
+    return normalizeFactor(phase === 'batch' ? factors.batchFactor : factors.servingFactor);
+  }
+  return normalizeFactor(factors);
+}
+function scaledIngredientAmount(i, factors) {
+  return scaledAmount(i, phaseFactor(i?.phase, factors));
+}
+function batchInfoText(r, batchFactor = 1) {
+  const info = r?.batch_info;
+  if (!info || typeof info !== 'object') return '';
+  const parts = [];
+  if (info.yield) parts.push(String(info.yield));
+  const makes = Number(info.makes_servings);
+  if (Number.isFinite(makes) && makes > 0) {
+    parts.push(tr('detail.phase.batchMakes', { count: Math.round(makes * normalizeFactor(batchFactor) * 10) / 10 }));
+  }
+  if (info.makes_note) parts.push(String(info.makes_note));
+  return parts.join(' · ');
+}
+function shoppingItemsForRecipe(r, factors = 1) {
+  return (r?.ingredients || []).filter(i => i?.name).map(i => ({
+    name: i.name,
+    amount: scaledIngredientAmount(i, factors),
+    from: r.title,
+    checked: false,
+  }));
+}
 const UNIT_REFERENCES = [
   { unit: '勺', aliases: ['勺', '瓷勺', '汤匙', '大勺', 'tbsp', 'tablespoon'], lines: ['1瓷勺/汤匙≈15毫升', '1茶匙/小勺≈5毫升', '3茶匙≈1汤匙'] },
   { unit: '克', aliases: ['克', 'g', 'gram'], lines: ['1两=50克', '1斤=500克', '100克≈2两'] },
@@ -1067,9 +1116,12 @@ function renderShopping() {
 }
 function addToShoppingItems(r, factor) {
   const names = new Set(shopping.map(x => x.name + '|' + x.from));
-  (r.ingredients || []).forEach(i => {
-    const key = i.name + '|' + r.title;
-    if (!names.has(key)) shopping.push({ name: i.name, amount: scaledAmount(i, factor || 1), from: r.title, checked: false });
+  shoppingItemsForRecipe(r, factor || 1).forEach(item => {
+    const key = item.name + '|' + item.from;
+    if (!names.has(key)) {
+      shopping.push(item);
+      names.add(key);
+    }
   });
 }
 function addToShopping(r, factor) { addToShoppingItems(r, factor); store.set('shopping', shopping); updateBadges(); toast(tr('shopping.added')); }
@@ -1282,6 +1334,9 @@ function openDetail(r, focusStepIndex = null) {
   const m = rmeta(r.id);
   const base = baseServings(r);
   let factor = m.servingsFactor || 1;
+  let batchFactor = m.batchFactor || 1;
+  const phaseGroups = recipePhaseGroups(r);
+  const hasPhases = phaseGroups.hasPhases;
   const importedNeedsWhy = !!r.imported && !hasRecipeWhy(r);
   const p = el(`<div class="page">
     <div class="topbar">
@@ -1304,7 +1359,7 @@ function openDetail(r, focusStepIndex = null) {
         ${/^https?:\/\//.test(r.source || '') ? `<a class="src-link" href="${esc(r.source)}" target="_blank" rel="noopener">${esc(tr('detail.watchOriginal'))}</a>` : ''}</div>
       ${(r.tags || []).length ? `<div class="tags" style="margin-top:8px">${r.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
     </div>
-    ${base ? `<div class="scaler"><span>${esc(tr('detail.servings'))}</span><button class="st" data-s="-">－</button><b id="svVal">${base * factor}</b><button class="st" data-s="+">＋</button><span>${esc(tr('detail.servingsUnit'))}</span></div>` : ''}
+    ${!hasPhases && base ? `<div class="scaler"><span>${esc(tr('detail.servings'))}</span><button class="st" data-s="-">－</button><b id="svVal">${base * factor}</b><button class="st" data-s="+">＋</button><span>${esc(tr('detail.servingsUnit'))}</span></div>` : ''}
     <div class="no-print" style="display:flex;gap:8px;padding:8px 16px 0;flex-wrap:wrap">
       <button class="btn ghost sm" id="btnOverview">${esc(tr('detail.overview'))}</button>
       <button class="btn ghost sm" id="btnNutri">${esc(tr('detail.nutrition'))}</button>
@@ -1315,11 +1370,30 @@ function openDetail(r, focusStepIndex = null) {
     ${r.imported ? `<div class="import-note"><span>${esc(tr(importedNeedsWhy ? 'detail.imported.noWhy' : 'detail.imported.withWhy'))}</span>${importedNeedsWhy ? `<button class="btn ghost sm" id="btnImportExplain">${esc(tr('detail.imported.explain'))}</button>` : ''}</div>` : ''}
     <div id="aiBox" style="margin:8px 16px 0"></div>
     <div id="nutritionBox"></div>
-    <div class="sec-title">${esc(tr('detail.ingredients'))} <span class="act" id="addShop">${esc(tr('detail.addShopping'))}</span></div>
+    ${hasPhases ? `<div id="toolsBox">${toolsCardHtml(r)}</div>
+    <div class="phase-tabs no-print">
+      <a href="#phase-batch">${esc(tr('detail.phase.batchTab'))}</a>
+      <a href="#phase-serving">${esc(tr('detail.phase.servingTab'))}</a>
+    </div>
+    <div class="phase-head" id="phase-batch">
+      <div><b>${esc(tr('detail.phase.batchTitle'))}</b>${batchInfoText(r, batchFactor) ? `<span>${esc(batchInfoText(r, batchFactor))}</span>` : ''}</div>
+      <span class="act" id="addShop">${esc(tr('detail.addShopping'))}</span>
+    </div>
+    <div class="phase-scale"><span>${esc(tr('detail.phase.batchScale'))}</span><button class="bst" data-s="-">－</button><b id="batchVal">${Math.round(batchFactor * 10) / 10}</b><button class="bst" data-s="+">＋</button></div>
+    <div class="ing" id="batchIngBox"></div>
+    <div class="sec-title">${esc(tr('detail.stepsOverview'))}</div>
+    <div id="batchSteps"></div>
+    <div class="phase-head" id="phase-serving">
+      <div><b>${esc(tr('detail.phase.servingTitle'))}</b>${r.batch_info?.serving_desc ? `<span>${esc(r.batch_info.serving_desc)}</span>` : ''}</div>
+    </div>
+    ${base ? `<div class="phase-scale"><span>${esc(tr('detail.phase.servingScale'))}</span><button class="st" data-s="-">－</button><b id="svVal">${Math.round(base * factor * 10) / 10}</b><button class="st" data-s="+">＋</button><span>${esc(tr('detail.phase.servingUnit'))}</span></div>` : ''}
+    <div class="ing" id="servingIngBox"></div>
+    <div class="sec-title">${esc(tr('detail.stepsOverview'))}</div>
+    <div id="servingSteps"></div>` : `<div class="sec-title">${esc(tr('detail.ingredients'))} <span class="act" id="addShop">${esc(tr('detail.addShopping'))}</span></div>
     <div class="ing" id="ingBox"></div>
     <div id="toolsBox">${toolsCardHtml(r)}</div>
     <div class="sec-title">${esc(tr('detail.stepsOverview'))}</div>
-    <div id="steps"></div>
+    <div id="steps"></div>`}
     <div class="sec-title no-print">${esc(tr('detail.notes'))}</div>
     <div class="notes"><textarea id="notes" placeholder="${esc(tr('detail.notes.placeholder'))}">${esc(m.notes || '')}</textarea></div>
     <div class="sec-title no-print">${esc(tr('detail.cookedRating'))}</div>
@@ -1329,10 +1403,12 @@ function openDetail(r, focusStepIndex = null) {
     </div>
     <div class="cta"><button class="btn ghost" id="btnBack2">${esc(tr('detail.back').replace(/^‹\s*/, ''))}</button><button class="btn" id="btnCook">${esc(tr('detail.startCook'))}</button></div>`);
 
-  function renderIng() {
+  function renderIngList(entries, selector, scale) {
     const checked = new Set(m.ingChecked || []);
-    p.querySelector('#ingBox').innerHTML = (r.ingredients || []).map((i, idx) => {
-      const amount = scaledAmount(i, factor) || tr('detail.amountUnknown');
+    const box = p.querySelector(selector);
+    if (!box) return;
+    box.innerHTML = entries.map(({ item: i, idx }) => {
+      const amount = scaledAmount(i, scale) || tr('detail.amountUnknown');
       return `
       <div class="irow ${checked.has(idx) ? 'checked' : ''}" data-i="${idx}">
         <div class="ck ${checked.has(idx) ? 'on' : ''}">${checked.has(idx) ? '✓' : ''}</div>
@@ -1342,7 +1418,7 @@ function openDetail(r, focusStepIndex = null) {
         <button class="btn ghost sm" data-sub="${esc(i.name)}">${esc(tr('detail.substitute'))}</button>
       </div>`;
     }).join('') || `<div class="irow"><span class="name">${esc(tr('detail.noIngredients'))}</span></div>`;
-    p.querySelectorAll('#ingBox .irow').forEach(row => {
+    box.querySelectorAll('.irow').forEach(row => {
       row.onclick = (e) => {
         if (e.target.dataset.sub !== undefined || e.target.closest('.unit-tip,.unit-pop')) return;
         const idx = +row.dataset.i; const set = new Set(m.ingChecked || []);
@@ -1360,13 +1436,26 @@ function openDetail(r, focusStepIndex = null) {
       row.appendChild(el(html));
       row.querySelector('.unit-pop-x').onclick = (ev) => { ev.stopPropagation(); closeUnitBubbles(p); };
     });
-    wireZoom(p.querySelector('#ingBox'));
+    wireZoom(box);
+  }
+  function renderIng() {
+    if (hasPhases) {
+      renderIngList(phaseGroups.ingredients.batch, '#batchIngBox', batchFactor);
+      renderIngList(phaseGroups.ingredients.serving, '#servingIngBox', factor);
+      const title = p.querySelector('#phase-batch div span');
+      if (title) title.textContent = batchInfoText(r, batchFactor);
+    } else {
+      renderIngList(phaseGroups.ingredients.batch, '#ingBox', factor);
+    }
   }
   renderIng();
   p.addEventListener('click', (e) => { if (!e.target.closest('.unit-tip,.unit-pop')) closeUnitBubbles(p); });
 
-  const stepsBox = p.querySelector('#steps');
-  (r.steps || []).forEach(s => {
+  function renderStepList(entries, selector) {
+    const stepsBox = p.querySelector(selector);
+    if (!stepsBox) return;
+    stepsBox.innerHTML = '';
+    entries.forEach(({ item: s }) => {
     const segUrl = sourceSegmentUrl(r.source, s.source_time);
     stepsBox.appendChild(el(`<div class="stepmini" data-step-index="${esc(s.index)}">
       ${s.image ? `<img class="mthumb" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="" loading="lazy" onerror="this.remove()">` : ''}
@@ -1374,8 +1463,15 @@ function openDetail(r, focusStepIndex = null) {
       <div class="a">${esc(s.action || '')}</div>
       ${stepWhyPrintHtml(s)}
       ${segUrl ? `<a class="step-video-link" href="${esc(segUrl)}" target="_blank" rel="noopener">${esc(tr('detail.watchSegment'))}</a>` : ''}</div>`));
-  });
-  wireZoom(stepsBox);
+    });
+    wireZoom(stepsBox);
+  }
+  if (hasPhases) {
+    renderStepList(phaseGroups.steps.batch, '#batchSteps');
+    renderStepList(phaseGroups.steps.serving, '#servingSteps');
+  } else {
+    renderStepList(phaseGroups.steps.batch, '#steps');
+  }
 
   const close = () => p.remove();
   p.querySelector('.back').onclick = close;
@@ -1384,8 +1480,9 @@ function openDetail(r, focusStepIndex = null) {
   p.querySelector('#dDel').onclick = async () => { if (!(await confirmModal(tr('detail.delete.confirm'), tr('common.delete')))) return; try { await API.del(r.id); } catch { } close(); refresh(); toast(tr('detail.deleted')); };
   p.querySelector('#dPrint').onclick = () => window.print();
   p.querySelector('#dEdit').onclick = () => { close(); openEdit(r); };
-  p.querySelector('#dShare').onclick = () => shareRecipe(r, factor);
-  p.querySelector('#addShop').onclick = () => addToShopping(r, factor);
+  const currentFactors = () => hasPhases ? { batchFactor, servingFactor: factor } : factor;
+  p.querySelector('#dShare').onclick = () => shareRecipe(r, currentFactors());
+  p.querySelector('#addShop').onclick = () => addToShopping(r, currentFactors());
   const aiBox = p.querySelector('#aiBox');
   function renderNutrition() {
     p.querySelector('#nutritionBox').innerHTML = nutritionHtml(r, factor);
@@ -1462,12 +1559,19 @@ function openDetail(r, focusStepIndex = null) {
     }
     btn.disabled = false;
   };
-  p.querySelector('#btnExport2').onclick = () => openExport(r, factor);
+  p.querySelector('#btnExport2').onclick = () => openExport(r, currentFactors());
   p.querySelector('#btnCook').onclick = () => { close(); openCook(r); };
   p.querySelector('#notes').oninput = (e) => { m.notes = e.target.value; saveMeta(); };
   p.querySelector('#cookedBtn').onclick = (e) => { m.cooked = !m.cooked; if (m.cooked) m.cooked_at = new Date().toISOString(); saveMeta(); e.target.className = 'btn sm ' + (m.cooked ? '' : 'ghost'); e.target.textContent = m.cooked ? tr('detail.cooked') : tr('detail.markCooked'); renderRecipes(); };
   p.querySelectorAll('#rating .rs').forEach(rs => rs.onclick = () => { m.rating = +rs.dataset.r; saveMeta(); p.querySelectorAll('#rating .rs').forEach(x => x.classList.toggle('on', +x.dataset.r <= m.rating)); renderRecipes(); });
   if (base) p.querySelectorAll('.st').forEach(b => b.onclick = () => { factor = Math.max(0.5, factor + (b.dataset.s === '+' ? 0.5 : -0.5)); m.servingsFactor = factor; saveMeta(); p.querySelector('#svVal').textContent = Math.round(base * factor * 10) / 10; renderIng(); renderNutrition(); });
+  if (hasPhases) p.querySelectorAll('.bst').forEach(b => b.onclick = () => {
+    batchFactor = Math.max(0.5, batchFactor + (b.dataset.s === '+' ? 0.5 : -0.5));
+    m.batchFactor = batchFactor;
+    saveMeta();
+    p.querySelector('#batchVal').textContent = Math.round(batchFactor * 10) / 10;
+    renderIng();
+  });
 
   $('#app').appendChild(p);
   if (focusStepIndex != null) setTimeout(() => {
@@ -1715,7 +1819,7 @@ function shareRecipe(r, factor) {
 }
 function recipeToText(r, f) {
   let s = tr('export.body.title', { title: r.title || '' });
-  s += (r.ingredients || []).map(i => `· ${i.name} ${scaledAmount(i, f || 1) || ''}`).join('\n') + '\n\n';
+  s += (r.ingredients || []).map(i => `· ${i.name} ${scaledIngredientAmount(i, f || 1) || ''}`).join('\n') + '\n\n';
   const tools = recipeTools(r);
   if (tools.length) {
     s += `${tr('detail.tools.title')}\n`;
@@ -1803,8 +1907,17 @@ function shareRecipeUrl(recipeId, { apiBase = settings.apiBase, origin = locatio
 
 /* ================= 跟做模式 ================= */
 let wakeLock = null, recog = null, voiceWant = false;
+function cookStepsForRecipe(r) {
+  const groups = recipePhaseGroups(r);
+  if (!groups.hasPhases) return r.steps || [];
+  return [
+    ...groups.steps.batch.map(x => x.item),
+    { divider: true, index: 'phase-serving', title: tr('cook.phase.divider.title'), action: tr('cook.phase.divider.desc') },
+    ...groups.steps.serving.map(x => x.item),
+  ];
+}
 async function openCook(r) {
-  const steps = r.steps || []; if (!steps.length) { toast(tr('cook.noSteps')); return; }
+  const steps = cookStepsForRecipe(r); if (!steps.length) { toast(tr('cook.noSteps')); return; }
   let cur = (store.get('progress', {})[r.id]) || 0; if (cur >= steps.length) cur = 0;
   let asks = {}; const stopTimer = () => { }; // 计时改为全局 HUD，跨步骤保留，翻页不清
   const box = el('<div id="cook"></div>'); document.body.appendChild(box);
@@ -1812,7 +1925,27 @@ async function openCook(r) {
 
   const saveProg = (i) => { const p = store.get('progress', {}); p[r.id] = i; store.set('progress', p); };
   function render() {
-    const s = steps[cur], w = s.why || {}, key = stepKey(r.id, s.index), faved = favSteps.some(x => x.key === key);
+    const s = steps[cur];
+    if (s.divider) {
+      box.innerHTML = `
+        <div class="cook-top"><button class="x">${esc(tr('cook.exit'))}</button>
+          <span style="color:var(--muted);font-size:14px">${cur + 1} / ${steps.length}</span><div></div></div>
+        <div class="progress">${steps.map((_, i) => `<span class="dot ${i < cur ? 'done' : i === cur ? 'cur' : ''}"></span>`).join('')}</div>
+        <div class="cook-body cook-divider">
+          <div class="stepno">${esc(tr('cook.phase.divider.kicker'))}</div>
+          <h2>${esc(s.title)}</h2>
+          <div class="action">${esc(s.action)}</div>
+        </div>
+        <div class="cook-nav">
+          <button class="btn prev" ${cur === 0 ? 'disabled' : ''}>${esc(tr('cook.prev'))}</button>
+          <button class="btn next">${esc(tr('cook.next'))}</button></div>`;
+      box.querySelector('.x').onclick = exit;
+      box.querySelector('.prev').onclick = () => { if (cur > 0) { stopTimer(); stopSpeak(); cur--; saveProg(cur); render(); } };
+      box.querySelector('.next').onclick = next;
+      if (settings.tts) speak(`${s.title}。${s.action}`);
+      return;
+    }
+    const w = s.why || {}, key = stepKey(r.id, s.index), faved = favSteps.some(x => x.key === key);
     const warn = s.confidence === 'low' ? `<span class="warn">${esc(tr('cook.confidence.low'))}</span>` : s.confidence === 'medium' ? `<span class="warn">${esc(tr('cook.confidence.medium'))}</span>` : '';
     const segUrl = sourceSegmentUrl(r.source, s.source_time);
     box.innerHTML = `
@@ -1909,8 +2042,12 @@ async function openCook(r) {
 function usedIngsHtml(r, s) {
   const used = (r.ingredients || []).filter(i => i.name && String(s.action || '').includes(i.name));
   if (!used.length) return '';
+  const metaForRecipe = rmeta(r.id);
+  const factors = recipePhaseGroups(r).hasPhases
+    ? { batchFactor: metaForRecipe.batchFactor || 1, servingFactor: metaForRecipe.servingsFactor || 1 }
+    : 1;
   return `<div class="used-ings">${esc(tr('cook.usedIngredients'))}${used.map(i =>
-    `<span class="uing">${esc(i.name)}${i.amount && !['视频未明确', '适量'].includes(i.amount) ? ' <b>' + esc(i.amount) + '</b>' : ''}</span>`).join('')}</div>`;
+    `<span class="uing">${esc(i.name)}${i.amount && !['视频未明确', '适量'].includes(i.amount) ? ' <b>' + esc(scaledIngredientAmount(i, factors) || i.amount) + '</b>' : ''}</span>`).join('')}</div>`;
 }
 function stepToolsFor(tools, s) {
   const text = `${s?.title || ''} ${s?.action || ''}`;

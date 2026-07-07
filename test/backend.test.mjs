@@ -238,7 +238,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
-import { normalizeSourceTime, clampStepTimes, normalizeTools, extractRecipeCardTranscript } from "../src/chef.mjs";
+import { normalizeSourceTime, clampStepTimes, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript } from "../src/chef.mjs";
 import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
@@ -297,6 +297,39 @@ test("normalizeTools 清洗工具清单并保留替代说明", () => {
     { name: "戚风模具", purpose: "帮助爬升", essential: true, substitute: null, substitute_note: "防粘模具会影响爬升", inferred: true },
     { name: "抹刀", purpose: "整理 奶油", essential: true, substitute: "勺子", substitute_note: "边缘粗糙", inferred: true },
   ]);
+});
+
+test("normalizeRecipePhases 清洗批量/单份 phase 并拒绝半拆", () => {
+  const ok = {
+    batch_info: { yield: "一壶茶汤（约1300毫升）", makes_servings: "4", makes_note: "按每杯250毫升推算（推算）", serving_desc: "以下为单杯用量" },
+    ingredients: [
+      { name: "茉莉茶汤", phase: "batch" },
+      { name: "牛奶", phase: "serving" },
+    ],
+    steps: [
+      { title: "泡茶", phase: "batch" },
+      { title: "组装", phase: "serving" },
+    ],
+  };
+  normalizeRecipePhases(ok);
+  assert.equal(ok.ingredients[0].phase, "batch");
+  assert.equal(ok.steps[1].phase, "serving");
+  assert.equal(ok.batch_info.makes_servings, 4);
+
+  const partial = {
+    batch_info: { yield: "一壶" },
+    ingredients: [{ name: "茶汤", phase: "batch" }, { name: "牛奶" }],
+    steps: [{ title: "泡茶", phase: "batch" }, { title: "组装", phase: "serving" }],
+  };
+  normalizeRecipePhases(partial);
+  assert.ok(partial.ingredients.every((i) => !("phase" in i)));
+  assert.ok(partial.steps.every((s) => !("phase" in s)));
+  assert.equal(partial.batch_info, undefined);
+
+  const illegal = { ingredients: [{ name: "茶", phase: "base" }], steps: [{ title: "做", phase: "serving" }] };
+  normalizeRecipePhases(illegal);
+  assert.equal(illegal.ingredients[0].phase, undefined);
+  assert.equal(illegal.steps[0].phase, undefined);
 });
 
 test("extractRecipeCardTranscript 提取画面配方卡段落", () => {
