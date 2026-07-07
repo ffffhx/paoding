@@ -359,6 +359,48 @@ function amountTokens(...values) {
   return [...tokens].filter(Boolean);
 }
 
+function ingredientNameAliases(name) {
+  const normalized = normalizeAmountText(name);
+  const aliases = new Set([normalized]);
+  const pairs = [
+    ["高筋面粉", "高粉"],
+    ["中筋面粉", "中粉"],
+    ["低筋面粉", "低粉"],
+    ["白砂糖", "砂糖"],
+  ];
+  for (const [full, short] of pairs) {
+    const a = normalizeAmountText(full);
+    const b = normalizeAmountText(short);
+    if (normalized.includes(a)) aliases.add(b);
+    if (normalized.includes(b)) aliases.add(a);
+  }
+  return [...aliases].filter((alias) => alias.length >= 2);
+}
+
+function recipeCardLines(cardTranscript) {
+  return String(cardTranscript || "")
+    .split(/\r?\n/)
+    .map((line) => normalizeAmountText(line))
+    .filter(Boolean);
+}
+
+function looksLikeIngredientAmountLine(line) {
+  return /^[\u4e00-\u9fffA-Za-z（）()、/]{1,20}[:：]/.test(String(line || ""));
+}
+
+function recipeCardLineHasAmount(lines, aliases, tokens) {
+  if (!aliases.length || !tokens.length) return false;
+  for (let i = 0; i < lines.length; i++) {
+    if (!aliases.some((alias) => lines[i].includes(alias))) continue;
+    if (tokens.some((token) => lines[i].includes(token))) return true;
+    const continuation = [lines[i - 1], lines[i + 1]]
+      .filter((line) => line && !looksLikeIngredientAmountLine(line))
+      .join("");
+    if (tokens.some((token) => continuation.includes(token))) return true;
+  }
+  return false;
+}
+
 function appendRecipeCardSource(note) {
   const current = cleanText(note, 240);
   if (current.includes(RECIPE_CARD_SOURCE_NOTE)) return current;
@@ -367,16 +409,15 @@ function appendRecipeCardSource(note) {
 
 export function annotateRecipeCardSources(recipe, cardTranscript) {
   if (!recipe || typeof recipe !== "object" || !Array.isArray(recipe.ingredients)) return recipe;
-  const cardText = normalizeAmountText(cardTranscript);
-  if (!cardText.includes(normalizeAmountText("【画面配方卡】"))) return recipe;
+  const lines = recipeCardLines(cardTranscript);
+  if (!lines.join("").includes(normalizeAmountText("【画面配方卡】"))) return recipe;
 
   for (const ing of recipe.ingredients) {
     if (!ing || typeof ing !== "object" || Array.isArray(ing)) continue;
     const qtyUnit = Number.isFinite(Number(ing.qty)) && ing.unit ? `${ing.qty}${ing.unit}` : "";
     const tokens = amountTokens(ing.amount, qtyUnit);
-    const name = normalizeAmountText(ing.name);
-    const nameMatchesCard = name.length >= 2 && cardText.includes(name);
-    if (tokens.length && (tokens.some((token) => cardText.includes(token)) || nameMatchesCard)) {
+    const aliases = ingredientNameAliases(ing.name);
+    if (recipeCardLineHasAmount(lines, aliases, tokens)) {
       ing.note = appendRecipeCardSource(ing.note);
     }
   }

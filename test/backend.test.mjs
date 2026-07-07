@@ -587,6 +587,24 @@ test("annotateRecipeCardSources 按配方卡用量为食材补出处 note", () =
   assert.equal(recipe.ingredients[1].note, "可用0.9倍水替代；出处：画面配方卡");
 });
 
+test("annotateRecipeCardSources 用量需与食材同条目匹配才标出处", () => {
+  const recipe = {
+    ingredients: [
+      { name: "盐", amount: "2克", qty: 2, unit: "克", note: "" },
+      { name: "黄油", amount: "36克", qty: 36, unit: "克", note: "" },
+    ],
+  };
+  annotateRecipeCardSources(recipe, [
+    "【画面配方卡】",
+    "盐：4g",
+    "糖：2g",
+    "黄油：",
+    "36g",
+  ].join("\n"));
+  assert.equal(recipe.ingredients[0].note, "");
+  assert.equal(recipe.ingredients[1].note, "出处：画面配方卡");
+});
+
 test("visionTranscript 片头逐张读屏避免配方卡被多图稀释", async () => {
   const originalFetch = globalThis.fetch;
   const batchSizes = [];
