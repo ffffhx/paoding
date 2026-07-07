@@ -103,7 +103,14 @@ function stubExplanations() {
   };
 }
 
-async function startLlmStub({ malformedFirst = false, imageText = "", visionFrameText = "", structuredRecipe = null } = {}) {
+async function startLlmStub({
+  malformedFirst = false,
+  imageText = "",
+  visionFrameText = "",
+  structuredRecipe = null,
+  visionIngredientMap = null,
+  hangVisionLocator = false,
+} = {}) {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   const requests = [];
@@ -125,6 +132,19 @@ async function startLlmStub({ malformedFirst = false, imageText = "", visionFram
       content = imageText || "标题：集成测试番茄炒蛋\n食材：鸡蛋3个，番茄2个\n步骤：1. 打散鸡蛋。2. 炒番茄出汁。3. 合炒调味。";
     } else if (system.includes("做菜视频按时间顺序截取")) {
       content = visionFrameText || "（本组无有用信息）";
+    } else if (system.includes("挑选步骤配图")) {
+      content = JSON.stringify({ best: 1 });
+    } else if (system.includes("给食材清单配图")) {
+      content = JSON.stringify(visionIngredientMap || {});
+    } else if (system.includes("视觉定位助手")) {
+      if (hangVisionLocator) {
+        await new Promise((resolve, reject) => {
+          const sig = init.signal;
+          if (sig?.aborted) return reject(sig.reason || new Error("aborted"));
+          sig?.addEventListener("abort", () => reject(sig.reason || new Error("aborted")), { once: true });
+        });
+      }
+      content = JSON.stringify({ found: true, bbox_2d: [10, 10, 120, 120] });
     } else if (system.includes("专业中餐厨师兼菜谱编辑")) {
       content = JSON.stringify((typeof structuredRecipe === "function" ? structuredRecipe(body) : structuredRecipe) || stubRecipe());
     } else if (system.includes("食品科学")) {
@@ -391,6 +411,37 @@ test("processVideo 将画面配方卡作为高优先级结构化输入", async (
       assert.equal(recipe.ingredients[0].amount, "1300毫升");
       assert.equal(recipe.ingredients[0].note, "出处：画面配方卡");
       assert.ok(recipe._transcript.includes("【画面配方卡】"));
+    });
+  } finally {
+    await llm.close();
+  }
+});
+
+test("processVideo 食材图超时不阻塞菜谱落盘", async () => {
+  const llm = await startLlmStub({
+    visionIngredientMap: { 鸡蛋: 1, 番茄: 1 },
+    hangVisionLocator: true,
+  });
+  try {
+    await withIsolatedTmp(async (root) => {
+      const config = addVision(createConfig(root, llm.url), llm.url);
+      config.images = config.vision;
+      const input = "https://93.184.216.34/watch?v=timeout";
+
+      const { recipe, files } = await withEnv({
+        PAODING_INGREDIENT_IMAGE_TIMEOUT_MIN: "0.001",
+        PAODING_FFMPEG_BIN: FAKE_FFMPEG,
+      }, () => processVideo(input, config, { keepTranscript: true }));
+
+      assert.equal(recipe.title, "集成测试番茄炒蛋");
+      assert.ok(fs.existsSync(files.json));
+      assert.ok(fs.existsSync(files.md));
+      const saved = JSON.parse(fs.readFileSync(files.json, "utf8"));
+      assert.equal(saved.title, "集成测试番茄炒蛋");
+      assert.equal(saved.source, input);
+      assert.ok(saved.steps.some((s) => s.image), "步骤图阶段成功时应保留步骤图");
+      assert.ok(saved.ingredients.every((i) => !i.image), "食材图超时不应写入半成品 image 字段");
+      assert.match(fs.readFileSync(files.md, "utf8"), /集成测试番茄炒蛋/);
     });
   } finally {
     await llm.close();

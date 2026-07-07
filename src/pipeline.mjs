@@ -14,6 +14,42 @@ const slug = (s) =>
     .replace(/\s+/g, "-")
     .slice(0, 40) || "recipe";
 
+function timeoutMinutes(envName, fallback) {
+  const raw = Number(process.env[envName]);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.max(0, raw);
+}
+
+function abortError(signal) {
+  if (!signal?.aborted) return null;
+  return signal.reason instanceof Error ? signal.reason : new Error("操作已取消");
+}
+
+async function withStageTimeout(label, minutes, parentSignal, fn) {
+  const parentError = abortError(parentSignal);
+  if (parentError) throw parentError;
+  if (!minutes) return fn(parentSignal);
+
+  const ctrl = new AbortController();
+  const timeout = new Error(`${label}超时（超过 ${minutes} 分钟），已跳过`);
+  let timer;
+  const onAbort = () => ctrl.abort(abortError(parentSignal) || new Error("操作已取消"));
+  try {
+    parentSignal?.addEventListener("abort", onAbort, { once: true });
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        ctrl.abort(timeout);
+        reject(timeout);
+      }, minutes * 60 * 1000);
+      timer.unref?.();
+    });
+    return await Promise.race([fn(ctrl.signal), timeoutPromise]);
+  } finally {
+    clearTimeout(timer);
+    parentSignal?.removeEventListener("abort", onAbort);
+  }
+}
+
 // 完整管线：视频 → 音频 → 转写 → 结构化 → 逐步讲解 → 落盘。
 // onProgress({stage, pct, message})：stage 是阶段名，pct 是 0~100 的总体进度。
 export async function processVideo(input, config, { keepTranscript = false, onProgress = () => {}, signal } = {}) {
@@ -76,6 +112,14 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
 
     fs.mkdirSync(config.outDir, { recursive: true });
     const base = path.join(config.outDir, slug(recipe.title || meta.title));
+    recipe.source = input;
+    recipe.created_at = new Date().toISOString();
+    if (keepTranscript) recipe._transcript = llmTranscript;
+    const writeOutputs = () => {
+      fs.writeFileSync(`${base}.json`, JSON.stringify(recipe, null, 2));
+      fs.writeFileSync(`${base}.md`, toMarkdown(recipe, input, path.basename(base)));
+    };
+    writeOutputs();
 
     // 步骤状态图 + 食材图：截到几张算几张，任何失败只降级为无图，不毁掉整趟解析
     if (useImages && videoPath) {
@@ -86,29 +130,35 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
         if (duration) {
           fs.rmSync(base, { recursive: true, force: true }); // 同名菜谱重复解析：清掉旧图，别新旧混杂
           fs.mkdirSync(base, { recursive: true });
-          await extractStepImages(config.images, videoPath, recipe, {
-            duration, imagesDir: base, signal,
-            onProgress: (p) => emit("images", 88 + p.pct * 0.05, p.message),
-          });
-          await extractIngredientImages(config.images, videoPath, recipe, {
-            duration, segments, imagesDir: base, signal,
-            onProgress: (p) => emit("images", 93 + p.pct * 0.05, p.message),
-          });
+          await withStageTimeout(
+            "步骤截图",
+            timeoutMinutes("PAODING_STEP_IMAGE_TIMEOUT_MIN", 3),
+            signal,
+            (stageSignal) => extractStepImages(config.images, videoPath, recipe, {
+              duration, imagesDir: base, signal: stageSignal,
+              onProgress: (p) => emit("images", 88 + p.pct * 0.05, p.message),
+            }),
+          );
+          await withStageTimeout(
+            "食材截图",
+            timeoutMinutes("PAODING_INGREDIENT_IMAGE_TIMEOUT_MIN", 3),
+            signal,
+            (stageSignal) => extractIngredientImages(config.images, videoPath, recipe, {
+              duration, segments, imagesDir: base, signal: stageSignal,
+              onProgress: (p) => emit("images", 93 + p.pct * 0.05, p.message),
+            }),
+          );
           // 一张都没截到就删掉空目录
           if (!fs.readdirSync(base).length) fs.rmdirSync(base);
+          writeOutputs();
         }
       } catch (e) {
-        console.warn(`  · 画面截图失败（跳过，菜谱不带图）：${e.message}`);
+        console.warn(`  · 画面截图失败（跳过，图片可能不完整）：${e.message}`);
       }
     }
 
     step(5, "写出结果…");
-    recipe.source = input;
-    recipe.created_at = new Date().toISOString();
-    if (keepTranscript) recipe._transcript = llmTranscript;
-
-    fs.writeFileSync(`${base}.json`, JSON.stringify(recipe, null, 2));
-    fs.writeFileSync(`${base}.md`, toMarkdown(recipe, input, path.basename(base)));
+    writeOutputs();
     emit("done", 100, "完成");
 
     return { recipe, files: { json: `${base}.json`, md: `${base}.md` } };

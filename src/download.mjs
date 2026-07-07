@@ -6,6 +6,16 @@ import { assertPublicUrl } from "./urlSafety.mjs";
 
 // 运行子进程；onData(chunk) 用于实时解析进度（stdout+stderr 都喂过去）。
 // signal：AbortSignal，任务超时时用来强杀卡死的子进程（spawn 随 signal abort 杀 child）。
+export function formatProcessError(cmd, code, stderr = "") {
+  const err = String(stderr || "");
+  let message = `${cmd} 退出码 ${code}${err ? `：${err.slice(-400)}` : ""}`;
+  const isYtdlp = /(^|[/\\])yt-dlp(?:\.exe)?$/i.test(cmd) || /yt-dlp/i.test(path.basename(cmd));
+  if (isYtdlp && /HTTP Error 412|Precondition Failed/i.test(err)) {
+    message += "。B站返回 412 反爬限制：请确认已登录浏览器，并设置 PAODING_COOKIES_FROM_BROWSER=chrome 后重试；若已设置，可能是浏览器 cookies 无法被 yt-dlp 解密或登录态失效。";
+  }
+  return message;
+}
+
 function run(cmd, args, { capture = false, onData, signal } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], signal });
@@ -22,7 +32,7 @@ function run(cmd, args, { capture = false, onData, signal } = {}) {
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve(out);
-      else reject(new Error(`${cmd} 退出码 ${code}${err ? `：${err.slice(-400)}` : ""}`));
+      else reject(new Error(formatProcessError(cmd, code, err)));
     });
   });
 }

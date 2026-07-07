@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractFromHtml } from "../src/fetchText.mjs";
 import { toMarkdown } from "../src/render.mjs";
-import { isUrl, ytdlpArgs } from "../src/download.mjs";
+import { formatProcessError, isUrl, ytdlpArgs } from "../src/download.mjs";
 import { loadConfig } from "../src/config.mjs";
 import { DEPTHS } from "../src/explain.mjs";
 import { assertPublicUrl, isPrivateAddress } from "../src/urlSafety.mjs";
@@ -33,6 +33,12 @@ test("ytdlpArgs 带 Referer 与可选 cookie", () => {
   assert.ok(a.includes("--cookies-from-browser") && a.includes("chrome"));
   const b = ytdlpArgs("https://x.com", {});
   assert.ok(!b.includes("--cookies-from-browser"));
+});
+
+test("yt-dlp 412 错误提示用户配置浏览器 cookies", () => {
+  const msg = formatProcessError("yt-dlp", 1, "ERROR: HTTP Error 412: Precondition Failed");
+  assert.match(msg, /B站返回 412/);
+  assert.match(msg, /PAODING_COOKIES_FROM_BROWSER=chrome/);
 });
 
 test("extractFromHtml 优先 og:title / og:description，去脚本", () => {
