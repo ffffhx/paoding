@@ -135,24 +135,28 @@ export async function extractFrames(videoPath, { max = 20, duration = null, sign
 }
 
 export const VISION_TRANSCRIPT_BATCH_SIZE = 3;
+export const VISION_TRANSCRIPT_HEAD_SINGLE_FRAMES = 3;
 
 // 视觉模型逐批读帧：抽屏上文字（字幕/用量标注）+ 画面里能确认的食材/动作/火候，拼成「画面转写」。
 export async function visionTranscript(vision, frames, onProgress = () => {}, signal) {
   if (!frames.length) return "";
   const batch = VISION_TRANSCRIPT_BATCH_SIZE, parts = [];
-  for (let i = 0; i < frames.length; i += batch) {
-    onProgress({ pct: Math.round((i / frames.length) * 100), message: `看画面读字幕…（${Math.min(i + batch, frames.length)}/${frames.length}）` });
+  for (let i = 0; i < frames.length;) {
+    const size = i < Math.min(VISION_TRANSCRIPT_HEAD_SINGLE_FRAMES, frames.length) ? 1 : batch;
+    const end = Math.min(i + size, frames.length);
+    onProgress({ pct: Math.round((i / frames.length) * 100), message: `看画面读字幕…（${end}/${frames.length}）` });
     try {
       const text = await chatVision(vision, {
         system: "你在看一段做菜视频按时间顺序截取的若干帧。请抽出两类信息：\n1) 画面上出现的所有文字（字幕、标题、用量/火候标注等），逐字照抄，别改写。\n2) 画面里能明确看到的食材、操作动作、火候/状态。\n如果遇到整屏文字、列表排版、配料表、配方卡这类高价值画面，必须逐字完整转录（尤其是用量数字与单位），并用「【画面配方卡】」标记该段。\n只写你真的看到的，绝不脑补。简洁中文，分点。看不到有用信息就回「（本组无有用信息）」。",
         user: "这些是按时间先后排列的截图：",
-        images: frames.slice(i, i + batch),
+        images: frames.slice(i, end),
         signal,
       });
       if (text && !text.includes("本组无有用信息")) parts.push(ensureRecipeCardMarker(text.trim()));
     } catch (e) {
       // 单批失败不影响整体
     }
+    i = end;
   }
   return parts.join("\n");
 }

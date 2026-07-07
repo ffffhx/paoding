@@ -527,7 +527,7 @@ test("annotateRecipeCardSources 按配方卡用量为食材补出处 note", () =
   assert.equal(recipe.ingredients[1].note, "可用0.9倍水替代；出处：画面配方卡");
 });
 
-test("visionTranscript 小批量读屏避免配方卡被多图稀释", async () => {
+test("visionTranscript 片头逐张读屏避免配方卡被多图稀释", async () => {
   const originalFetch = globalThis.fetch;
   const batchSizes = [];
   const progress = [];
@@ -540,7 +540,7 @@ test("visionTranscript 小批量读屏避免配方卡被多图稀释", async () 
       choices: [{
         message: {
           role: "assistant",
-          content: imageCount <= 3
+          content: imageCount === 1
             ? "万能面包配方表\n高粉：150g 牛奶：75g 白砂糖：60g"
             : "这个配方表可以做出千变万化的面包来",
         },
@@ -558,8 +558,8 @@ test("visionTranscript 小批量读屏避免配方卡被多图稀释", async () 
       frames,
       (p) => progress.push(p.message),
     );
-    assert.deepEqual(batchSizes, [3, 3]);
-    assert.deepEqual(progress, ["看画面读字幕…（3/6）", "看画面读字幕…（6/6）"]);
+    assert.deepEqual(batchSizes, [1, 1, 1, 3]);
+    assert.deepEqual(progress, ["看画面读字幕…（1/6）", "看画面读字幕…（2/6）", "看画面读字幕…（3/6）", "看画面读字幕…（6/6）"]);
     assert.match(text, /【画面配方卡】/);
     assert.match(text, /高粉：150g/);
   } finally {
