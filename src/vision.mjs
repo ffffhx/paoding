@@ -137,6 +137,15 @@ export async function extractFrames(videoPath, { max = 20, duration = null, sign
 export const VISION_TRANSCRIPT_BATCH_SIZE = 3;
 export const VISION_TRANSCRIPT_HEAD_SINGLE_FRAMES = 3;
 
+const RECIPE_CARD_MARKER = "【画面配方卡】";
+const VISION_AMOUNT_RE = /\d+(?:\.\d+)?\s*(?:g|克|kg|千克|ml|毫升|L|升|个|只|枚|颗|勺|匙|杯|份)/gi;
+
+function recipeCardScore(text) {
+  const marked = ensureRecipeCardMarker(text);
+  const amountCount = marked.match(VISION_AMOUNT_RE)?.length || 0;
+  return (marked.includes(RECIPE_CARD_MARKER) ? 100 : 0) + amountCount;
+}
+
 // 视觉模型逐批读帧：抽屏上文字（字幕/用量标注）+ 画面里能确认的食材/动作/火候，拼成「画面转写」。
 export async function visionTranscript(vision, frames, onProgress = () => {}, signal) {
   if (!frames.length) return "";
@@ -152,7 +161,17 @@ export async function visionTranscript(vision, frames, onProgress = () => {}, si
         images: frames.slice(i, end),
         signal,
       });
-      if (text && !text.includes("本组无有用信息")) parts.push(ensureRecipeCardMarker(text.trim()));
+      let finalText = text;
+      if (size === 1 && i < VISION_TRANSCRIPT_HEAD_SINGLE_FRAMES && recipeCardScore(text) < 103) {
+        const retry = await chatVision(vision, {
+          system: "你在看一张做菜视频截图。这张图可能是整屏配方表、配料表或材料清单。请只做 OCR：逐字抄出画面中所有配方表文字和用量数字，不要总结、不要省略。如果看到表格、列表或配方卡，必须以「【画面配方卡】」开头。看不清就写「看不清」。",
+          user: "请转录这张截图里的配方表/配料表文字：",
+          images: frames.slice(i, end),
+          signal,
+        });
+        if (recipeCardScore(retry) > recipeCardScore(text)) finalText = retry;
+      }
+      if (finalText && !finalText.includes("本组无有用信息")) parts.push(ensureRecipeCardMarker(finalText.trim()));
     } catch (e) {
       // 单批失败不影响整体
     }
@@ -165,12 +184,12 @@ export async function visionTranscript(vision, frames, onProgress = () => {}, si
 
 export function ensureRecipeCardMarker(text) {
   const trimmed = String(text || "").trim();
-  const marker = "【画面配方卡】";
+  const marker = RECIPE_CARD_MARKER;
   if (!trimmed) return trimmed;
   if (trimmed.startsWith(marker)) return trimmed;
   const body = trimmed.split(marker).join("").trim();
   if (!/(配方表|配方卡|配料表|材料表|用料表|食材清单)/.test(body)) return trimmed;
-  const amounts = body.match(/\d+(?:\.\d+)?\s*(?:g|克|kg|千克|ml|毫升|L|升|个|只|枚|颗|勺|匙|杯|份)/gi) || [];
+  const amounts = body.match(VISION_AMOUNT_RE) || [];
   if (amounts.length < 3) return trimmed;
   return `${marker}\n${body}`;
 }

@@ -533,6 +533,7 @@ test("visionTranscript 片头逐张读屏避免配方卡被多图稀释", async 
   const progress = [];
   globalThis.fetch = async (input, init = {}) => {
     const body = JSON.parse(String(init.body || "{}"));
+    const system = String(body.messages?.find((m) => m.role === "system")?.content || "");
     const userContent = body.messages?.find((m) => m.role === "user")?.content || [];
     const imageCount = userContent.filter((part) => part?.type === "image_url").length;
     batchSizes.push(imageCount);
@@ -540,7 +541,7 @@ test("visionTranscript 片头逐张读屏避免配方卡被多图稀释", async 
       choices: [{
         message: {
           role: "assistant",
-          content: imageCount === 1
+          content: system.includes("请只做 OCR")
             ? "万能面包配方表\n高粉：150g 牛奶：75g 白砂糖：60g"
             : "这个配方表可以做出千变万化的面包来",
         },
@@ -558,7 +559,7 @@ test("visionTranscript 片头逐张读屏避免配方卡被多图稀释", async 
       frames,
       (p) => progress.push(p.message),
     );
-    assert.deepEqual(batchSizes, [1, 1, 1, 3]);
+    assert.deepEqual(batchSizes, [1, 1, 1, 1, 1, 1, 3]);
     assert.deepEqual(progress, ["看画面读字幕…（1/6）", "看画面读字幕…（2/6）", "看画面读字幕…（3/6）", "看画面读字幕…（6/6）"]);
     assert.match(text, /【画面配方卡】/);
     assert.match(text, /高粉：150g/);
