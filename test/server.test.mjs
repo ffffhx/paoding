@@ -727,6 +727,86 @@ test("AI 助手端点 prompt 包含食材 ASR 同音字防御", async () => {
   }
 });
 
+test("substitute 和 term 缓存命中、强制刷新并随食材编辑失效", async () => {
+  const id = "替代缓存菜";
+  const fp = path.join(recipesDir, `${id}.json`);
+  fs.writeFileSync(fp, JSON.stringify({
+    title: id,
+    ingredients: [{ name: "鸡蛋", amount: "2个" }, { name: "白糖", amount: "20克" }],
+    steps: [{ index: 1, title: "混合", action: "鸡蛋和白糖混合。" }],
+  }, null, 2));
+  const termCacheFile = path.join(dataRoot, "term-cache.json");
+  fs.rmSync(termCacheFile, { force: true });
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const post = (body) => ({
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Forwarded-For": "198.51.100.77" },
+    body: JSON.stringify(body),
+  });
+  globalThis.fetch = async (input, init = {}) => {
+    assert.ok(String(input).endsWith("/chat/completions"));
+    const body = JSON.parse(String(init.body || "{}"));
+    calls++;
+    const user = String(body.messages?.find((m) => m.role === "user")?.content || "");
+    const answer = user.includes("解释一下") ? `术语回答 ${calls}` : `替代回答 ${calls}`;
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: answer } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const first = await (await request("/api/substitute", post({ recipeId: id, ingredient: "鸡蛋" }))).json();
+    assert.equal(first.cached, false);
+    assert.equal(first.answer, "替代回答 1");
+    assert.equal(calls, 1);
+    let saved = JSON.parse(fs.readFileSync(fp, "utf8"));
+    assert.equal(saved.substitutes["鸡蛋"].answer, "替代回答 1");
+    assert.match(saved.substitutes["鸡蛋"].created_at, /^\d{4}-\d{2}-\d{2}T/);
+
+    const second = await (await request("/api/substitute", post({ recipeId: id, ingredient: "鸡蛋" }))).json();
+    assert.equal(second.cached, true);
+    assert.equal(second.answer, "替代回答 1");
+    assert.equal(calls, 1);
+
+    const forced = await (await request("/api/substitute", post({ recipeId: id, ingredient: "鸡蛋", force: true }))).json();
+    assert.equal(forced.cached, false);
+    assert.equal(forced.answer, "替代回答 2");
+    assert.equal(calls, 2);
+
+    const sugar = await (await request("/api/substitute", post({ recipeId: id, ingredient: "白糖" }))).json();
+    assert.equal(sugar.cached, false);
+    assert.equal(sugar.answer, "替代回答 3");
+    assert.equal(calls, 3);
+
+    const put = await request(`/api/recipes/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ingredients: [{ name: "白糖", amount: "20克" }] }),
+    });
+    assert.equal(put.status, 200);
+    saved = JSON.parse(fs.readFileSync(fp, "utf8"));
+    assert.equal(saved.substitutes["鸡蛋"], undefined);
+    assert.equal(saved.substitutes["白糖"].answer, "替代回答 3");
+
+    const term1 = await (await request("/api/term", post({ term: "挂糊" }))).json();
+    assert.equal(term1.cached, false);
+    assert.equal(term1.answer, "术语回答 4");
+    assert.equal(calls, 4);
+    const term2 = await (await request("/api/term", post({ term: "挂糊" }))).json();
+    assert.equal(term2.cached, true);
+    assert.equal(term2.answer, "术语回答 4");
+    assert.equal(calls, 4);
+    const term3 = await (await request("/api/term", post({ term: "挂糊", force: true }))).json();
+    assert.equal(term3.cached, false);
+    assert.equal(term3.answer, "术语回答 5");
+    assert.equal(calls, 5);
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(fp, { force: true });
+    fs.rmSync(termCacheFile, { force: true });
+  }
+});
+
 test("nutrition 缓存返回结构化结果，编辑食材后失效", async () => {
   const id = "营养测试菜";
   fs.writeFileSync(path.join(recipesDir, `${id}.json`), JSON.stringify({

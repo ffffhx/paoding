@@ -42,8 +42,8 @@ const API = {
   startImages: async (files, depth) => F('/api/parse-images', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ depth, images: await imageFilesPayload(files) }) }).then(j),
   jobs: () => F('/api/jobs?limit=8').then(r => r.json()).catch(() => []),
   ask: (recipeId, stepIndex, question) => F('/api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, question }) }).then(j),
-  substitute: (recipeId, ingredient) => F('/api/substitute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, ingredient }) }).then(j),
-  term: (term) => F('/api/term', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ term }) }).then(j),
+  substitute: (recipeId, ingredient, opts = {}) => F('/api/substitute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, ingredient, force: !!opts.force }) }).then(j),
+  term: (term, opts = {}) => F('/api/term', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ term, force: !!opts.force }) }).then(j),
   troubleshoot: (recipeId, stepIndex, problem) => F('/api/troubleshoot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, problem }) }).then(j),
   nutrition: (recipeId) => F('/api/nutrition', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
   tools: (recipeId) => F('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
@@ -1692,8 +1692,21 @@ function openEdit(r) {
 async function showSubstitute(r, ingredient) {
   const title = tr('substitute.title', { ingredient });
   const ov = openModal(`<h3>${esc(title)}</h3><p style="color:var(--muted)">${esc(tr('substitute.thinking'))}</p>`);
-  try { const { answer } = await API.substitute(r.id, ingredient); ov.querySelector('.modal').innerHTML = `<h3>${esc(title)}</h3><p style="white-space:pre-wrap;text-align:left">${esc(answer)}</p><div class="mrow"><button class="btn" id="ok">${esc(tr('substitute.ok'))}</button></div>`; ov.querySelector('#ok').onclick = () => ov.remove(); }
-  catch (e) { ov.querySelector('.modal').innerHTML = `<p>${esc(tr('substitute.failed', { message: e.message }))}</p><div class="mrow"><button class="btn" id="ok">${esc(tr('common.close'))}</button></div>`; ov.querySelector('#ok').onclick = () => ov.remove(); }
+  const setLoading = () => { ov.querySelector('.modal').innerHTML = `<h3>${esc(title)}</h3><p style="color:var(--muted)">${esc(tr('substitute.thinking'))}</p>`; };
+  const render = ({ answer, cached }) => {
+    ov.querySelector('.modal').innerHTML = `<h3>${esc(title)}</h3><p style="white-space:pre-wrap;text-align:left">${esc(answer)}</p>
+      ${cached ? `<div style="color:var(--muted);font-size:12px;margin-top:12px;display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap"><span>${esc(tr('substitute.cached'))}</span><span>·</span><button class="btn ghost sm" id="regenSub">${esc(tr('substitute.regenerate'))}</button></div>` : ''}
+      <div class="mrow"><button class="btn" id="ok">${esc(tr('substitute.ok'))}</button></div>`;
+    ov.querySelector('#ok').onclick = () => ov.remove();
+    const regen = ov.querySelector('#regenSub');
+    if (regen) regen.onclick = () => load(true);
+  };
+  async function load(force = false) {
+    if (force) setLoading();
+    try { render(await API.substitute(r.id, ingredient, { force })); }
+    catch (e) { ov.querySelector('.modal').innerHTML = `<p>${esc(tr('substitute.failed', { message: e.message }))}</p><div class="mrow"><button class="btn" id="ok">${esc(tr('common.close'))}</button></div>`; ov.querySelector('#ok').onclick = () => ov.remove(); }
+  }
+  await load(false);
 }
 function shareRecipe(r, factor) {
   const md = recipeToText(r, factor);
@@ -1931,8 +1944,21 @@ function beep() {
 function showVoiceHint() { const h = el(`<div class="voice-hint">${esc(tr('cook.voiceHint'))}</div>`); document.body.appendChild(h); setTimeout(() => h.remove(), 3000); }
 async function showTerm(term) {
   const ov = openModal(`<h3>${esc(term)}</h3><p style="color:var(--muted)">${esc(tr('term.loading'))}</p>`);
-  try { const { answer } = await API.term(term); ov.querySelector('.modal').innerHTML = `<h3>${esc(term)}</h3><p style="text-align:left">${esc(answer)}</p><div class="mrow"><button class="btn" id="ok">${esc(tr('term.ok'))}</button></div>`; ov.querySelector('#ok').onclick = () => ov.remove(); }
-  catch (e) { ov.remove(); toast(tr('term.failed', { message: e.message })); }
+  const setLoading = () => { ov.querySelector('.modal').innerHTML = `<h3>${esc(term)}</h3><p style="color:var(--muted)">${esc(tr('term.loading'))}</p>`; };
+  const render = ({ answer, cached }) => {
+    ov.querySelector('.modal').innerHTML = `<h3>${esc(term)}</h3><p style="text-align:left">${esc(answer)}</p>
+      ${cached ? `<div style="color:var(--muted);font-size:12px;margin-top:12px;display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap"><span>${esc(tr('term.cached'))}</span><span>·</span><button class="btn ghost sm" id="regenTerm">${esc(tr('term.regenerate'))}</button></div>` : ''}
+      <div class="mrow"><button class="btn" id="ok">${esc(tr('term.ok'))}</button></div>`;
+    ov.querySelector('#ok').onclick = () => ov.remove();
+    const regen = ov.querySelector('#regenTerm');
+    if (regen) regen.onclick = () => load(true);
+  };
+  async function load(force = false) {
+    if (force) setLoading();
+    try { render(await API.term(term, { force })); }
+    catch (e) { ov.remove(); toast(tr('term.failed', { message: e.message })); }
+  }
+  await load(false);
 }
 
 /* ================= 解析（带进度）================= */

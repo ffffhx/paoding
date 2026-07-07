@@ -30,6 +30,7 @@ const RECIPES_DIR = process.env.PAODING_RECIPES_DIR || path.join(HERE, "recipes"
 const JOBS_DIR = path.join(path.dirname(RECIPES_DIR), "jobs");
 const BACKUPS_DIR = path.join(path.dirname(RECIPES_DIR), "backups");
 const TECHNIQUES_CACHE_DIR = path.join(path.dirname(RECIPES_DIR), "techniques-cache");
+const TERM_CACHE_FILE = path.join(path.dirname(RECIPES_DIR), "term-cache.json");
 // 用户数据（收藏/笔记/评分/购物清单等）跨设备同步用；放项目根、不在 webDir 内，避免被静态服务或打包暴露
 const USERDATA_FILE = process.env.PAODING_USERDATA_FILE || path.join(HERE, "..", "paoding-userdata.json");
 const PORT = process.env.PAODING_PORT ? Number(process.env.PAODING_PORT) : 4177;
@@ -268,6 +269,25 @@ function writeRecipeFile(id, recipe) {
   fs.writeFileSync(recipePath(id), JSON.stringify(saved, null, 2));
   invalidateRecipeListCache();
 }
+function ingredientNameSet(ingredients) {
+  return new Set((Array.isArray(ingredients) ? ingredients : [])
+    .map((i) => String(i?.name || "").trim())
+    .filter(Boolean));
+}
+function sameIngredientNameSet(a, b) {
+  if (a.size !== b.size) return false;
+  for (const name of a) if (!b.has(name)) return false;
+  return true;
+}
+function pruneSubstituteCache(substitutes, ingredients) {
+  if (!substitutes || typeof substitutes !== "object" || Array.isArray(substitutes)) return undefined;
+  const names = ingredientNameSet(ingredients);
+  const kept = {};
+  for (const [name, value] of Object.entries(substitutes)) {
+    if (names.has(name)) kept[name] = value;
+  }
+  return Object.keys(kept).length ? kept : undefined;
+}
 function listRecipes() {
   const { files, signature } = recipeListIndex();
   if (recipeListCache.recipes && recipeListCache.signature === signature) return recipeListCache.recipes;
@@ -498,7 +518,7 @@ const llmLimiter = createSlidingWindowRateLimiter({
 const LLM_ENDPOINTS = new Set([
   "/api/parse-url", "/api/parse-text", "/api/parse-file",
   "/api/parse-images",
-  "/api/ask", "/api/substitute", "/api/term", "/api/troubleshoot", "/api/nutrition", "/api/tools", "/api/overview", "/api/explain-recipe", "/api/import-recipe",
+  "/api/ask", "/api/troubleshoot", "/api/nutrition", "/api/tools", "/api/overview", "/api/explain-recipe", "/api/import-recipe",
 ]);
 const LIMITED_READ_ENDPOINTS = new Set([
   "/api/techniques",
@@ -510,14 +530,26 @@ function clientIp(req) {
 function currentUser(req) {
   return req.paodingUser || DEFAULT_USER;
 }
+function rateLimitPayload(req) {
+  const hit = llmLimiter.take(`${clientIp(req)}:${currentUser(req)}`);
+  if (hit.allowed) return null;
+  return {
+    code: 429,
+    headers: { "Retry-After": String(Math.max(1, Math.ceil(hit.resetMs / 1000))) },
+    body: { error: "请求太频繁，请稍后再试" },
+  };
+}
+function sendEndpointResult(res, out) {
+  for (const [k, v] of Object.entries(out.headers || {})) res.setHeader(k, v);
+  sendJSON(res, out.code || 200, out.body);
+}
 function rateLimitOk(req, res, p) {
   const isTechniqueSummary = req.method === "POST" && /^\/api\/techniques\/[^/]+\/summary$/.test(p);
   const shouldLimit = (req.method === "POST" && LLM_ENDPOINTS.has(p)) || isTechniqueSummary || (req.method === "GET" && LIMITED_READ_ENDPOINTS.has(p));
   if (!shouldLimit) return true;
-  const hit = llmLimiter.take(`${clientIp(req)}:${currentUser(req)}`);
-  if (hit.allowed) return true;
-  res.setHeader("Retry-After", String(Math.max(1, Math.ceil(hit.resetMs / 1000))));
-  sendJSON(res, 429, { error: "请求太频繁，请稍后再试" });
+  const blocked = rateLimitPayload(req);
+  if (!blocked) return true;
+  sendEndpointResult(res, blocked);
   return false;
 }
 // 读并解析 JSON 请求体；畸形 JSON 抛 400（而非落到外层 catch 变 500）。
@@ -970,6 +1002,85 @@ function runJob(id, input, depth, kind = "video", wantVision = false, wantImages
     .catch((e) => finish({ type: "error", error: e.message }));
 }
 
+function cacheTextKey(value) {
+  return String(value || "").trim();
+}
+function cachedAnswer(cache, key) {
+  const entry = cache && typeof cache === "object" ? cache[key] : null;
+  return entry && typeof entry.answer === "string" && entry.answer.trim() ? entry : null;
+}
+function readTermCache() {
+  try {
+    const cache = JSON.parse(fs.readFileSync(TERM_CACHE_FILE, "utf8"));
+    return cache && typeof cache === "object" && !Array.isArray(cache) ? cache : {};
+  } catch {
+    return {};
+  }
+}
+function writeTermCache(cache) {
+  fs.writeFileSync(TERM_CACHE_FILE, JSON.stringify(cache, null, 2));
+}
+function substitutePrompt(body, r) {
+  return {
+    system: "你是经验丰富的中餐厨师，实话实说、不糊弄。用户做某道菜时缺了某种食材/调料，针对性判断：\n" +
+      "- 大多数食材都有可接受的替代——只要有靠谱替代就给1~3个，标出最推荐的，说明用量换算和风味差异（例：白糖可用冰糖或红糖、老抽可用生抽加少量糖色、香醋可用米醋、生粉可用玉米淀粉）。\n" +
+      "- 只有当它是这道菜的灵魂、任何替代都会明显翻车或跑味时，才说「不建议替代」，讲清为什么、硬替会怎样、给务实建议（例：用醋替料酒去腥、用清水替高汤——这类才算不能替）。\n" +
+      "- 别为了凑数硬编烂替代，也别把「有点影响」当成「不能替代」。简洁中文，分点。\n" +
+      AI_ENDPOINTS._ingredientAsrDefense,
+    user: `菜名：${r ? r.title : "某道菜"}。用户缺的是「${body.ingredient}」，有什么可以替代？若确实没有好替代就直说。`,
+  };
+}
+function termPrompt(body) {
+  return {
+    system: "你是食品科学科普作者。用3~4句通俗中文解释这个烹饪术语/原理是什么、为什么重要。\n" + AI_ENDPOINTS._ingredientAsrDefense,
+    user: `解释一下烹饪里的「${body.term}」。`,
+  };
+}
+async function answerSubstitute({ recipeId, ingredient, force }, { req } = {}) {
+  const key = cacheTextKey(ingredient);
+  if (!key) return { code: 400, body: { error: "缺少食材名" } };
+  const r = loadRecipe(recipeId);
+  const cache = r?.substitutes && typeof r.substitutes === "object" && !Array.isArray(r.substitutes)
+    ? r.substitutes
+    : {};
+  const hit = !force ? cachedAnswer(cache, key) : null;
+  if (hit) return { body: { answer: hit.answer, cached: true, created_at: hit.created_at || null } };
+
+  const blocked = req ? rateLimitPayload(req) : null;
+  if (blocked) return blocked;
+  const prompt = substitutePrompt({ ingredient: key }, r);
+  prompt.system = llmSystem(prompt.system);
+  const answer = await chatText(config.llm, prompt);
+  const createdAt = nowISO();
+  if (r && isSafeStorageId(recipeId)) {
+    const fp = recipePath(recipeId);
+    const cur = JSON.parse(fs.readFileSync(fp, "utf8"));
+    cur.substitutes = {
+      ...(cur.substitutes && typeof cur.substitutes === "object" && !Array.isArray(cur.substitutes) ? cur.substitutes : {}),
+      [key]: { answer, created_at: createdAt },
+    };
+    writeRecipeFile(recipeId, cur);
+  }
+  return { body: { answer, cached: false, created_at: createdAt } };
+}
+async function answerTerm({ term, force }, { req } = {}) {
+  const key = cacheTextKey(term);
+  if (!key) return { code: 400, body: { error: "缺少术语" } };
+  const cache = readTermCache();
+  const hit = !force ? cachedAnswer(cache, key) : null;
+  if (hit) return { body: { answer: hit.answer, cached: true, created_at: hit.created_at || null } };
+
+  const blocked = req ? rateLimitPayload(req) : null;
+  if (blocked) return blocked;
+  const prompt = termPrompt({ term: key });
+  prompt.system = llmSystem(prompt.system);
+  const answer = await chatText(config.llm, prompt);
+  const createdAt = nowISO();
+  cache[key] = { answer, created_at: createdAt };
+  writeTermCache(cache);
+  return { body: { answer, cached: false, created_at: createdAt } };
+}
+
 const AI_ENDPOINTS = {
   _ingredientAsrDefense: "食材名可能包含语音识别的同音错别字（如 白纸 实为 白芷、肉豆扣 实为 肉豆蔻）。先判断名字是否为误写：若是，回答开头先指出正确名称，再按正确食材给替代建议；若名字本身不是食材也无法推断，直说无法识别，不要硬编。",
   "/api/ask": {
@@ -986,21 +1097,10 @@ const AI_ENDPOINTS = {
     },
   },
   "/api/substitute": {
-    recipe: { required: false },
-    prompt: ({ body, r }) => ({
-      system: "你是经验丰富的中餐厨师，实话实说、不糊弄。用户做某道菜时缺了某种食材/调料，针对性判断：\n" +
-        "- 大多数食材都有可接受的替代——只要有靠谱替代就给1~3个，标出最推荐的，说明用量换算和风味差异（例：白糖可用冰糖或红糖、老抽可用生抽加少量糖色、香醋可用米醋、生粉可用玉米淀粉）。\n" +
-        "- 只有当它是这道菜的灵魂、任何替代都会明显翻车或跑味时，才说「不建议替代」，讲清为什么、硬替会怎样、给务实建议（例：用醋替料酒去腥、用清水替高汤——这类才算不能替）。\n" +
-        "- 别为了凑数硬编烂替代，也别把「有点影响」当成「不能替代」。简洁中文，分点。\n" +
-        AI_ENDPOINTS._ingredientAsrDefense,
-      user: `菜名：${r ? r.title : "某道菜"}。用户缺的是「${body.ingredient}」，有什么可以替代？若确实没有好替代就直说。`,
-    }),
+    handle: answerSubstitute,
   },
   "/api/term": {
-    prompt: ({ body }) => ({
-      system: "你是食品科学科普作者。用3~4句通俗中文解释这个烹饪术语/原理是什么、为什么重要。\n" + AI_ENDPOINTS._ingredientAsrDefense,
-      user: `解释一下烹饪里的「${body.term}」。`,
-    }),
+    handle: answerTerm,
   },
   "/api/troubleshoot": {
     recipe: { required: false },
@@ -1066,8 +1166,8 @@ async function handleAiEndpoint(p, req, res) {
   if (req.method !== "POST" || !def) return false;
   const body = await readJson(req);
   if (def.handle) {
-    const out = await def.handle(body);
-    sendJSON(res, out.code || 200, out.body);
+    const out = await def.handle(body, { req });
+    sendEndpointResult(res, out);
     return true;
   }
   let r = null;
@@ -1261,6 +1361,13 @@ export async function handleRequest(req, res) {
       const nutritionTouched = ("ingredients" in patch && JSON.stringify(patch.ingredients) !== JSON.stringify(cur.ingredients))
         || ("servings" in patch && patch.servings !== cur.servings);
       if (nutritionTouched) delete next.nutrition;
+      const ingredientNamesChanged = "ingredients" in patch
+        && !sameIngredientNameSet(ingredientNameSet(cur.ingredients), ingredientNameSet(next.ingredients));
+      if (ingredientNamesChanged && next.substitutes) {
+        const pruned = pruneSubstituteCache(next.substitutes, next.ingredients);
+        if (pruned) next.substitutes = pruned;
+        else delete next.substitutes;
+      }
       writeRecipeFile(recipeIdForMutation, next);
       return sendJSON(res, 200, { ok: true });
     }
