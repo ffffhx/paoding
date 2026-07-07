@@ -679,6 +679,57 @@ test("nutrition 缓存返回结构化结果，编辑食材后失效", async () =
   fs.rmSync(path.join(recipesDir, `${id}.json`), { force: true });
 });
 
+test("tools endpoint 调用 LLM 推断工具、清洗后写回菜谱", async () => {
+  const id = "工具测试蛋糕";
+  const fp = path.join(recipesDir, `${id}.json`);
+  fs.writeFileSync(fp, JSON.stringify({
+    title: id,
+    tags: ["甜品"],
+    ingredients: [{ name: "蛋白", amount: "3个" }, { name: "糖", amount: "60克" }],
+    steps: [{ index: 1, title: "打发", action: "用打蛋器打发蛋白，再装入裱花袋挤成形。" }],
+  }, null, 2));
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    assert.ok(String(input).endsWith("/chat/completions"));
+    const body = JSON.parse(String(init.body || "{}"));
+    assert.equal(body.response_format?.type, "json_object");
+    const system = String(body.messages?.find((m) => m.role === "system")?.content || "");
+    assert.ok(system.includes("甜品/烘焙"));
+    assert.ok(system.includes("没有替代品"));
+    calls++;
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: JSON.stringify({
+        tools: [
+          { name: "电动打蛋器", purpose: "打发蛋白", essential: true, substitute: "手动打蛋器", substitute_note: "耗时费力且更难稳定", inferred: false },
+          { name: "戚风模具", purpose: "帮助面糊攀爬", essential: true, substitute: "", substitute_note: "防粘模具会让蛋糕爬不起来", inferred: false },
+          { purpose: "缺名字应丢弃", essential: true },
+        ],
+      }) } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const res = await request("/api/tools", J({ recipeId: id }));
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.cached, false);
+    assert.equal(calls, 1);
+    assert.deepEqual(data.tools, [
+      { name: "电动打蛋器", purpose: "打发蛋白", essential: true, substitute: "手动打蛋器", substitute_note: "耗时费力且更难稳定", inferred: true },
+      { name: "戚风模具", purpose: "帮助面糊攀爬", essential: true, substitute: null, substitute_note: "防粘模具会让蛋糕爬不起来", inferred: true },
+    ]);
+    const saved = JSON.parse(fs.readFileSync(fp, "utf8"));
+    assert.deepEqual(saved.tools, data.tools);
+
+    const cached = await (await request("/api/tools", J({ recipeId: id }))).json();
+    assert.equal(cached.cached, true);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(fp, { force: true });
+  }
+});
+
 test("静态首页含庖丁", async () => {
   const r = await request("/");
   assert.equal(r.status, 200);

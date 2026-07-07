@@ -311,6 +311,28 @@ test("nutritionHtml 切 en 后输出英文营养标签", () => {
   app.setLanguage("zh");
 });
 
+test("工具卡片和跟做工具提示支持替代与无替代原因", () => {
+  app.setLanguage("en");
+  const r = {
+    tools: [
+      { name: "Piping bag", purpose: "Pipe cream", essential: true, substitute: "Freezer bag with a cut corner", substitute_note: "Less precise edges", inferred: false },
+      { name: "Chiffon pan", purpose: "Let batter climb while baking", essential: true, substitute: null, substitute_note: "A nonstick pan prevents the cake from climbing", inferred: true },
+    ],
+  };
+  const html = app.toolsCardHtml(r);
+  assert.ok(html.includes("Tools needed"));
+  assert.ok(html.includes("Essential"));
+  assert.ok(html.includes("Alternative: Freezer bag"));
+  assert.ok(html.includes("Note: Less precise edges"));
+  assert.ok(html.includes("No alternative"));
+  assert.ok(html.includes("Reason: A nonstick pan prevents"));
+  assert.ok(html.includes("Inferred"));
+  assert.equal(app.toolsCardHtml({ title: "old recipe" }), "");
+  assert.deepEqual(app.stepToolsFor(r.tools, { title: "Decorate", action: "Use Piping bag to pipe cream" }).map(t => t.name), ["Piping bag"]);
+  assert.ok(app.stepToolsHtml(r, { action: "Bake in Chiffon pan" }).includes("Tools for this step"));
+  app.setLanguage("zh");
+});
+
 test("跟做模式辅助片段切 en 后输出英文 UI 文案", () => {
   app.setLanguage("en");
   assert.ok(app.paramsHtml({ heat: "medium", time: "3分钟", cue: "golden" }).includes("Heat"));

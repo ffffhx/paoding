@@ -46,6 +46,7 @@ const API = {
   term: (term) => F('/api/term', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ term }) }).then(j),
   troubleshoot: (recipeId, stepIndex, problem) => F('/api/troubleshoot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, problem }) }).then(j),
   nutrition: (recipeId) => F('/api/nutrition', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
+  tools: (recipeId) => F('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
   overview: (recipeId) => F('/api/overview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
   explainRecipe: (recipeId, depth) => F('/api/explain-recipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, depth }) }).then(j),
   userdataGet: () => F('/api/userdata').then(r => r.json()).catch(() => ({ rev: 0 })),
@@ -520,6 +521,34 @@ function nutritionHtml(r, factor) {
       ${item(tr('nutrition.sodium_mg'), scaledNutritionValue(p.sodium_mg, f), ' mg')}
     </div>
     ${n.disclaimer ? `<div class="nutrition-note">${esc(n.disclaimer)}</div>` : ''}</div>`;
+}
+function hasOwnToolsField(r) {
+  return !!r && Object.prototype.hasOwnProperty.call(r, 'tools');
+}
+function recipeTools(r) {
+  return Array.isArray(r?.tools) ? r.tools.filter(t => t && String(t.name || '').trim()) : [];
+}
+function toolSubstituteHtml(t) {
+  const note = String(t.substitute_note || '').trim();
+  if (t.substitute) {
+    return `<div class="tool-sub">${esc(tr('detail.tools.substitute', { substitute: t.substitute }))}${note ? ` · ${esc(tr('detail.tools.note', { note }))}` : ''}</div>`;
+  }
+  return `<div class="tool-sub no">${esc(tr('detail.tools.noSubstitute'))}${note ? ` · ${esc(tr('detail.tools.noSubstituteReason', { reason: note }))}` : ''}</div>`;
+}
+function toolsCardHtml(r) {
+  if (!hasOwnToolsField(r)) return '';
+  const tools = recipeTools(r);
+  if (!tools.length) return '';
+  return `<div class="tools-card">
+    <div class="tools-title">${esc(tr('detail.tools.title'))}</div>
+    ${tools.map(t => `<div class="tool-row">
+      <div class="tool-main"><b>${esc(t.name)}</b>${t.purpose ? `<span class="tool-purpose">${esc(t.purpose)}</span>` : ''}
+        ${t.essential ? `<span class="tool-badge need">${esc(tr('detail.tools.essential'))}</span>` : ''}
+        ${t.inferred ? `<span class="tool-badge">${esc(tr('detail.tools.inferred'))}</span>` : ''}
+      </div>
+      ${toolSubstituteHtml(t)}
+    </div>`).join('')}
+  </div>`;
 }
 function hasRecipeWhy(r) {
   return (r.steps || []).some(s => s.why && (s.why.reason || s.why.if_not || s.why.cue));
@@ -1242,6 +1271,7 @@ function openDetail(r, focusStepIndex = null) {
     <div class="no-print" style="display:flex;gap:8px;padding:8px 16px 0;flex-wrap:wrap">
       <button class="btn ghost sm" id="btnOverview">${esc(tr('detail.overview'))}</button>
       <button class="btn ghost sm" id="btnNutri">${esc(tr('detail.nutrition'))}</button>
+      ${!hasOwnToolsField(r) ? `<button class="btn ghost sm" id="btnTools">${esc(tr('detail.tools.addAi'))}</button>` : ''}
       <button class="btn ghost sm" id="btnTags">${esc(tr('detail.tags'))}</button>
       <button class="btn ghost sm" id="btnExport2">${esc(tr('detail.export'))}</button>
     </div>
@@ -1250,6 +1280,7 @@ function openDetail(r, focusStepIndex = null) {
     <div id="nutritionBox"></div>
     <div class="sec-title">${esc(tr('detail.ingredients'))} <span class="act" id="addShop">${esc(tr('detail.addShopping'))}</span></div>
     <div class="ing" id="ingBox"></div>
+    <div id="toolsBox">${toolsCardHtml(r)}</div>
     <div class="sec-title">${esc(tr('detail.stepsOverview'))}</div>
     <div id="steps"></div>
     <div class="sec-title no-print">${esc(tr('detail.notes'))}</div>
@@ -1322,7 +1353,11 @@ function openDetail(r, focusStepIndex = null) {
   function renderNutrition() {
     p.querySelector('#nutritionBox').innerHTML = nutritionHtml(r, factor);
   }
+  function renderTools() {
+    p.querySelector('#toolsBox').innerHTML = toolsCardHtml(r);
+  }
   renderNutrition();
+  renderTools();
   const aiCall = async (btn, fn, title, key) => {
     btn.disabled = true;
     let node = aiBox.querySelector(`[data-ai="${key}"]`);
@@ -1358,6 +1393,22 @@ function openDetail(r, focusStepIndex = null) {
     } catch (err) {
       btn.disabled = false; btn.textContent = tr('detail.imported.explain');
       toast(tr('detail.explainFailed', { message: err.message }));
+    }
+  };
+  const toolsBtn = p.querySelector('#btnTools');
+  if (toolsBtn) toolsBtn.onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true; btn.textContent = tr('detail.tools.adding');
+    try {
+      const data = await API.tools(r.id);
+      Object.assign(r, data.recipe || { tools: data.tools || [] });
+      recipes = recipes.map(x => x.id === r.id ? r : x);
+      renderTools();
+      btn.remove();
+      toast(data.cached ? tr('detail.toolsCached') : tr('detail.toolsGenerated'));
+    } catch (err) {
+      btn.disabled = false; btn.textContent = tr('detail.tools.addAi');
+      toast(tr('detail.toolsFailed', { message: err.message }));
     }
   };
   p.querySelector('#btnNutri').onclick = async (e) => {
@@ -1419,9 +1470,11 @@ function finishCook(r) {
 /* ================= 编辑菜谱（修正 AI 的错误）================= */
 function openEdit(r) {
   const d = JSON.parse(JSON.stringify(r)); // 深拷贝，取消即丢弃
+  const hadTools = hasOwnToolsField(r);
   d.ingredients = Array.isArray(d.ingredients) ? d.ingredients : [];
   d.steps = Array.isArray(d.steps) ? d.steps : [];
   d.tags = Array.isArray(d.tags) ? d.tags : [];
+  d.tools = Array.isArray(d.tools) ? d.tools : [];
   const fld = 'border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;font-size:15px;color:var(--ink);font-family:inherit;width:100%';
   const p = el(`<div class="page">
     <div class="topbar">
@@ -1452,6 +1505,9 @@ function openEdit(r) {
     <div class="sec-title">${esc(tr('detail.ingredients'))} <span class="act" id="eAddIng">${esc(tr('edit.ingredients.add'))}</span></div>
     <div id="eIng" style="padding:0 16px;display:flex;flex-direction:column;gap:6px"></div>
 
+    <div class="sec-title">${esc(tr('detail.tools.title'))} <span class="act" id="eAddTool">${esc(tr('edit.tools.add'))}</span></div>
+    <div id="eTools" style="padding:0 16px;display:flex;flex-direction:column;gap:8px"></div>
+
     <div class="sec-title">${esc(tr('detail.stepsOverview'))} <span class="act" id="eAddStep">${esc(tr('edit.steps.add'))}</span></div>
     <div id="eSteps" style="padding:0 16px;display:flex;flex-direction:column;gap:14px"></div>
 
@@ -1474,6 +1530,43 @@ function openEdit(r) {
       row.querySelector('.fUp').onclick = () => { d.ingredients = moveItem(d.ingredients, idx, idx - 1); renderIng(); };
       row.querySelector('.fDown').onclick = () => { d.ingredients = moveItem(d.ingredients, idx, idx + 1); renderIng(); };
       row.querySelector('.fDel').onclick = async () => { if (!(await confirmModal(tr('edit.deleteIngredient.confirm'), tr('common.delete')))) return; d.ingredients = removeItem(d.ingredients, idx); renderIng(); };
+    });
+  }
+  function renderToolsEdit() {
+    const box = p.querySelector('#eTools');
+    box.innerHTML = d.tools.map((t, idx) => `
+      <div class="stepmini" style="padding:12px;margin:0" data-t="${idx}">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+          <input type="text" class="tName" placeholder="${esc(tr('edit.toolName.placeholder'))}" value="${esc(t.name || '')}" style="${fld};flex:2">
+          <input type="text" class="tPurpose" placeholder="${esc(tr('edit.toolPurpose.placeholder'))}" value="${esc(t.purpose || '')}" style="${fld};flex:3;min-width:0">
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+          <input type="text" class="tSub" placeholder="${esc(tr('edit.toolSubstitute.placeholder'))}" value="${esc(t.substitute || '')}" style="${fld};flex:1;min-width:0">
+          <input type="text" class="tNote" placeholder="${esc(tr('edit.toolNote.placeholder'))}" value="${esc(t.substitute_note || '')}" style="${fld};flex:1;min-width:0">
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <span style="display:flex;gap:12px;color:var(--muted);font-size:13px;flex-wrap:wrap">
+            <label><input type="checkbox" class="tEssential" ${t.essential ? 'checked' : ''}> ${esc(tr('edit.toolEssential'))}</label>
+            <label><input type="checkbox" class="tInferred" ${t.inferred ? 'checked' : ''}> ${esc(tr('edit.toolInferred'))}</label>
+          </span>
+          <span style="display:flex;gap:2px">
+            <button class="iconbtn tUp" title="${esc(tr('common.moveUp'))}" ${idx === 0 ? 'disabled' : ''}>↑</button>
+            <button class="iconbtn tDown" title="${esc(tr('common.moveDown'))}" ${idx === d.tools.length - 1 ? 'disabled' : ''}>↓</button>
+            <button class="iconbtn tDel" title="${esc(tr('common.delete'))}">🗑</button>
+          </span>
+        </div>
+      </div>`).join('') || `<div style="color:var(--muted);font-size:13px">${esc(tr('edit.noTools'))}</div>`;
+    box.querySelectorAll('[data-t]').forEach(row => {
+      const idx = +row.dataset.t, t = d.tools[idx];
+      row.querySelector('.tName').oninput = (e) => t.name = e.target.value;
+      row.querySelector('.tPurpose').oninput = (e) => t.purpose = e.target.value;
+      row.querySelector('.tSub').oninput = (e) => t.substitute = e.target.value;
+      row.querySelector('.tNote').oninput = (e) => t.substitute_note = e.target.value;
+      row.querySelector('.tEssential').onchange = (e) => t.essential = e.target.checked;
+      row.querySelector('.tInferred').onchange = (e) => t.inferred = e.target.checked;
+      row.querySelector('.tDel').onclick = async () => { if (!(await confirmModal(tr('edit.deleteTool.confirm'), tr('common.delete')))) return; d.tools = removeItem(d.tools, idx); renderToolsEdit(); };
+      row.querySelector('.tUp').onclick = () => { d.tools = moveItem(d.tools, idx, idx - 1); renderToolsEdit(); };
+      row.querySelector('.tDown').onclick = () => { d.tools = moveItem(d.tools, idx, idx + 1); renderToolsEdit(); };
     });
   }
   function renderSteps() {
@@ -1508,8 +1601,9 @@ function openEdit(r) {
       row.querySelector('.sDown').onclick = () => { d.steps = moveItem(d.steps, idx, idx + 1); renderSteps(); };
     });
   }
-  renderIng(); renderSteps();
+  renderIng(); renderToolsEdit(); renderSteps();
   p.querySelector('#eAddIng').onclick = () => { d.ingredients = insertItem(d.ingredients, d.ingredients.length, { name: '', amount: '', note: '' }); renderIng(); };
+  p.querySelector('#eAddTool').onclick = () => { d.tools = insertItem(d.tools, d.tools.length, { name: '', purpose: '', essential: true, substitute: null, substitute_note: '', inferred: false }); renderToolsEdit(); };
   p.querySelector('#eAddStep').onclick = () => { d.steps = insertItem(d.steps, d.steps.length, { title: '', action: '', params: {}, why: {} }); renderSteps(); };
 
   const close = () => p.remove();
@@ -1524,6 +1618,14 @@ function openEdit(r) {
     d.cuisine = p.querySelector('#eCuisine').value.trim() || null;
     d.tags = parseTagsText(p.querySelector('#eTags').value);
     d.ingredients = d.ingredients.filter(i => (i.name || '').trim());
+    d.tools = d.tools.filter(t => (t.name || '').trim()).map(t => ({
+      name: String(t.name || '').trim(),
+      purpose: String(t.purpose || '').trim(),
+      essential: !!t.essential,
+      substitute: String(t.substitute || '').trim() || null,
+      substitute_note: String(t.substitute_note || '').trim(),
+      inferred: !!t.inferred,
+    }));
     // 只填了「为什么」而没写标题/做法的步骤也保留，别把用户输入的讲解静默丢掉
     d.steps = d.steps.filter(s => (s.title || s.action || s.why?.reason || s.why?.if_not || s.why?.cue || '').trim());
     d.steps.forEach((s, i) => s.index = i + 1);
@@ -1535,6 +1637,7 @@ function openEdit(r) {
       saveMeta();
     }
     const patch = { title: d.title, servings: d.servings, total_time_min: d.total_time_min, difficulty: d.difficulty, cuisine: d.cuisine, tags: d.tags, ingredients: d.ingredients, steps: d.steps };
+    if (hadTools || d.tools.length) patch.tools = d.tools;
     try {
       const res = await F('/api/recipes/' + encodeURIComponent(r.id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || ('HTTP ' + res.status));
@@ -1665,7 +1768,7 @@ async function openCook(r) {
         <div class="action">${richText(s.action || '')}</div>
         ${s.image ? `<img class="stepimg" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="${esc(tr('cook.stepImageAlt'))}" loading="lazy" onerror="this.remove()">` : ''}
         ${segUrl ? `<a class="step-video-link cook-src" href="${esc(segUrl)}" target="_blank" rel="noopener">${esc(tr('detail.watchSegment'))}</a>` : ''}
-        ${paramsHtml(s.params)}${usedIngsHtml(r, s)}${timerHtml(s.params)}
+        ${paramsHtml(s.params)}${usedIngsHtml(r, s)}${stepToolsHtml(r, s)}${timerHtml(s.params)}
         ${(w.reason || w.if_not || w.cue) ? `<div class="why"><div class="why-hd"><span>${esc(tr('cook.whyTitle'))}</span>${warn}</div>
           ${w.reason ? `<p><span class="lbl">${esc(tr('cook.principle'))}</span>${richText(w.reason)}</p>` : ''}
           ${w.if_not ? `<p><span class="lbl">${esc(tr('why.ifNot'))}</span>${esc(w.if_not)}</p>` : ''}
@@ -1746,6 +1849,15 @@ function usedIngsHtml(r, s) {
   if (!used.length) return '';
   return `<div class="used-ings">${esc(tr('cook.usedIngredients'))}${used.map(i =>
     `<span class="uing">${esc(i.name)}${i.amount && !['视频未明确', '适量'].includes(i.amount) ? ' <b>' + esc(i.amount) + '</b>' : ''}</span>`).join('')}</div>`;
+}
+function stepToolsFor(tools, s) {
+  const text = `${s?.title || ''} ${s?.action || ''}`;
+  return recipeTools({ tools }).filter(t => text.includes(t.name));
+}
+function stepToolsHtml(r, s) {
+  const used = stepToolsFor(r?.tools, s);
+  if (!used.length) return '';
+  return `<div class="used-tools">${esc(tr('cook.tools.used'))}${used.map(t => `<span class="utool">${esc(t.name)}</span>`).join('')}</div>`;
 }
 function paramsHtml(p) {
   if (!p) return '';

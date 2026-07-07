@@ -8,6 +8,7 @@ import { loadConfig, loadEnvFiles } from "../src/config.mjs";
 import { processVideo, processText, processImages } from "../src/pipeline.mjs";
 import { chatJSON, chatText } from "../src/llm.mjs";
 import { DEPTHS, explainSteps } from "../src/explain.mjs";
+import { normalizeTools } from "../src/chef.mjs";
 import { assertPublicUrl } from "../src/urlSafety.mjs";
 import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 import { FileJobStore, createJobQueue, createJobRecord, publicJob, TERMINAL_JOB_STATUSES } from "../src/jobs.mjs";
@@ -478,7 +479,7 @@ const llmLimiter = createSlidingWindowRateLimiter({
 const LLM_ENDPOINTS = new Set([
   "/api/parse-url", "/api/parse-text", "/api/parse-file",
   "/api/parse-images",
-  "/api/ask", "/api/substitute", "/api/term", "/api/troubleshoot", "/api/nutrition", "/api/overview", "/api/explain-recipe", "/api/import-recipe",
+  "/api/ask", "/api/substitute", "/api/term", "/api/troubleshoot", "/api/nutrition", "/api/tools", "/api/overview", "/api/explain-recipe", "/api/import-recipe",
 ]);
 const LIMITED_READ_ENDPOINTS = new Set([
   "/api/techniques",
@@ -589,6 +590,43 @@ async function estimateNutrition(r) {
 步骤概要：${(r.steps || []).map((s) => `${s.index || ""}.${s.title || ""}${s.action || ""}`).join(" ")}`,
   });
   return normalizeNutrition(raw);
+}
+function recipeToolContext(r) {
+  return [
+    `菜名：${r.title || "未知"}`,
+    `标签：${(r.tags || []).join("、") || "无"}`,
+    `菜系：${r.cuisine || "未知"}`,
+    `食材：${(r.ingredients || []).map((i) => `${i.name || ""}${i.amount || ""}${i.note ? `（${i.note}）` : ""}`).filter(Boolean).join("、") || "未列出"}`,
+    `步骤：${(r.steps || []).map((s) => `${s.index || ""}.${s.title || ""} ${s.action || ""}`).join("\n")}`,
+  ].join("\n");
+}
+async function inferRecipeTools(r) {
+  const raw = await chatJSON(config.llm, {
+    temperature: 0.2,
+    system: llmSystem(`你是严谨的烘焙/烹饪工具审核员。请只输出 JSON 对象，按 schema 为菜谱补齐工具/器具清单。
+规则：
+- 所有条目的 inferred 必须为 true，因为这是基于已保存菜谱的后补推断。
+- 甜品/烘焙类（蛋糕、饼干、慕斯、塔派、面包、裱花、巧克力、糖艺等）必须完整列出关键工具：打发器/打蛋器、裱花袋和裱花嘴、抹刀/刮刀、模具（若材料中有尺寸就写进 name 或 purpose）、油纸、厨房秤、温度计、烤箱等。
+- 有替代品时 substitute 写替代方案，substitute_note 写代价/注意点；没有替代品时 substitute 必须为 null，substitute_note 必须写清楚不能替代的原因。
+- 非甜品只列非常规厨具，常见锅碗瓢盆不要列。
+- 拿不准宁可不列，不要编造视频/菜谱里没有依据的具体尺寸或型号。`),
+    user: `schema:
+{
+  "tools": [
+    {
+      "name": "工具名",
+      "purpose": "用途",
+      "essential": true,
+      "substitute": "替代方案；无替代为 null",
+      "substitute_note": "替代代价/注意点；无替代则写原因",
+      "inferred": true
+    }
+  ]
+}
+
+${recipeToolContext(r)}`,
+  });
+  return normalizeTools(raw?.tools || raw).map((tool) => ({ ...tool, inferred: true }));
 }
 function aggregateTechniques() {
   const groups = new Map();
@@ -965,6 +1003,19 @@ const AI_ENDPOINTS = {
       delete cur.id;
       writeRecipeFile(recipeId, cur);
       return { body: { nutrition, answer: nutritionText(nutrition), cached: false } };
+    },
+  },
+  "/api/tools": {
+    handle: async ({ recipeId }) => {
+      const r = loadRecipe(recipeId);
+      if (!r) return { code: 404, body: { error: "菜谱不存在" } };
+      if (Array.isArray(r.tools)) return { body: { ok: true, tools: r.tools, recipe: r, cached: true } };
+      if (!Array.isArray(r.steps) || !r.steps.length) return { code: 400, body: { error: "这道菜没有步骤，无法补工具清单" } };
+      const tools = await inferRecipeTools(r);
+      const id = path.basename(recipeId);
+      const saved = { ...r, tools };
+      writeRecipeFile(id, saved);
+      return { body: { ok: true, tools, recipe: { ...saved, id }, cached: false } };
     },
   },
   "/api/overview": {
