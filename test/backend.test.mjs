@@ -287,7 +287,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
-import { normalizeSourceTime, clampStepTimes, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, inferBakingToolFallback } from "../src/chef.mjs";
+import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, inferBakingToolFallback } from "../src/chef.mjs";
 import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
@@ -331,6 +331,23 @@ test("normalizeSourceTime 规整时间段", () => {
   assert.equal(normalizeSourceTime([1]), null);
   assert.equal(normalizeSourceTime(["a", "b"]), null);
   assert.equal(normalizeSourceTime([-5, 10]), null);
+});
+
+test("sourceTimeCoverage 统计步骤时间戳覆盖率", () => {
+  assert.deepEqual(sourceTimeCoverage([
+    { index: 1, source_time: [0, 10] },
+    { index: 2 },
+    { index: 3, source_time: [20, 30] },
+  ]), {
+    steps_with_source_time: 2,
+    total_steps: 3,
+    summary: "2/3 步有时间戳",
+  });
+  assert.deepEqual(sourceTimeCoverage(null), {
+    steps_with_source_time: 0,
+    total_steps: 0,
+    summary: "0/0 步有时间戳",
+  });
 });
 
 test("normalizeTools 清洗工具清单并保留替代说明", () => {

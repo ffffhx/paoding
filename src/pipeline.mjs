@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { acquire } from "./download.mjs";
 import { transcribe, formatTimedTranscript } from "./transcribe.mjs";
-import { structureRecipe, clampStepTimes } from "./chef.mjs";
+import { structureRecipe, clampStepTimes, sourceTimeCoverage } from "./chef.mjs";
 import { explainSteps } from "./explain.mjs";
 import { toMarkdown } from "./render.mjs";
 import { fetchArticleText } from "./fetchText.mjs";
@@ -65,6 +65,8 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
     const recipe = await structureRecipe(config.llm, { transcript: llmTranscript, meta, signal });
     // 模型偶尔把 source_time 外推超过片长 → 用转写真实的最大时间戳硬校验
     if (segments.length) clampStepTimes(recipe.steps, Math.max(...segments.map((s) => s.end)));
+    recipe.source_time_coverage = sourceTimeCoverage(recipe.steps);
+    console.log(`  · source_time 覆盖率：${recipe.source_time_coverage.summary}`);
     emit("structure", 80, "步骤已生成");
 
     step(4, `逐步生成「为什么」讲解（深度：${config.depth}）…`);
