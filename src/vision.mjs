@@ -43,8 +43,8 @@ function spreadTimes(start, end, count, minGap = 1, { includeEnd = false } = {})
 // 很多短视频会先口播几句，10-30 秒才给整屏配方表；片尾窗口为最后 20%，普通长视频至少覆盖最后 30 秒。
 export function recipeCardCapturePoints(duration, {
   max = 8,
-  headCount = 3,
-  tailCount = 5,
+  headCount = 5,
+  tailCount = 3,
   headSeconds = 30,
   tailRatio = 0.2,
   minTailSeconds = 30,
@@ -135,7 +135,7 @@ export async function extractFrames(videoPath, { max = 20, duration = null, sign
 }
 
 export const VISION_TRANSCRIPT_BATCH_SIZE = 3;
-export const VISION_TRANSCRIPT_HEAD_SINGLE_FRAMES = 3;
+export const VISION_TRANSCRIPT_HEAD_SINGLE_FRAMES = 5;
 
 const RECIPE_CARD_MARKER = "【画面配方卡】";
 const VISION_AMOUNT_RE = /\d+(?:\.\d+)?\s*(?:g|克|kg|千克|ml|毫升|L|升|个|只|枚|颗|勺|匙|杯|份)/gi;
