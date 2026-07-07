@@ -1,4 +1,5 @@
 // OpenAI 兼容的 chat/completions 客户端 —— 只用内置 fetch，无第三方依赖。
+import { fetchWithRetry } from "./fetchRetry.mjs";
 
 export async function chatJSON(llm, { system, user, temperature = 0.3, signal, _retry = true }) {
   const body = {
@@ -11,7 +12,7 @@ export async function chatJSON(llm, { system, user, temperature = 0.3, signal, _
     ],
   };
 
-  const res = await fetch(`${llm.baseUrl}/chat/completions`, {
+  const res = await fetchWithRetry(`${llm.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -45,7 +46,7 @@ export async function chatJSON(llm, { system, user, temperature = 0.3, signal, _
 
 // 自由文本对话（追问、食材替代等），不强制 JSON。
 export async function chatText(llm, { system, user, temperature = 0.5, signal }) {
-  const res = await fetch(`${llm.baseUrl}/chat/completions`, {
+  const res = await fetchWithRetry(`${llm.baseUrl}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${llm.apiKey}` },
     body: JSON.stringify({
@@ -68,11 +69,19 @@ export async function chatText(llm, { system, user, temperature = 0.5, signal })
 
 // 视觉对话：把若干截图（base64 jpg）连同提示喂给视觉模型，读屏上文字与画面观察。
 export async function chatVision(vision, { system, user, images = [], temperature = 0.2, signal }) {
+  const imageUrl = (img) => {
+    if (img && typeof img === "object") {
+      const mime = img.mime || "image/jpeg";
+      const b64 = img.b64 || img.base64 || "";
+      return `data:${mime};base64,${b64}`;
+    }
+    return `data:image/jpeg;base64,${img}`;
+  };
   const content = [
     { type: "text", text: user },
-    ...images.map((b64) => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } })),
+    ...images.map((img) => ({ type: "image_url", image_url: { url: imageUrl(img) } })),
   ];
-  const res = await fetch(`${vision.baseUrl}/chat/completions`, {
+  const res = await fetchWithRetry(`${vision.baseUrl}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${vision.apiKey}` },
     body: JSON.stringify({

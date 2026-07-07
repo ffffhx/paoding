@@ -1,0 +1,47 @@
+services:
+  paoding:
+    build: .
+    ports:
+      - "${PAODING_PORT:-4177}:4177"
+    environment:
+      PAODING_HOST: 0.0.0.0
+      PAODING_PORT: 4177
+      PAODING_API_TOKEN: "${PAODING_API_TOKEN:?请先在 .env 设置 PAODING_API_TOKEN}"
+      PAODING_CORS_ORIGINS: "${PAODING_CORS_ORIGINS:-}"
+      PAODING_LLM_BASE_URL: "${PAODING_LLM_BASE_URL:-http://host.docker.internal:11434/v1}"
+      PAODING_LLM_API_KEY: "${PAODING_LLM_API_KEY:-ollama}"
+      PAODING_LLM_MODEL: "${PAODING_LLM_MODEL:-qwen2.5:14b}"
+      PAODING_ASR_PROVIDER: "${PAODING_ASR_PROVIDER:-local}"
+      PAODING_WHISPER_MODEL: "${PAODING_WHISPER_MODEL:-/data/models/ggml-large-v3-turbo.bin}"
+      PAODING_WHISPER_BIN: "${PAODING_WHISPER_BIN:-whisper-cli}"
+      PAODING_RECIPES_DIR: /data/recipes
+      PAODING_USERDATA_FILE: /data/paoding-userdata.json
+      PAODING_JOB_TIMEOUT_MIN: "${PAODING_JOB_TIMEOUT_MIN:-20}"
+      PAODING_MAX_JOBS: "${PAODING_MAX_JOBS:-2}"
+      PAODING_MAX_QUEUE: "${PAODING_MAX_QUEUE:-10}"
+      PAODING_MAX_IMPORT: "${PAODING_MAX_IMPORT:-5000}"
+      PAODING_COOKIES_FROM_BROWSER: "${PAODING_COOKIES_FROM_BROWSER:-}"
+      PAODING_VISION_MODEL: "${PAODING_VISION_MODEL:-}"
+      PAODING_VISION_BASE_URL: "${PAODING_VISION_BASE_URL:-}"
+      PAODING_VISION_API_KEY: "${PAODING_VISION_API_KEY:-}"
+      PAODING_VISION_MAX_FRAMES: "${PAODING_VISION_MAX_FRAMES:-20}"
+    volumes:
+      - ./recipes:/data/recipes
+      - ./models:/data/models
+      - paoding-userdata:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  paoding-userdata:
+  ollama:

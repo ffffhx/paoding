@@ -2,9 +2,20 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { assertPublicUrl } from "./urlSafety.mjs";
 
 // 运行子进程；onData(chunk) 用于实时解析进度（stdout+stderr 都喂过去）。
 // signal：AbortSignal，任务超时时用来强杀卡死的子进程（spawn 随 signal abort 杀 child）。
+export function formatProcessError(cmd, code, stderr = "") {
+  const err = String(stderr || "");
+  let message = `${cmd} 退出码 ${code}${err ? `：${err.slice(-400)}` : ""}`;
+  const isYtdlp = /(^|[/\\])yt-dlp(?:\.exe)?$/i.test(cmd) || /yt-dlp/i.test(path.basename(cmd));
+  if (isYtdlp && /HTTP Error 412|Precondition Failed/i.test(err)) {
+    message += "。B站返回 412 反爬限制：请确认已登录浏览器，并设置 PAODING_COOKIES_FROM_BROWSER=chrome 后重试；若已设置，可能是浏览器 cookies 无法被 yt-dlp 解密或登录态失效。";
+  }
+  return message;
+}
+
 function run(cmd, args, { capture = false, onData, signal } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], signal });
@@ -21,12 +32,20 @@ function run(cmd, args, { capture = false, onData, signal } = {}) {
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve(out);
-      else reject(new Error(`${cmd} 退出码 ${code}${err ? `：${err.slice(-400)}` : ""}`));
+      else reject(new Error(formatProcessError(cmd, code, err)));
     });
   });
 }
 
 async function has(cmd) {
+  if (path.isAbsolute(cmd) || cmd.includes(path.sep)) {
+    try {
+      fs.accessSync(cmd, fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   try {
     await run("which", [cmd], { capture: true });
     return true;
@@ -36,6 +55,14 @@ async function has(cmd) {
 }
 
 export const isUrl = (s) => /^https?:\/\//i.test(s);
+
+export function resolveYtdlpBin(ytdlp = {}) {
+  return ytdlp.bin || ytdlp.ytdlpBin || process.env.PAODING_YTDLP_BIN || "yt-dlp";
+}
+
+export function resolveFfmpegBin(ytdlp = {}) {
+  return ytdlp.ffmpegBin || process.env.PAODING_FFMPEG_BIN || "ffmpeg";
+}
 
 // 反爬相关的 yt-dlp 公共参数：UA + 站点 Referer + 可选浏览器 cookie。
 export function ytdlpArgs(input, ytdlp = {}) {
@@ -52,8 +79,11 @@ export function ytdlpArgs(input, ytdlp = {}) {
 // 输入：URL 或本地视频路径。onProgress({pct,message}) 报告 0~100 的获取进度。
 // wantVideo=true 时下载/保留视频文件（供视觉抽帧），并在返回里带 videoPath。
 export async function acquire(input, ytdlp = {}, onProgress = () => {}, { wantVideo = false, signal } = {}) {
-  if (!(await has("ffmpeg"))) {
-    throw new Error("未找到 ffmpeg，请先安装：brew install ffmpeg");
+  const ffmpeg = resolveFfmpegBin(ytdlp);
+  const ytdlpBin = resolveYtdlpBin(ytdlp);
+
+  if (!(await has(ffmpeg))) {
+    throw new Error(`未找到 ffmpeg（${ffmpeg}），请先安装：brew install ffmpeg`);
   }
 
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-"));
@@ -64,14 +94,15 @@ export async function acquire(input, ytdlp = {}, onProgress = () => {}, { wantVi
 
   try {
   if (isUrl(input)) {
-    if (!(await has("yt-dlp"))) {
+    await assertPublicUrl(input);
+    if (!(await has(ytdlpBin))) {
       cleanup();
-      throw new Error("未找到 yt-dlp（解析链接需要它）：brew install yt-dlp");
+      throw new Error(`未找到 yt-dlp（${ytdlpBin}，解析链接需要它）：brew install yt-dlp`);
     }
     const common = ytdlpArgs(input, ytdlp);
     onProgress({ pct: 3, message: "读取视频信息…" });
     try {
-      const json = await run("yt-dlp", ["-j", ...common, input], { capture: true, signal });
+      const json = await run(ytdlpBin, ["-j", ...common, input], { capture: true, signal });
       const info = JSON.parse(json);
       meta = { title: info.title || "", description: info.description || "", duration: info.duration ?? null };
     } catch (e) {
@@ -80,7 +111,7 @@ export async function acquire(input, ytdlp = {}, onProgress = () => {}, { wantVi
     if (wantVideo) {
       onProgress({ pct: 8, message: `下载视频${meta.title ? "：" + meta.title : ""}` });
       const tmpl = path.join(workDir, "video.%(ext)s");
-      await run("yt-dlp", ["-f", "bv*[height<=720]+ba/b[height<=720]/best", "--merge-output-format", "mp4", "--no-playlist", ...common, "-o", tmpl, input], {
+      await run(ytdlpBin, ["-f", "bv*[height<=720]+ba/b[height<=720]/best", "--merge-output-format", "mp4", "--no-playlist", ...common, "-o", tmpl, input], {
         signal,
         onData: (s) => { const m = s.match(/(\d+(?:\.\d+)?)%\s+of/); if (m) onProgress({ pct: 8 + Math.min(90, +m[1]) * 0.6, message: "下载视频…" }); },
       });
@@ -90,7 +121,7 @@ export async function acquire(input, ytdlp = {}, onProgress = () => {}, { wantVi
     } else {
       onProgress({ pct: 8, message: `下载音频${meta.title ? "：" + meta.title : ""}` });
       const tmpl = path.join(workDir, "audio.%(ext)s");
-      await run("yt-dlp", ["-x", "--audio-format", "mp3", "--no-playlist", ...common, "-o", tmpl, input], {
+      await run(ytdlpBin, ["-x", "--audio-format", "mp3", "--no-playlist", ...common, "-o", tmpl, input], {
         signal,
         onData: (s) => { const m = s.match(/(\d+(?:\.\d+)?)%\s+of/); if (m) onProgress({ pct: 8 + Math.min(90, +m[1]) * 0.8, message: "下载音频…" }); },
       });
@@ -110,7 +141,7 @@ export async function acquire(input, ytdlp = {}, onProgress = () => {}, { wantVi
 
   onProgress({ pct: 88, message: "抽取音频轨…" });
   const audioPath = path.join(workDir, "asr.mp3");
-  await run("ffmpeg", ["-y", "-i", sourceMedia, "-ac", "1", "-ar", "16000", "-b:a", "64k", "-vn", audioPath], { signal });
+  await run(ffmpeg, ["-y", "-i", sourceMedia, "-ac", "1", "-ar", "16000", "-b:a", "64k", "-vn", audioPath], { signal });
   onProgress({ pct: 100, message: "音频就绪" });
 
   return { audioPath, videoPath, meta, cleanup };

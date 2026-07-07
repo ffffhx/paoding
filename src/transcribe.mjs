@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fetchWithRetry } from "./fetchRetry.mjs";
 
 // 支持两种 ASR：
 //   provider=local  → 本地 whisper.cpp（whisper-cli），免费离线，Mac 首选
@@ -40,19 +41,53 @@ export function formatTimedTranscript(segments) {
 }
 
 // ---- 本地 whisper.cpp ----
-function transcribeLocal(asr, audioPath, onProgress = () => {}, signal) {
-  return new Promise((resolve, reject) => {
-    const bin = asr.whisperBin || "whisper-cli";
-    if (!asr.whisperModel || !fs.existsSync(asr.whisperModel)) {
-      return reject(
-        new Error(
-          `未找到 whisper 模型文件（PAODING_WHISPER_MODEL=${asr.whisperModel || "未设置"}）。\n` +
-            "  下载示例：见 README「全本地模式」。",
-        ),
-      );
+function resolveWhisperBin(asr = {}) {
+  return asr.whisperBin || process.env.PAODING_WHISPER_BIN || "whisper-cli";
+}
+
+function resolveFfmpegBin(asr = {}) {
+  return asr.ffmpegBin || process.env.PAODING_FFMPEG_BIN || "ffmpeg";
+}
+
+async function transcribeLocal(asr, audioPath, onProgress = () => {}, signal) {
+  const bin = resolveWhisperBin(asr);
+  if (!asr.whisperModel || !fs.existsSync(asr.whisperModel)) {
+    throw new Error(
+      `未找到 whisper 模型文件（PAODING_WHISPER_MODEL=${asr.whisperModel || "未设置"}）。\n` +
+        "  下载示例：见 README「全本地模式」。",
+    );
+  }
+
+  try {
+    return await runWhisperLocal(bin, asr, audioPath, onProgress, signal, { noGpu: !!asr.whisperNoGpu });
+  } catch (e) {
+    if (!asr.whisperNoGpu && isWhisperGpuFailure(e)) {
+      onProgress({ pct: 1, message: "语音转文字…（GPU 不可用，改用 CPU）" });
+      return runWhisperLocal(bin, asr, audioPath, onProgress, signal, { noGpu: true });
     }
-    const outBase = path.join(os.tmpdir(), `paoding-asr-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
+    throw e;
+  }
+}
+
+function isWhisperGpuFailure(error) {
+  const stderr = String(error?.stderr || "");
+  return (
+    error?.signal === "SIGSEGV" ||
+    error?.code === 139 ||
+    /ggml_metal|Metal|failed to allocate buffer/i.test(stderr)
+  );
+}
+
+function whisperStatus(code, signal) {
+  if (signal) return `信号 ${signal}`;
+  return `退出码 ${code}`;
+}
+
+function runWhisperLocal(bin, asr, audioPath, onProgress = () => {}, signal, { noGpu = false } = {}) {
+  return new Promise((resolve, reject) => {
+    const outBase = path.join(os.tmpdir(), `paoding-asr-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}${noGpu ? "-cpu" : ""}`);
     const args = [
+      ...(noGpu ? ["--no-gpu"] : []),
       "-m", asr.whisperModel,
       "-f", audioPath,
       "-l", asr.lang || "zh",
@@ -69,11 +104,15 @@ function transcribeLocal(asr, audioPath, onProgress = () => {}, signal) {
     child.on("error", (e) =>
       reject(new Error(`调用 ${bin} 失败：${e.message}（brew install whisper-cpp）`)),
     );
-    child.on("close", (code) => {
+    child.on("close", (code, closeSignal) => {
       const jsonPath = `${outBase}.json`;
-      if (code !== 0) {
+      if (code !== 0 || closeSignal) {
         fs.rmSync(jsonPath, { force: true }); // 失败时也清掉可能已半写的输出，别在 tmp 里留垃圾
-        return reject(new Error(`whisper.cpp 退出码 ${code}：${err.slice(0, 400)}`));
+        const e = new Error(`whisper.cpp ${whisperStatus(code, closeSignal)}：${err.slice(-800)}`);
+        e.code = code;
+        e.signal = closeSignal;
+        e.stderr = err;
+        return reject(e);
       }
       try {
         const out = parseWhisperJson(JSON.parse(fs.readFileSync(jsonPath, "utf8")));
@@ -107,7 +146,7 @@ async function transcribeCloud(asr, audioPath, onProgress = () => {}, signal) {
 
   // 超限：切片 → 逐段转写 → 拼接（时间戳平移回全片时间轴）。
   console.warn(`  · 音频约 ${sizeMB.toFixed(1)}MB，超过接口上限，自动按 ${SEG_SECONDS / 60} 分钟分片转写。`);
-  const { chunks, cleanup } = await splitAudio(audioPath, SEG_SECONDS, signal);
+  const { chunks, cleanup } = await splitAudio(asr, audioPath, SEG_SECONDS, signal);
   try {
     const parts = [], segments = [];
     for (let i = 0; i < chunks.length; i++) {
@@ -135,7 +174,7 @@ async function transcribeChunk(asr, filePath, signal, _verbose = true) {
   form.append("prompt", "这是一段中文做菜教学视频，包含食材、用量、火候和步骤。");
   if (_verbose) form.append("response_format", "verbose_json");
 
-  const res = await fetch(`${asr.baseUrl}/audio/transcriptions`, {
+  const res = await fetchWithRetry(`${asr.baseUrl}/audio/transcriptions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${asr.apiKey}` },
     body: form,
@@ -154,10 +193,11 @@ async function transcribeChunk(asr, filePath, signal, _verbose = true) {
 }
 
 // 用 ffmpeg 按 segSeconds 把音频切成多段 mp3；返回有序分片路径 + 清理函数。
-function splitAudio(audioPath, segSeconds, signal) {
+function splitAudio(asr, audioPath, segSeconds, signal) {
   return new Promise((resolve, reject) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-asr-seg-"));
     const cleanup = () => fs.rmSync(dir, { recursive: true, force: true });
+    const ffmpeg = resolveFfmpegBin(asr);
     const pattern = path.join(dir, "chunk-%03d.mp3");
     const args = [
       "-y", "-i", audioPath,
@@ -165,12 +205,12 @@ function splitAudio(audioPath, segSeconds, signal) {
       "-c", "copy", "-reset_timestamps", "1",
       pattern,
     ];
-    const child = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"], signal });
+    const child = spawn(ffmpeg, args, { stdio: ["ignore", "ignore", "pipe"], signal });
     let err = "";
     child.stderr.on("data", (d) => (err += d));
-    child.on("error", (e) => { cleanup(); reject(new Error(`调用 ffmpeg 切片失败：${e.message}`)); });
+    child.on("error", (e) => { cleanup(); reject(new Error(`调用 ffmpeg（${ffmpeg}）切片失败：${e.message}`)); });
     child.on("close", (code) => {
-      if (code !== 0) { cleanup(); return reject(new Error(`ffmpeg 切片退出码 ${code}：${err.slice(-300)}`)); }
+      if (code !== 0) { cleanup(); return reject(new Error(`ffmpeg（${ffmpeg}）切片退出码 ${code}：${err.slice(-300)}`)); }
       const chunks = fs
         .readdirSync(dir)
         .filter((f) => f.startsWith("chunk-") && f.endsWith(".mp3"))
