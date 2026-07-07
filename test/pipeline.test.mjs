@@ -545,6 +545,39 @@ test("processText 将模型跳号步骤重编号为连续顺序", async () => {
   }
 });
 
+test("processText 删除文字来源中模型编造的 source_time", async () => {
+  const llm = await startLlmStub({
+    structuredRecipe: {
+      title: "文字来源时间戳测试菜",
+      servings: "2人份",
+      total_time_min: 20,
+      difficulty: "easy",
+      cuisine: "家常菜",
+      tags: ["测试"],
+      ingredients: [{ name: "鸡蛋", amount: "2个", qty: 2, unit: "个", note: "" }],
+      tools: [],
+      steps: [
+        { index: 1, title: "准备", action: "准备食材。", params: {}, source_time: [0, 10] },
+        { index: 2, title: "完成", action: "炒熟出锅。", params: {}, source_time: [10, 20] },
+      ],
+      source_time_coverage: { steps_with_source_time: 2, total_steps: 2, summary: "2/2 步有时间戳" },
+    },
+  });
+  try {
+    await withIsolatedTmp(async (root) => {
+      const config = createConfig(root, llm.url);
+      const { recipe, files } = await processText("鸡蛋2个。打散后炒熟出锅。", config);
+      assert.ok(recipe.steps.every((s) => s.source_time === undefined));
+      assert.equal(recipe.source_time_coverage, undefined);
+      const saved = JSON.parse(fs.readFileSync(files.json, "utf8"));
+      assert.ok(saved.steps.every((s) => s.source_time === undefined));
+      assert.equal(saved.source_time_coverage, undefined);
+    });
+  } finally {
+    await llm.close();
+  }
+});
+
 test("processText 保留批量制备和单份组装 phase 并落盘", async () => {
   const llm = await startLlmStub({
     structuredRecipe: {

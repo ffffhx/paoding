@@ -188,6 +188,8 @@ export async function processText(input, config, { onProgress = () => {}, signal
 
   emit("structure", 40, "整理成步骤…");
   const recipe = await structureRecipe(config.llm, { transcript: text, meta: { title, description: text.slice(0, 2000) }, signal });
+  for (const step of recipe.steps || []) delete step.source_time;
+  delete recipe.source_time_coverage;
   emit("structure", 60, "步骤已生成");
 
   emit("explain", 65, "逐步生成「为什么」…");
