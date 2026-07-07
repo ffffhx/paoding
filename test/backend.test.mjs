@@ -206,7 +206,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
-import { normalizeSourceTime, clampStepTimes } from "../src/chef.mjs";
+import { normalizeSourceTime, clampStepTimes, normalizeTools } from "../src/chef.mjs";
 import { candidateTimes, clampBbox, jpegSize } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
@@ -250,6 +250,19 @@ test("normalizeSourceTime 规整时间段", () => {
   assert.equal(normalizeSourceTime([1]), null);
   assert.equal(normalizeSourceTime(["a", "b"]), null);
   assert.equal(normalizeSourceTime([-5, 10]), null);
+});
+
+test("normalizeTools 清洗工具清单并保留替代说明", () => {
+  assert.deepEqual(normalizeTools(null), []);
+  assert.deepEqual(normalizeTools([
+    { name: " 裱花袋 ", purpose: "挤奶油", essential: true, substitute: "保鲜袋剪角", substitute_note: "线条不稳定", inferred: false },
+    { name: "戚风模具", purpose: "帮助爬升", essential: "true", substitute: "  ", substitute_note: "防粘模具会影响爬升", inferred: "true" },
+    { name: "", purpose: "无效" },
+    "bad",
+  ]), [
+    { name: "裱花袋", purpose: "挤奶油", essential: true, substitute: "保鲜袋剪角", substitute_note: "线条不稳定", inferred: false },
+    { name: "戚风模具", purpose: "帮助爬升", essential: true, substitute: null, substitute_note: "防粘模具会影响爬升", inferred: true },
+  ]);
 });
 
 test("candidateTimes 段内取样、偏向段末、夹回视频范围", () => {
