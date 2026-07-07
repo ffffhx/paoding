@@ -467,6 +467,46 @@ test("shareRecipeUrl 优先使用远程后端地址", () => {
   assert.equal(app.shareRecipeUrl("红烧肉", { apiBase: "http://192.168.1.5:4177/paoding/", origin: "capacitor://localhost", base: "" }), "http://192.168.1.5:4177/paoding/r/%E7%BA%A2%E7%83%A7%E8%82%89");
 });
 
+test("recipeShareCardLayout 覆盖超长标题、无图和 30+ 食材边界", () => {
+  const recipe = {
+    id: "long",
+    title: "这是一道标题非常非常长需要被折行并且最终带省略号的番茄牛腩煲".repeat(2),
+    ingredients: Array.from({ length: 35 }, (_, i) => ({ name: `食材${i + 1}`, amount: `${i + 1}克` })),
+    steps: Array.from({ length: 9 }, (_, i) => ({ title: `步骤${i + 1}`, action: "处理食材并观察状态变化，避免过度烹调导致口感变差" })),
+  };
+  const layout = app.recipeShareCardLayout(recipe, 1, { shareUrl: "https://cook.example/r/long" });
+  assert.equal(layout.width, 1080);
+  assert.ok(layout.height >= 1440 && layout.height <= 1920);
+  assert.equal(layout.cover.kind, "placeholder");
+  assert.ok(layout.title.lines.length <= 3);
+  assert.ok(layout.title.lines.at(-1).endsWith("…"));
+  const ingredients = Array.from(layout.ingredientSection.columns[0]).concat(Array.from(layout.ingredientSection.columns[1]));
+  assert.equal(ingredients.length, 32);
+  assert.ok(ingredients.at(-1).includes("还有 4 项食材"));
+  assert.equal(layout.stepsSection.lines.length, 7);
+  assert.ok(layout.stepsSection.lines.at(-1).includes("还有 3 步"));
+  assert.equal(layout.footer.url, "https://cook.example/r/long");
+});
+
+test("recipeShareCardLayout 切 en 后使用英文标签并取第一张步骤图", () => {
+  app.setLanguage("en");
+  const layout = app.recipeShareCardLayout({
+    id: "egg",
+    title: "Egg",
+    ingredients: [{ name: "egg", qty: 2, unit: "pcs" }],
+    steps: [
+      { title: "Prep", action: "Beat eggs", image: "first.jpg" },
+      { title: "Cook", action: "Pan fry", image: "second.jpg" },
+    ],
+  }, 1, { shareUrl: "https://cook.example/r/egg" });
+  assert.equal(layout.cover.kind, "image");
+  assert.equal(layout.cover.image, "first.jpg");
+  assert.equal(layout.ingredientSection.label, "Ingredients");
+  assert.equal(layout.stepsSection.label, "Steps");
+  assert.ok(layout.footer.brand.includes("Paoding"));
+  app.setLanguage("zh");
+});
+
 test("filterAndSortRecipes 支持食材 AND 筛选、快捷筛选和排序", () => {
   const list = [
     { id: "a", title: "番茄炒蛋", created_at: "2026-01-03T00:00:00.000Z", total_time: "PT15M", ingredients: [{ name: "番茄" }, { name: "鸡蛋" }], nutrition: { per_serving: { calories_kcal: 1 } } },

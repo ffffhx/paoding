@@ -1979,6 +1979,7 @@ function openDetail(r, focusStepIndex = null) {
       <button class="btn ghost sm" id="btnVariant">${esc(tr('detail.variant.button'))}</button>
       <button class="btn ghost sm" id="btnCookbooks">${esc(tr('cookbooks.detail.button'))}</button>
       <button class="btn ghost sm" id="btnTags">${esc(tr('detail.tags'))}</button>
+      <button class="btn ghost sm" id="btnShareCard">${esc(tr('detail.shareCard'))}</button>
       <button class="btn ghost sm" id="btnExport2">${esc(tr('detail.export'))}</button>
     </div>
     ${variantNoticeHtml(r)}
@@ -2140,6 +2141,7 @@ function openDetail(r, focusStepIndex = null) {
     renderRecipes(); renderFilters();
     close(); openDetail(r);
   });
+  p.querySelector('#btnShareCard').onclick = () => createRecipeShareCard(r, currentFactors());
   const importExplainBtn = p.querySelector('#btnImportExplain');
   if (importExplainBtn) importExplainBtn.onclick = async (e) => {
     const btn = e.currentTarget;
@@ -2515,12 +2517,14 @@ function openExport(r, factor) {
     <div style="display:flex;flex-direction:column;gap:8px">
       <button class="btn ghost" id="xLink">${esc(tr('export.link'))}</button>
       <button class="btn ghost" id="xMd">${esc(tr('export.text'))}</button>
+      <button class="btn ghost" id="xCard">${esc(tr('export.shareCard'))}</button>
       <button class="btn ghost" id="xCook">${esc(tr('export.cook'))}</button>
       <button class="btn ghost" id="xJson">${esc(tr('export.jsonld'))}</button>
     </div>
     <div class="mrow"><button class="btn" id="xClose">${esc(tr('common.close'))}</button></div>`, 'left');
   ov.querySelector('#xLink').onclick = () => { navigator.clipboard?.writeText(shareRecipeUrl(r.id)); toast(tr('export.link.copied')); };
   ov.querySelector('#xMd').onclick = () => { navigator.clipboard?.writeText(recipeToText(r, factor)); toast(tr('export.recipeText.copied')); };
+  ov.querySelector('#xCard').onclick = () => createRecipeShareCard(r, factor);
   ov.querySelector('#xCook').onclick = () => { downloadFile(safe + '.cook', recipeToCooklang(r), 'text/plain;charset=utf-8'); toast(tr('export.cook.downloaded')); };
   ov.querySelector('#xJson').onclick = () => { downloadFile(safe + '.jsonld', JSON.stringify(recipeToSchemaOrg(r), null, 2), 'application/ld+json'); toast(tr('export.jsonld.downloaded')); };
   ov.querySelector('#xClose').onclick = () => ov.remove();
@@ -2529,6 +2533,227 @@ function shareRecipeUrl(recipeId, { apiBase = settings.apiBase, origin = locatio
   const root = String(apiBase || origin || '').replace(/\/+$/, '');
   const prefix = apiBase ? '' : String(base || '').replace(/\/+$/, '');
   return `${root}${prefix}/r/${encodeURIComponent(recipeId)}`;
+}
+function shortShareText(text, maxChars) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  const n = Math.max(1, Number(maxChars) || 1);
+  return s.length <= n ? s : s.slice(0, Math.max(1, n - 1)).trimEnd() + '…';
+}
+function wrapShareText(text, maxChars, maxLines) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  const n = Math.max(4, Number(maxChars) || 12);
+  const limit = Math.max(1, Number(maxLines) || 1);
+  if (!s) return [];
+  const out = [];
+  let rest = s;
+  while (rest && out.length < limit) {
+    if (rest.length <= n) { out.push(rest); rest = ''; break; }
+    let cut = n;
+    const space = rest.slice(0, n + 1).lastIndexOf(' ');
+    if (space >= Math.floor(n * 0.55)) cut = space;
+    out.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest && out.length) {
+    const last = out[out.length - 1];
+    out[out.length - 1] = last.length >= n ? last.slice(0, Math.max(1, n - 1)).trimEnd() + '…' : shortShareText(`${last} ${rest}`, n);
+  }
+  return out.map(line => shortShareText(line, n)).filter(Boolean);
+}
+function shareCardStepImage(r) {
+  return (r?.steps || []).find(s => s?.image) || null;
+}
+function shareCardIngredientText(i, factors) {
+  const name = String(i?.name || '').trim();
+  if (!name) return '';
+  const amount = scaledIngredientAmount(i, factors) || i?.amount || '';
+  return [name, amount].filter(Boolean).join(' ');
+}
+function shareCardStepText(step, index) {
+  const sep = settings.lang === 'en' ? ': ' : '：';
+  const body = [step?.title, step?.action].filter(Boolean).join(sep).trim() || tr('tech.untitledStep');
+  return `${index + 1}. ${shortShareText(body, 42)}`;
+}
+function recipeShareCardLayout(r, factors = 1, opts = {}) {
+  const width = Number(opts.width) || 1080;
+  const minHeight = Number(opts.minHeight) || 1440;
+  const maxHeight = Number(opts.maxHeight) || 1920;
+  const margin = Number(opts.margin) || 72;
+  const inner = width - margin * 2;
+  const firstImage = shareCardStepImage(r);
+  const maxIngredients = Number(opts.maxIngredients) || 32;
+  const maxSteps = Number(opts.maxSteps) || 7;
+  const titleLines = wrapShareText(r?.title || tr('recipe.untitled'), 18, 3);
+  const ingredientTexts = (r?.ingredients || []).map(i => shareCardIngredientText(i, factors)).filter(Boolean);
+  const visibleIngredients = ingredientTexts.slice(0, maxIngredients);
+  if (ingredientTexts.length > maxIngredients && visibleIngredients.length) {
+    visibleIngredients[visibleIngredients.length - 1] = tr('shareCard.moreItems', { count: ingredientTexts.length - maxIngredients + 1 });
+  }
+  const ingredientRows = Math.ceil(visibleIngredients.length / 2);
+  const ingredientColumns = [
+    visibleIngredients.slice(0, ingredientRows),
+    visibleIngredients.slice(ingredientRows),
+  ];
+  const stepTexts = (r?.steps || []).map(shareCardStepText).filter(Boolean);
+  const visibleSteps = stepTexts.slice(0, maxSteps);
+  if (stepTexts.length > maxSteps && visibleSteps.length) {
+    visibleSteps[visibleSteps.length - 1] = tr('shareCard.moreSteps', { count: stepTexts.length - maxSteps + 1 });
+  }
+  let y = margin;
+  const title = { x: margin, y, lineHeight: 58, lines: titleLines };
+  y += Math.max(1, titleLines.length) * title.lineHeight + 24;
+  const cover = { x: margin, y, w: inner, h: 360, kind: firstImage ? 'image' : 'placeholder', image: firstImage?.image || '' };
+  y += cover.h + 38;
+  const ingredientSection = { x: margin, y, label: tr('shareCard.ingredients'), lineHeight: 32, columns: ingredientColumns, total: ingredientTexts.length };
+  y += 30 + Math.max(1, ingredientRows) * ingredientSection.lineHeight + 34;
+  const stepsSection = { x: margin, y, label: tr('shareCard.steps'), lineHeight: 36, lines: visibleSteps, total: stepTexts.length };
+  y += 30 + Math.max(1, visibleSteps.length) * stepsSection.lineHeight + 44;
+  const footer = {
+    x: margin,
+    y,
+    brand: tr('shareCard.footer'),
+    linkLabel: tr('shareCard.linkLabel'),
+    url: opts.shareUrl || '',
+  };
+  const height = Math.min(maxHeight, Math.max(minHeight, y + 120));
+  footer.y = height - 118;
+  return { width, height, margin, inner, title, cover, ingredientSection, stepsSection, footer };
+}
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+function drawImageCover(ctx, img, box) {
+  const scale = Math.max(box.w / img.width, box.h / img.height);
+  const sw = box.w / scale, sh = box.h / scale;
+  const sx = Math.max(0, (img.width - sw) / 2), sy = Math.max(0, (img.height - sh) / 2);
+  ctx.save();
+  roundRectPath(ctx, box.x, box.y, box.w, box.h, 34);
+  ctx.clip();
+  ctx.drawImage(img, sx, sy, sw, sh, box.x, box.y, box.w, box.h);
+  ctx.restore();
+}
+function drawShareCardText(ctx, model) {
+  const tomato = '#E4572E', herb = '#6A8D3F', ink = '#2A2724', muted = '#756B63', line = '#EADDCB', wash = '#FFF1DF';
+  ctx.fillStyle = '#FFF9F0';
+  ctx.fillRect(0, 0, model.width, model.height);
+  ctx.fillStyle = tomato;
+  ctx.fillRect(0, 0, 18, model.height);
+  ctx.fillStyle = ink;
+  ctx.font = '700 56px Georgia, "Songti SC", serif';
+  model.title.lines.forEach((lineText, i) => ctx.fillText(lineText, model.title.x, model.title.y + 50 + i * model.title.lineHeight));
+  if (model.cover.kind !== 'image') {
+    ctx.fillStyle = wash;
+    roundRectPath(ctx, model.cover.x, model.cover.y, model.cover.w, model.cover.h, 34);
+    ctx.fill();
+    ctx.fillStyle = tomato;
+    ctx.font = '700 96px Georgia, "Songti SC", serif';
+    ctx.fillText('庖丁', model.cover.x + 54, model.cover.y + 168);
+    ctx.fillStyle = herb;
+    ctx.font = '500 34px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.fillText(tr('shareCard.placeholder'), model.cover.x + 58, model.cover.y + 226);
+  }
+  ctx.fillStyle = tomato;
+  ctx.font = '700 28px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.fillText(model.ingredientSection.label, model.ingredientSection.x, model.ingredientSection.y + 24);
+  ctx.fillStyle = ink;
+  ctx.font = '400 26px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  const colW = (model.inner - 34) / 2;
+  model.ingredientSection.columns.forEach((col, ci) => {
+    col.forEach((lineText, i) => {
+      ctx.fillText(shortShareText(lineText, 24), model.ingredientSection.x + ci * (colW + 34), model.ingredientSection.y + 66 + i * model.ingredientSection.lineHeight);
+    });
+  });
+  ctx.strokeStyle = line;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(model.margin, model.stepsSection.y - 16);
+  ctx.lineTo(model.width - model.margin, model.stepsSection.y - 16);
+  ctx.stroke();
+  ctx.fillStyle = tomato;
+  ctx.font = '700 28px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.fillText(model.stepsSection.label, model.stepsSection.x, model.stepsSection.y + 24);
+  ctx.fillStyle = ink;
+  ctx.font = '400 27px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  (model.stepsSection.lines.length ? model.stepsSection.lines : [tr('shareCard.noSteps')]).forEach((lineText, i) => {
+    ctx.fillText(lineText, model.stepsSection.x, model.stepsSection.y + 66 + i * model.stepsSection.lineHeight);
+  });
+  ctx.strokeStyle = line;
+  ctx.beginPath();
+  ctx.moveTo(model.margin, model.footer.y - 24);
+  ctx.lineTo(model.width - model.margin, model.footer.y - 24);
+  ctx.stroke();
+  ctx.fillStyle = ink;
+  ctx.font = '700 28px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.fillText(model.footer.brand, model.footer.x, model.footer.y + 26);
+  ctx.fillStyle = muted;
+  ctx.font = '400 23px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.fillText(model.footer.url ? `${model.footer.linkLabel} ${model.footer.url}` : model.footer.linkLabel, model.footer.x, model.footer.y + 66);
+}
+function loadCanvasImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+async function renderRecipeShareCardCanvas(r, factors = 1) {
+  const model = recipeShareCardLayout(r, factors, { shareUrl: shareRecipeUrl(r.id) });
+  const canvas = document.createElement('canvas');
+  canvas.width = model.width;
+  canvas.height = model.height;
+  const ctx = canvas.getContext('2d');
+  let img = null;
+  if (model.cover.kind === 'image') {
+    try { img = await loadCanvasImage(recipeImg(r.id, model.cover.image)); } catch { img = null; }
+  }
+  drawShareCardText(ctx, model);
+  if (img) drawImageCover(ctx, img, model.cover);
+  return canvas;
+}
+function canvasToPngBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error(tr('shareCard.blobFailed'))), 'image/png');
+  });
+}
+function safeDownloadStem(name) {
+  return (String(name || 'recipe').replace(/[\/\\:*?"<>|]/g, '').trim() || 'recipe').slice(0, 80);
+}
+function downloadBlob(name, blob) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+async function shareOrDownloadCard(blob, filename, r) {
+  if (navigator.share && typeof File !== 'undefined') {
+    const file = new File([blob], filename, { type: 'image/png' });
+    if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ title: r?.title || tr('recipe.untitled'), text: shareRecipeUrl(r?.id), files: [file] }); return 'shared'; }
+      catch (e) { if (e?.name === 'AbortError') return 'aborted'; }
+    }
+  }
+  downloadBlob(filename, blob);
+  return 'downloaded';
+}
+async function createRecipeShareCard(r, factors = 1) {
+  try {
+    toast(tr('shareCard.generating'));
+    const canvas = await renderRecipeShareCardCanvas(r, factors);
+    const blob = await canvasToPngBlob(canvas);
+    const result = await shareOrDownloadCard(blob, `${safeDownloadStem(r?.title)}-share.png`, r);
+    if (result !== 'aborted') toast(tr(result === 'shared' ? 'shareCard.shared' : 'shareCard.downloaded'));
+  } catch (e) {
+    toast(tr('shareCard.failed', { message: e.message }));
+  }
 }
 
 /* ================= 跟做模式 ================= */
