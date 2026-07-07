@@ -506,7 +506,7 @@ test("annotateRecipeCardSources 按配方卡用量为食材补出处 note", () =
   const recipe = {
     ingredients: [
       { name: "高筋面粉", amount: "150克", qty: 150, unit: "克", note: "" },
-      { name: "牛奶", amount: "75克（可用水替代）", qty: 75, unit: "克", note: "可用0.9倍水替代" },
+      { name: "牛奶", amount: "150毫升（面种75g+主面75g）", qty: 150, unit: "毫升", note: "可用0.9倍水替代" },
       { name: "盐", amount: "少许", qty: null, unit: "", note: "" },
       { name: "橄榄油", amount: "10克", qty: 10, unit: "克", note: "" },
     ],

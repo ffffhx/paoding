@@ -374,7 +374,9 @@ export function annotateRecipeCardSources(recipe, cardTranscript) {
     if (!ing || typeof ing !== "object" || Array.isArray(ing)) continue;
     const qtyUnit = Number.isFinite(Number(ing.qty)) && ing.unit ? `${ing.qty}${ing.unit}` : "";
     const tokens = amountTokens(ing.amount, qtyUnit);
-    if (tokens.length && tokens.some((token) => cardText.includes(token))) {
+    const name = normalizeAmountText(ing.name);
+    const nameMatchesCard = name.length >= 2 && cardText.includes(name);
+    if (tokens.length && (tokens.some((token) => cardText.includes(token)) || nameMatchesCard)) {
       ing.note = appendRecipeCardSource(ing.note);
     }
   }
