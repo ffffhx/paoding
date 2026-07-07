@@ -325,7 +325,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
 import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, inferBakingToolFallback, annotateRecipeCardSources } from "../src/chef.mjs";
-import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, ensureRecipeCardMarker, mapLimitSettled, extractIngredientImages, visionTranscript } from "../src/vision.mjs";
+import { adaptiveVisionFrameLimit, candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, ensureRecipeCardMarker, mapLimitSettled, extractIngredientImages, visionTranscript } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
   const out = parseWhisperJson({
@@ -517,6 +517,15 @@ test("recipeCardCapturePoints 为片头和片尾配方卡预留时间点", () =>
   assert.equal(long.length, 8);
   assert.ok(long.some((p) => p.kind === "tail" && p.time >= 7199));
   assert.equal(recipeCardCapturePoints(null, { max: 8 }).length, 0);
+});
+
+test("adaptiveVisionFrameLimit 对短视频收缩读屏帧数且不超过配置上限", () => {
+  assert.equal(adaptiveVisionFrameLimit(45, 20), 8);
+  assert.equal(adaptiveVisionFrameLimit(133, 20), 12);
+  assert.equal(adaptiveVisionFrameLimit(300, 20), 16);
+  assert.equal(adaptiveVisionFrameLimit(600, 20), 20);
+  assert.equal(adaptiveVisionFrameLimit(120, 6), 6);
+  assert.equal(adaptiveVisionFrameLimit(null, 20), 20);
 });
 
 test("ensureRecipeCardMarker 为漏标的配方表视觉转录补标记", () => {
