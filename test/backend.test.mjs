@@ -15,6 +15,7 @@ import { createJobQueue } from "../src/jobs.mjs";
 import { fetchWithRetry } from "../src/fetchRetry.mjs";
 import { outputLanguageInstruction, withOutputLanguage } from "../src/outputLanguage.mjs";
 import { applyIngredientFixes, fixIngredientName, replaceIngredientTypos } from "../src/ingredientFix.mjs";
+import { shouldFallbackVideoUrlToText } from "../src/videoFallback.mjs";
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FAKE_FFMPEG = path.join(TEST_DIR, "fixtures", "bin", "fake-ffmpeg.mjs");
@@ -39,6 +40,14 @@ test("yt-dlp 412 错误提示用户配置浏览器 cookies", () => {
   const msg = formatProcessError("yt-dlp", 1, "ERROR: HTTP Error 412: Precondition Failed");
   assert.match(msg, /B站返回 412/);
   assert.match(msg, /PAODING_COOKIES_FROM_BROWSER=chrome/);
+});
+
+test("视频 URL 只在下载抽取失败时转文字兜底", () => {
+  assert.equal(shouldFallbackVideoUrlToText(new Error("yt-dlp 退出码 1：Unsupported URL")), true);
+  assert.equal(shouldFallbackVideoUrlToText(new Error("未找到 yt-dlp（yt-dlp，解析链接需要它）")), true);
+  assert.equal(shouldFallbackVideoUrlToText(new Error("视频下载失败")), true);
+  assert.equal(shouldFallbackVideoUrlToText(new Error("结构化菜谱失败：无法从内容中提取菜谱")), false);
+  assert.equal(shouldFallbackVideoUrlToText(new Error("whisper-cli 退出码 1：ASR failed")), false);
 });
 
 test("extractFromHtml 优先 og:title / og:description，去脚本", () => {

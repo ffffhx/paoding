@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { loadConfig, loadEnvFiles } from "../src/config.mjs";
 import { processVideo, processText, processImages } from "../src/pipeline.mjs";
+import { shouldFallbackVideoUrlToText } from "../src/videoFallback.mjs";
 import { chatJSON, chatText } from "../src/llm.mjs";
 import { DEPTHS, explainSteps } from "../src/explain.mjs";
 import { normalizeRecipePhases, normalizeTools, structureRecipe } from "../src/chef.mjs";
@@ -981,7 +982,7 @@ function runJob(id, input, depth, kind = "video", wantVision = false, wantImages
   } else {
     // 视频路径；URL 视频抓不到（如小红书无抽取器）时自动改按文字帖尝试
     run = processVideo(input, cfg, { onProgress, signal }).catch((e) => {
-      if (!signal.aborted && /^https?:\/\//i.test(input)) {
+      if (!signal.aborted && /^https?:\/\//i.test(input) && shouldFallbackVideoUrlToText(e)) {
         onProgress({ stage: "acquire", pct: 4, message: "视频抓取失败，改按文字帖尝试…" });
         return processText(input, cfg, { onProgress, signal });
       }
