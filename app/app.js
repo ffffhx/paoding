@@ -180,10 +180,15 @@ function mergeShopping(remote, local) {
 function mergeMeta(remote, local) {
   const out = { ...(remote && typeof remote === 'object' && !Array.isArray(remote) ? remote : {}) };
   const loc = local && typeof local === 'object' && !Array.isArray(local) ? local : {};
+  const historyKeys = ['cooked_log', 'cookedLog', 'cooked_history', 'cookedHistory', 'cooked_dates'];
   for (const [id, l] of Object.entries(loc)) {
     const r = out[id] && typeof out[id] === 'object' ? out[id] : {};
     const next = { ...r, ...(l && typeof l === 'object' ? l : {}) };
     next.ingChecked = uniqList(r.ingChecked, l?.ingChecked, String);
+    for (const key of historyKeys) {
+      const mergedHistory = uniqList(r[key], l?.[key], (x) => typeof x === 'string' ? x : JSON.stringify(x));
+      if (mergedHistory.length) next[key] = mergedHistory;
+    }
     if (r.cooked || l?.cooked) next.cooked = true;
     if (r.cooked_at && l?.cooked_at) next.cooked_at = String(r.cooked_at) > String(l.cooked_at) ? r.cooked_at : l.cooked_at;
     out[id] = next;
