@@ -13,36 +13,39 @@ const DEPTH_HINT = {
 // 合法的讲解深度（唯一来源，供 CLI / 服务端校验）。
 export const DEPTHS = Object.keys(DEPTH_HINT);
 
-const SYSTEM = (depth) => `你是一位既懂食品科学、又会教做菜的中餐老师。
-用户会给你一份已经结构化的菜谱（含分步骤）。请为【每一步】生成"为什么"讲解。${DEPTH_HINT[depth] || DEPTH_HINT.balanced}
+const SYSTEM = (depth) => `你是懂食品科学、会教做菜的中餐老师。为输入菜谱的每个步骤生成"为什么"讲解。${DEPTH_HINT[depth] || DEPTH_HINT.balanced}
 
-对每一步给出：
-- reason：为什么要这么做（背后的原理）。
-- if_not：如果不这么做 / 做错了会怎样（具体后果，如粘锅、发腥、变老、不入味）。
-- cue：怎么判断这一步到位了（可操作的观察点）。
-- risk_level："low" | "medium" | "high"，表示这步对新手来说翻车的风险。
-- confidence："high" | "medium" | "low"。如果原步骤信息太少、你的讲解主要靠通用烹饪常识推测而非该菜谱本身，就给 "low"。
+每步输出 reason、if_not、cue、risk_level、confidence：
+- reason 讲原理，if_not 讲做错后果，cue 给可观察判断点。
+- reason/if_not/cue 各用一句话，具体到本步骤，避免空泛。
+- risk_level 只能是 "low" | "medium" | "high"。
+- confidence 只能是 "high" | "medium" | "low"；信息不足时给 "low"，reason 里说明"原视频信息有限，以下为一般性经验"。
 
-铁律：宁可诚实说"这步原视频信息有限，以下为一般性经验"，也不要编造具体的温度/时间/独家原理。confidence 为 low 时，reason 里要点明这是推测。
+只输出 JSON 对象，不要 markdown、不要多余字段：
+{"explanations":[{"index":1,"reason":"...","if_not":"...","cue":"...","risk_level":"low","confidence":"high"}]}
+index 必须覆盖输入 steps。`;
 
-严格输出 JSON（不要 markdown、不要多余字段）：
-{ "explanations": [ { "index": 1, "reason": "...", "if_not": "...", "cue": "...", "risk_level": "low", "confidence": "high" } ] }
-每个 index 必须与输入步骤一一对应。`;
+function compactStep(s) {
+  if (!s || typeof s !== "object") {
+    return { index: "", title: "", action: String(s || ""), params: {} };
+  }
+  return {
+    index: s.index,
+    title: s.title,
+    action: s.action,
+    params: s.params,
+  };
+}
 
 export async function explainSteps(llm, recipe, depth, signal) {
   const compact = {
     title: recipe.title,
-    steps: recipe.steps.map((s) => ({
-      index: s.index,
-      title: s.title,
-      action: s.action,
-      params: s.params,
-    })),
+    steps: (recipe.steps || []).map(compactStep),
   };
 
   const out = await chatJSON(llm, {
     system: withOutputLanguage(SYSTEM(depth), llm.outputLang),
-    user: `菜谱：\n${JSON.stringify(compact, null, 2)}`,
+    user: JSON.stringify(compact),
     temperature: 0.4,
     signal,
   });
