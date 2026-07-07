@@ -827,7 +827,16 @@ test("mergeUserDataConflict 按字段合并跨设备数据", () => {
     shopping: [{ name: "盐", amount: "1勺", from: "A", checked: false }],
     cookbooks: [{ id: "breakfast", name: "早餐", recipeIds: ["a"], updated_at: "2026-01-01T00:00:00.000Z" }],
     pantry: [{ name: "鸡蛋", note: "2个", updated_at: "2026-01-01T00:00:00.000Z" }],
-    meta: { a: { notes: "旧", ingChecked: [1], cooked: true, cooked_at: "2026-01-01T00:00:00.000Z" } },
+    meta: {
+      a: {
+        notes: "旧",
+        ingChecked: [1],
+        cooked: true,
+        cooked_history: ["2026-01-01T08:00:00+08:00"],
+        cooked_dates: ["2026-01-03"],
+        cooked_at: "2026-01-01T00:00:00.000Z",
+      },
+    },
     mealPlan: { "2026-01-01": ["a"] },
     settings: { lang: "zh" },
   }, {
@@ -836,7 +845,15 @@ test("mergeUserDataConflict 按字段合并跨设备数据", () => {
     shopping: [{ name: "盐", amount: "1勺", from: "A", checked: true }, { name: "糖", amount: "2勺", from: "B" }],
     cookbooks: [{ id: "breakfast", name: "早午餐", recipeIds: ["b"], updated_at: "2026-01-02T00:00:00.000Z" }],
     pantry: [{ name: "鸡蛋", note: "6个", updated_at: "2026-01-02T00:00:00.000Z" }, { name: "番茄" }],
-    meta: { a: { notes: "新", ingChecked: [2], cooked_at: "2026-01-02T00:00:00.000Z" } },
+    meta: {
+      a: {
+        notes: "新",
+        ingChecked: [2],
+        cooked_history: ["2026-01-02T08:00:00+08:00", "2026-01-01T08:00:00+08:00"],
+        cooked_dates: ["2026-01-04", "2026-01-03"],
+        cooked_at: "2026-01-02T00:00:00.000Z",
+      },
+    },
     mealPlan: { "2026-01-01": ["b", "a"] },
     settings: { lang: "en", pantryIgnoreLooseSeasonings: false },
   });
@@ -853,6 +870,8 @@ test("mergeUserDataConflict 按字段合并跨设备数据", () => {
   assert.equal(merged.meta.a.notes, "新");
   assert.equal(merged.meta.a.cooked, true);
   assert.equal(merged.meta.a.cooked_at, "2026-01-02T00:00:00.000Z");
+  assert.deepEqual(Array.from(merged.meta.a.cooked_history), ["2026-01-01T08:00:00+08:00", "2026-01-02T08:00:00+08:00"]);
+  assert.deepEqual(Array.from(merged.meta.a.cooked_dates), ["2026-01-03", "2026-01-04"]);
   assert.deepEqual(Array.from(merged.mealPlan["2026-01-01"]), ["a", "b"]);
   assert.equal(merged.settings.lang, "en");
   assert.equal(merged.settings.pantryIgnoreLooseSeasonings, false);
