@@ -71,7 +71,7 @@ test("unusableRecipeTextReason 拒绝小红书空壳页脚，放行菜谱正文"
       title: "小红书 - 你访问的页面不见了",
       text: "网页版 创作中心 业务合作 发现 RED 直播 发布 通知 沪ICP备13030189号 © 2014-2026 行吟信息科技（上海）有限公司",
     }),
-    /不存在|反爬/,
+    /站点导航/,
   );
   assert.match(
     unusableRecipeTextReason({
@@ -86,6 +86,27 @@ test("unusableRecipeTextReason 拒绝小红书空壳页脚，放行菜谱正文"
       text: "食材：番茄2个，鸡蛋3个。做法：鸡蛋炒熟盛出，加入番茄炒出汁，再倒入鸡蛋翻炒调味出锅。",
     }),
     "",
+  );
+  assert.match(
+    unusableRecipeTextReason({
+      title: "红烧肉教程菜谱",
+      text: "首页 导航 创作中心 业务合作 登录 注册 客户端下载 版权声明",
+    }),
+    /站点导航/,
+  );
+  assert.equal(
+    unusableRecipeTextReason({
+      title: "番茄炒蛋教程",
+      text: "食材：番茄2个，鸡蛋3个。做法：鸡蛋炒熟盛出，加入番茄炒出汁，再倒入鸡蛋翻炒调味出锅。页脚：登录后查看更多 Not Found",
+    }),
+    "",
+  );
+  assert.match(
+    unusableRecipeTextReason({
+      title: "普通页面",
+      text: "你访问的页面不见了 内容不存在 请先登录 登录后查看更多 安全验证",
+    }),
+    /不存在|登录|反爬/,
   );
 });
 
