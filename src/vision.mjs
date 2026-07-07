@@ -39,13 +39,13 @@ function spreadTimes(start, end, count, minGap = 1, { includeEnd = false } = {})
   return out.sort((a, b) => a - b);
 }
 
-// 读屏 OCR 的专项补抽点：开头少量帧 + 片尾配方卡帧。
-// 片尾窗口为最后 20%，普通长视频至少覆盖最后 30 秒；短视频只按比例取，避免全片都被补抽占满。
+// 读屏 OCR 的专项补抽点：片头配方表窗口 + 片尾配方卡帧。
+// 很多短视频会先口播几句，10-30 秒才给整屏配方表；片尾窗口为最后 20%，普通长视频至少覆盖最后 30 秒。
 export function recipeCardCapturePoints(duration, {
   max = 8,
-  headCount = 2,
-  tailCount = 6,
-  headSeconds = 5,
+  headCount = 3,
+  tailCount = 5,
+  headSeconds = 30,
   tailRatio = 0.2,
   minTailSeconds = 30,
   minGapSeconds = 1,

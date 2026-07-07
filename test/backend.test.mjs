@@ -472,9 +472,10 @@ test("extractRecipeCardTranscript 提取画面配方卡段落", () => {
 test("recipeCardCapturePoints 为片头和片尾配方卡预留时间点", () => {
   const points = recipeCardCapturePoints(120, { max: 8 });
   assert.equal(points.length, 8);
-  assert.deepEqual(points.map((p) => p.kind), ["head", "head", "tail", "tail", "tail", "tail", "tail", "tail"]);
-  assert.ok(points.slice(0, 2).every((p) => p.time >= 0.5 && p.time <= 5));
-  assert.ok(points.slice(2).every((p) => p.time >= 90 && p.time <= 119.5));
+  assert.deepEqual(points.map((p) => p.kind), ["head", "head", "head", "tail", "tail", "tail", "tail", "tail"]);
+  assert.ok(points.slice(0, 3).every((p) => p.time >= 0.5 && p.time <= 30));
+  assert.ok(points.slice(0, 3).some((p) => p.time >= 10 && p.time <= 20));
+  assert.ok(points.slice(3).every((p) => p.time >= 90 && p.time <= 119.5));
   for (let i = 1; i < points.length; i++) assert.ok(points[i].time > points[i - 1].time);
 
   const short = recipeCardCapturePoints(20, { max: 4 });
