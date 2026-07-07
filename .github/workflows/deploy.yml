@@ -13,8 +13,8 @@ env:
   DEPLOY_DIR: /Users/bytedance/Code/paoding
   APP_LAUNCHD_SERVICE: com.paoding.server
   TUNNEL_LAUNCHD_SERVICE: com.paoding.tunnel
-  LOCAL_HEALTH_URL: http://127.0.0.1:4177/api/recipes
-  PUBLIC_HEALTH_URL: https://124-221-36-36.anyip.dev:8443/paoding/api/recipes
+  LOCAL_HEALTH_URL: http://127.0.0.1:4177/
+  PUBLIC_HEALTH_URL: https://124-221-36-36.anyip.dev:8443/paoding/
   SERVER_LOG: /tmp/paoding-server.log
   TUNNEL_LOG: /tmp/paoding-tunnel.log
 
