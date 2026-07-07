@@ -85,21 +85,10 @@ async function extractVisionFrameAt(ffmpeg, videoPath, tSec, outPath, signal) {
   return fs.existsSync(outPath) && fs.statSync(outPath).size > 0;
 }
 
-// 短视频默认 20 帧会放大 VL 成本；按时长收缩，但不超过用户配置上限。
-export function adaptiveVisionFrameLimit(duration, configuredMax) {
-  const maxFrames = Math.max(0, Math.floor(Number(configuredMax) || 0));
-  const d = Number(duration);
-  if (!maxFrames || !Number.isFinite(d) || d <= 0) return maxFrames;
-  if (d <= 60) return Math.min(maxFrames, 8);
-  if (d <= 180) return Math.min(maxFrames, 12);
-  if (d <= 360) return Math.min(maxFrames, 16);
-  return maxFrames;
-}
-
 // 从视频抽关键帧：优先场景切换、抽不到再退回固定间隔；缩放到 768 宽、限量。返回 base64 jpg 数组。
 export async function extractFrames(videoPath, { max = 20, duration = null, signal } = {}) {
   const ffmpeg = resolveFfmpegBin();
-  const maxFrames = adaptiveVisionFrameLimit(duration, max);
+  const maxFrames = Math.max(0, Math.floor(Number(max) || 0));
   if (!maxFrames) return [];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-frames-"));
   const scenePattern = path.join(dir, "scene-%04d.jpg");
