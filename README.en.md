@@ -66,10 +66,11 @@ Paoding combines automatic parsing with step-level cooking reasoning. You can fo
 | Explanations | Three-part reasoning for each step, key heat/time/quantity highlights, and tappable cooking terms. |
 | Technique library | Aggregates recurring techniques across recipes and can summarize when to use them, key cues, and common failure points. |
 | AI helper | Ask about a step, rescue a failed dish, substitute ingredients, design the whole dish, or estimate nutrition. |
+| Tools and equipment | Dessert/baking-focused tool lists for mixers, piping bags, spatulas, molds, and similar equipment; alternatives include tradeoffs, no-alternative items include the reason, and inferred items are marked. |
 | Pantry and planning | Scalable structured quantities, Chinese-unit reference, merged shopping lists by aisle, weekly meal planning, and multi-dish timelines. |
 | Editing and records | Edit titles, ingredients, steps, explanations, tags, notes, ratings, favorites, and cook history. |
 | Sync and backup | Shared recipes plus token-isolated household user data; export/import backup; automatic server backups. |
-| Interop | Import schema.org Recipe JSON-LD; export Markdown, Cooklang, schema.org JSON-LD, print/PDF, and public read-only share pages. |
+| Interop | Import schema.org Recipe JSON-LD; export Markdown, Cooklang, schema.org JSON-LD with standard HowTo `tool`, print/PDF with tools, and public read-only share pages. |
 | Self-hosting | Plain Node app, Docker/Compose, PWA, and runtime-configurable Android APK. |
 
 <div align="center">
@@ -161,6 +162,6 @@ The test suite uses Node's built-in test runner and local fakes/stubs for extern
 
 ## Roadmap Snapshot
 
-- Done: text posts, video fallback, Android/PWA shell, sync and backup, editing, quantity scaling, shopping lists, Cooklang/schema.org export, optional visual OCR, step screenshots, weekly meal planning, multi-dish timelines, household isolation, Docker/Compose, source timestamp jumps, nutrition estimates, technique library, public share pages, print/PDF, Chinese-unit references, and frontend i18n infrastructure.
+- Done: text posts, video fallback, Android/PWA shell, sync and backup, editing, quantity scaling, shopping lists, dessert-focused tool/equipment lists with alternatives, Cooklang/schema.org export, optional visual OCR, step screenshots, weekly meal planning, multi-dish timelines, household isolation, Docker/Compose, source timestamp jumps, nutrition estimates, technique library, public share pages, print/PDF, Chinese-unit references, and frontend i18n infrastructure.
 - i18n status: `app/i18n.js`, `t()` fallback, zh/en dictionaries, the settings-page language selector, and userdata sync are in place. English UI coverage now includes settings, home/list views, recipe detail, cook-along mode, shopping/planning, techniques, the install banner, tag-edit modal, exported recipe text, toasts, and error prompts. Date and number formatting are intentionally not localized yet.
 - Next: date/number localization, more real-world video prompt tuning, broader technique vocabulary, and higher-quality technique matching.

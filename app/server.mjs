@@ -185,12 +185,6 @@ function shareHTML(r) {
     ${Number.isFinite(n.sodium_mg) ? `<div><span>钠</span><b>${escHtml(n.sodium_mg)} mg</b></div>` : ""}
   </div>${r.nutrition?.disclaimer ? `<p>${escHtml(r.nutrition.disclaimer)}</p>` : ""}</div>` : "";
   const ings = (r.ingredients || []).map((i) => `<li><span>${i.image ? `<img class="ith" src="${imgSrc(i.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}${escHtml(i.name)}${i.note ? `（${escHtml(i.note)}）` : ""}</span><span class="amt">${escHtml(i.amount || "")}</span></li>`).join("");
-  const tools = normalizeTools(r.tools);
-  const toolItems = tools.map((t) => {
-    const note = String(t.substitute_note || "").trim();
-    const sub = t.substitute ? `可替代：${escHtml(t.substitute)}${note ? `；注意：${escHtml(note)}` : ""}` : `无替代${note ? `；原因：${escHtml(note)}` : ""}`;
-    return `<li><div><b>${escHtml(t.name)}</b>${t.purpose ? `<span>${escHtml(t.purpose)}</span>` : ""}</div><p>${t.essential ? `<em>必需</em>` : ""}${t.inferred ? `<em>推断</em>` : ""}${sub}</p></li>`;
-  }).join("");
   const steps = (r.steps || []).map((s) => {
     const w = s.why || {};
     const why = [w.reason && `<p><b>为什么</b> ${escHtml(w.reason)}</p>`, w.if_not && `<p><b>不这么做</b> ${escHtml(w.if_not)}</p>`, w.cue && `<p class="g"><b>判断到位</b> ${escHtml(w.cue)}</p>`].filter(Boolean).join("");
@@ -211,7 +205,6 @@ h2{font-size:14px;color:var(--muted);letter-spacing:1px;margin:26px 0 10px}
 ul.ings{list-style:none;padding:0;margin:0;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
 ul.ings li{display:flex;justify-content:space-between;gap:12px;padding:11px 15px;border-bottom:1px solid var(--line)}ul.ings li:last-child{border:none}.amt{color:var(--muted)}
 .nutrition{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:16px}.nt{font-weight:700}.nt span,.nutrition p{color:var(--muted);font-size:12px;font-weight:400}.ng{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:8px;margin-top:10px}.ng div{background:var(--bg);border-radius:10px;padding:9px}.ng span{display:block;color:var(--muted);font-size:12px}.ng b{font-size:15px}.nutrition p{margin:10px 0 0}
-ul.tools{list-style:none;padding:0;margin:0;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}ul.tools li{padding:12px 15px;border-bottom:1px solid var(--line)}ul.tools li:last-child{border:none}ul.tools span{display:inline-block;color:var(--muted);margin-left:8px}ul.tools p{margin:5px 0 0;color:var(--muted);font-size:13px}ul.tools em{font-style:normal;background:#FCE3DA;color:var(--tomato);border-radius:999px;padding:1px 7px;margin-right:6px;font-weight:700}
 .tech-summary{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 0}.tech,.tech-summary span{display:inline-flex;background:#EEF4E8;color:var(--herb);border-radius:999px;padding:2px 8px;font-size:12px;font-weight:700}.techs{display:flex;gap:6px;flex-wrap:wrap;margin:3px 0 5px}
 ol.steps{list-style:none;counter-reset:s;padding:0;margin:0}
 ol.steps li{counter-increment:s;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px 16px 14px 46px;margin-bottom:12px;position:relative}
@@ -227,7 +220,6 @@ footer{margin-top:30px;text-align:center;color:var(--muted);font-size:13px}foote
 ${nutrition}
 ${techList.length ? `<h2>技法标注</h2><div class="tech-summary">${techList.map((t) => `<span>${escHtml(t)}</span>`).join("")}</div>` : ""}
 ${ings ? `<h2>食材</h2><ul class="ings">${ings}</ul>` : ""}
-${toolItems ? `<h2>需要的工具</h2><ul class="tools">${toolItems}</ul>` : ""}
 <h2>步骤</h2><ol class="steps">${steps}</ol>
 <footer>由 <b>庖丁</b> 解析 · 把每道菜讲透「为什么」</footer>
 <script>

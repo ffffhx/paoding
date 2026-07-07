@@ -409,7 +409,6 @@ test("分享页包含 JSON-LD、营养卡片和技法标注", async () => {
     assert.match(html, /导出 JSON-LD/);
     assert.match(html, /复制到自己的庖丁/);
     assert.match(html, /每份营养/);
-    assert.match(html, /需要的工具/);
     assert.match(html, /<span class="tech">翻炒<\/span>/);
 
     const match = html.match(/<script type="application\/ld\+json" id="jsonld">([\s\S]*?)<\/script>/);
