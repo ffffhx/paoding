@@ -102,6 +102,27 @@ test("applyIngredientFixes 修正食材名、追加 note 并替换步骤文本",
   assert.equal(recipe.ingredients[0].note, "香料；转写作「白纸」，已按烹饪常识纠正。");
 });
 
+test("applyIngredientFixes 只按本菜谱命中的纠错项替换步骤，避免词表误伤", () => {
+  const recipe = {
+    ingredients: [{ name: "白糖", amount: "10克", note: "" }],
+    steps: [
+      { title: "垫白纸", action: "用白纸吸油，保持自然粉色。", params: { cue: "纸面吸走多余油" } },
+    ],
+  };
+  applyIngredientFixes(recipe);
+  assert.equal(recipe.steps[0].title, "垫白纸");
+  assert.equal(recipe.steps[0].action, "用白纸吸油，保持自然粉色。");
+  assert.equal(recipe.steps[0].params.cue, "纸面吸走多余油");
+
+  const corrected = {
+    ingredients: [{ name: "肉豆扣粉", amount: "1克", note: "" }],
+    steps: [{ title: "下香料", action: "加入肉豆扣粉和肉豆扣，小火煮香。" }],
+  };
+  applyIngredientFixes(corrected);
+  assert.equal(corrected.ingredients[0].name, "肉豆蔻粉");
+  assert.equal(corrected.steps[0].action, "加入肉豆蔻粉和肉豆蔻，小火煮香。");
+});
+
 test("loadConfig 读取 PAODING_OUTPUT_LANG", () => {
   const old = {
     PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL,
@@ -356,6 +377,12 @@ test("recipeCardCapturePoints 为片头和片尾配方卡预留时间点", () =>
 
   const short = recipeCardCapturePoints(20, { max: 4 });
   assert.ok(short.some((p) => p.kind === "tail" && p.time >= 16 && p.time <= 19.5));
+  assert.ok(short.some((p) => p.kind === "tail" && p.time >= 19));
+  const tiny = recipeCardCapturePoints(2, { max: 2 });
+  assert.ok(tiny.some((p) => p.kind === "tail" && p.time >= 1.4));
+  const long = recipeCardCapturePoints(7200, { max: 8 });
+  assert.equal(long.length, 8);
+  assert.ok(long.some((p) => p.kind === "tail" && p.time >= 7199));
   assert.equal(recipeCardCapturePoints(null, { max: 8 }).length, 0);
 });
 

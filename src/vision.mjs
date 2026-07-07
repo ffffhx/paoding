@@ -22,16 +22,21 @@ function resolveFfmpegBin() {
 
 const roundTime = (t) => Math.round(t * 10) / 10;
 
-function spreadTimes(start, end, count, minGap = 1) {
+function spreadTimes(start, end, count, minGap = 1, { includeEnd = false } = {}) {
   if (!Number.isFinite(start) || !Number.isFinite(end) || count <= 0 || end < start) return [];
   const raw = [];
   const span = Math.max(0, end - start);
-  for (let i = 0; i < count; i++) raw.push(roundTime(start + ((i + 0.5) * span) / count));
+  for (let i = 0; i < count; i++) {
+    const ratio = includeEnd
+      ? (count === 1 ? 1 : i / (count - 1))
+      : ((i + 0.5) / count);
+    raw.push(roundTime(start + ratio * span));
+  }
   const out = [];
-  for (const t of raw) {
+  for (const t of (includeEnd ? raw.slice().reverse() : raw)) {
     if (!out.some((x) => Math.abs(x - t) < minGap)) out.push(t);
   }
-  return out;
+  return out.sort((a, b) => a - b);
 }
 
 // 读屏 OCR 的专项补抽点：开头少量帧 + 片尾配方卡帧。
@@ -65,7 +70,7 @@ export function recipeCardCapturePoints(duration, {
 
   const points = [
     ...spreadTimes(0.5, headEnd, head, minGapSeconds).map((time) => ({ kind: "head", time })),
-    ...spreadTimes(tailStart, safeEnd, tail, minGapSeconds).map((time) => ({ kind: "tail", time })),
+    ...spreadTimes(tailStart, safeEnd, tail, minGapSeconds, { includeEnd: true }).map((time) => ({ kind: "tail", time })),
   ].sort((a, b) => a.time - b.time);
 
   const out = [];

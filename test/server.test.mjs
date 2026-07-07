@@ -807,6 +807,51 @@ test("substitute 和 term 缓存命中、强制刷新并随食材编辑失效", 
   }
 });
 
+test("substitute 缓存随菜名编辑整体失效", async () => {
+  const id = "替代菜名缓存菜";
+  const fp = path.join(recipesDir, `${id}.json`);
+  fs.writeFileSync(fp, JSON.stringify({
+    title: "红烧鸡蛋",
+    ingredients: [{ name: "鸡蛋", amount: "2个" }],
+    steps: [{ index: 1, title: "烧", action: "鸡蛋红烧。" }],
+  }, null, 2));
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    assert.ok(String(input).endsWith("/chat/completions"));
+    const body = JSON.parse(String(init.body || "{}"));
+    calls++;
+    const user = String(body.messages?.find((m) => m.role === "user")?.content || "");
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: `${user.includes("糖醋鸡蛋") ? "糖醋" : "红烧"}替代回答 ${calls}` } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const first = await (await request("/api/substitute", J({ recipeId: id, ingredient: "鸡蛋" }))).json();
+    assert.equal(first.answer, "红烧替代回答 1");
+    assert.equal(calls, 1);
+
+    const put = await request(`/api/recipes/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "糖醋鸡蛋" }),
+    });
+    assert.equal(put.status, 200);
+    let saved = JSON.parse(fs.readFileSync(fp, "utf8"));
+    assert.equal(saved.substitutes, undefined);
+
+    const second = await (await request("/api/substitute", J({ recipeId: id, ingredient: "鸡蛋" }))).json();
+    assert.equal(second.cached, false);
+    assert.equal(second.answer, "糖醋替代回答 2");
+    assert.equal(calls, 2);
+    saved = JSON.parse(fs.readFileSync(fp, "utf8"));
+    assert.equal(saved.substitutes["鸡蛋"].answer, "糖醋替代回答 2");
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(fp, { force: true });
+  }
+});
+
 test("nutrition 缓存返回结构化结果，编辑食材后失效", async () => {
   const id = "营养测试菜";
   fs.writeFileSync(path.join(recipesDir, `${id}.json`), JSON.stringify({

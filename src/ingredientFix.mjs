@@ -43,9 +43,10 @@ const INGREDIENT_TYPO_MAP = new Map([
 
 const SORTED_TYPOS = [...INGREDIENT_TYPO_MAP.keys()].sort((a, b) => b.length - a.length);
 
-export function replaceIngredientTypos(text) {
+export function replaceIngredientTypos(text, typos = SORTED_TYPOS) {
   let out = String(text ?? "");
-  for (const typo of SORTED_TYPOS) out = out.replaceAll(typo, INGREDIENT_TYPO_MAP.get(typo));
+  const ordered = [...typos].filter((typo) => INGREDIENT_TYPO_MAP.has(typo)).sort((a, b) => b.length - a.length);
+  for (const typo of ordered) out = out.replaceAll(typo, INGREDIENT_TYPO_MAP.get(typo));
   return out;
 }
 
@@ -69,6 +70,7 @@ function appendCorrectionNote(note, original) {
 
 export function applyIngredientFixes(recipe) {
   if (!recipe || typeof recipe !== "object") return recipe;
+  const correctedTypos = new Set();
   if (Array.isArray(recipe.ingredients)) {
     for (const ing of recipe.ingredients) {
       if (!ing || typeof ing !== "object" || Array.isArray(ing)) continue;
@@ -76,17 +78,21 @@ export function applyIngredientFixes(recipe) {
       if (!fixed.corrected) continue;
       ing.name = fixed.name;
       ing.note = appendCorrectionNote(ing.note, fixed.original);
+      for (const typo of SORTED_TYPOS) {
+        if (fixed.original.includes(typo)) correctedTypos.add(typo);
+      }
     }
   }
+  if (!correctedTypos.size) return recipe;
   if (Array.isArray(recipe.steps)) {
     for (const step of recipe.steps) {
       if (!step || typeof step !== "object" || Array.isArray(step)) continue;
       for (const key of ["title", "action"]) {
-        if (step[key]) step[key] = replaceIngredientTypos(step[key]);
+        if (step[key]) step[key] = replaceIngredientTypos(step[key], correctedTypos);
       }
       if (step.params && typeof step.params === "object" && !Array.isArray(step.params)) {
         for (const key of ["heat", "temp", "time", "cue"]) {
-          if (step.params[key]) step.params[key] = replaceIngredientTypos(step.params[key]);
+          if (step.params[key]) step.params[key] = replaceIngredientTypos(step.params[key], correctedTypos);
         }
       }
     }

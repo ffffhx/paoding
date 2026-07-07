@@ -476,6 +476,14 @@ function shoppingItemsForRecipe(r, factors = 1) {
     checked: false,
   }));
 }
+function shoppingFactorsForRecipeMeta(r, m = {}) {
+  return recipePhaseGroups(r).hasPhases
+    ? { batchFactor: m.batchFactor || 1, servingFactor: m.servingsFactor || 1 }
+    : (m.servingsFactor || 1);
+}
+function recipeShoppingFactors(r) {
+  return shoppingFactorsForRecipeMeta(r, rmeta(r.id));
+}
 const UNIT_REFERENCES = [
   { unit: '勺', aliases: ['勺', '瓷勺', '汤匙', '大勺', 'tbsp', 'tablespoon'], lines: ['1瓷勺/汤匙≈15毫升', '1茶匙/小勺≈5毫升', '3茶匙≈1汤匙'] },
   { unit: '克', aliases: ['克', 'g', 'gram'], lines: ['1两=50克', '1斤=500克', '100克≈2两'] },
@@ -1170,7 +1178,7 @@ function renderPlan() {
   });
   $('#planToShop') && ($('#planToShop').onclick = () => {
     const ids = new Set(); days.forEach(d => (mealPlan[d.key] || []).forEach(id => ids.add(id)));
-    let n = 0; ids.forEach(id => { const r = byId[id]; if (r) { addToShoppingItems(r, 1); n++; } });
+    let n = 0; ids.forEach(id => { const r = byId[id]; if (r) { addToShoppingItems(r, recipeShoppingFactors(r)); n++; } });
     if (n) { store.set('shopping', shopping); updateBadges(); toast(tr('plan.addedToShopping', { count: n })); } else toast(tr('plan.emptyWeek'));
   });
   $('#planClear') && ($('#planClear').onclick = async () => { if (!(await confirmModal(tr('plan.clear.confirm'), tr('shopping.clearAll')))) return; days.forEach(d => delete mealPlan[d.key]); saveMealPlan(); renderPlan(); });

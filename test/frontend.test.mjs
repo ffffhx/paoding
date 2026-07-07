@@ -130,6 +130,9 @@ test("phase 菜谱分组、双缩放和购物清单换算", () => {
   assert.equal(app.scaledIngredientAmount(recipe.ingredients[0], { batchFactor: 2, servingFactor: 3 }), "40克");
   assert.equal(app.scaledIngredientAmount(recipe.ingredients[3], { batchFactor: 2, servingFactor: 3 }), "300毫升");
   assert.equal(app.batchInfoText(recipe, 2), "一壶茶汤（约1300毫升） · 约供 8 份 · 按每杯250毫升推算（推算）");
+  const factors = app.shoppingFactorsForRecipeMeta(recipe, { batchFactor: 2, servingsFactor: 3 });
+  assert.equal(factors.batchFactor, 2);
+  assert.equal(factors.servingFactor, 3);
 
   const items = app.shoppingItemsForRecipe(recipe, { batchFactor: 2, servingFactor: 3 });
   assert.deepEqual(Array.from(items.map(x => `${x.name}:${x.amount}`)), [
@@ -150,6 +153,7 @@ test("phase 菜谱分组、双缩放和购物清单换算", () => {
   });
   assert.equal(partial.hasPhases, false);
   assert.equal(partial.ingredients.batch.length, 2);
+  assert.equal(app.shoppingFactorsForRecipeMeta({ servings: "2人份" }, { servingsFactor: 1.5 }), 1.5);
   assert.equal(app.cookStepsForRecipe({ steps: [{ index: 1, title: "普通", action: "做" }] }).length, 1);
 });
 

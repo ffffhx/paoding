@@ -1366,9 +1366,12 @@ export async function handleRequest(req, res) {
       const nutritionTouched = ("ingredients" in patch && JSON.stringify(patch.ingredients) !== JSON.stringify(cur.ingredients))
         || ("servings" in patch && patch.servings !== cur.servings);
       if (nutritionTouched) delete next.nutrition;
+      const recipeTitleChanged = "title" in patch && String(patch.title || "") !== String(cur.title || "");
       const ingredientNamesChanged = "ingredients" in patch
         && !sameIngredientNameSet(ingredientNameSet(cur.ingredients), ingredientNameSet(next.ingredients));
-      if (ingredientNamesChanged && next.substitutes) {
+      if (recipeTitleChanged && next.substitutes) {
+        delete next.substitutes;
+      } else if (ingredientNamesChanged && next.substitutes) {
         const pruned = pruneSubstituteCache(next.substitutes, next.ingredients);
         if (pruned) next.substitutes = pruned;
         else delete next.substitutes;
