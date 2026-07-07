@@ -14,6 +14,7 @@ test("schema.org Recipe 标准 JSON-LD 映射成庖丁菜谱且不臆造 why", (
     recipeCuisine: "家常菜",
     keywords: "快手,下饭",
     recipeIngredient: ["鸡蛋 3个", "番茄2个"],
+    tool: [{ "@type": "HowToTool", name: "不粘锅", description: "炒蛋防粘" }],
     recipeInstructions: [{ "@type": "HowToStep", name: "炒蛋", text: "鸡蛋炒散后盛出。" }],
     nutrition: { "@type": "NutritionInformation", calories: "220 kcal", proteinContent: "12 g" },
     url: "https://example.com/recipe",
@@ -25,6 +26,14 @@ test("schema.org Recipe 标准 JSON-LD 映射成庖丁菜谱且不臆造 why", (
   assert.deepEqual(r.tags, ["快手", "下饭"]);
   assert.equal(r.ingredients[0].name, "鸡蛋");
   assert.equal(r.ingredients[0].amount, "3个");
+  assert.deepEqual(r.tools, [{
+    name: "不粘锅",
+    purpose: "炒蛋防粘",
+    essential: true,
+    substitute: null,
+    substitute_note: "外部 JSON-LD 未提供替代信息。",
+    inferred: false,
+  }]);
   assert.equal(r.steps[0].title, "炒蛋");
   assert.equal(r.steps[0].action, "鸡蛋炒散后盛出。");
   assert.equal(r.steps[0].why, undefined);

@@ -235,10 +235,15 @@ test("导出文件正文切 en 后使用英文标题、章节和 why", () => {
   const recipe = {
     title: "Egg",
     ingredients: [{ name: "egg", qty: 2, unit: "pcs" }],
+    tools: [{ name: "Whisk", purpose: "Beat eggs", essential: true, substitute: null, substitute_note: "A fork cannot aerate as evenly", inferred: false }],
     steps: [{ index: 1, title: "Beat", action: "Beat eggs", why: { reason: "Even texture" } }],
   };
   const text = app.recipeToText(recipe, 1);
   assert.ok(text.startsWith("Egg\n"));
+  assert.ok(text.includes("Tools needed"));
+  assert.ok(text.includes("Whisk"));
+  assert.ok(text.includes("No alternative"));
+  assert.ok(text.includes("A fork cannot aerate as evenly"));
   assert.ok(text.includes("1. Beat: Beat eggs\n"));
   assert.ok(text.includes("   Why: Even texture\n"));
 
@@ -252,6 +257,7 @@ test("recipeToSchemaOrg 合法 Recipe JSON-LD", () => {
   const j = app.recipeToSchemaOrg({
     title: "蛋",
     ingredients: [{ name: "鸡蛋", amount: "3个" }],
+    tools: [{ name: "电动打蛋器", purpose: "打发蛋白", essential: true, substitute: "手动打蛋器", substitute_note: "耗时更长", inferred: true }],
     steps: [{ title: "炒", action: "下锅" }],
     nutrition: { per_serving: { calories_kcal: 180, protein_g: 12, fat_g: 10, carbs_g: 4, sodium_mg: 600 } },
   });
@@ -259,6 +265,9 @@ test("recipeToSchemaOrg 合法 Recipe JSON-LD", () => {
   assert.equal(j.name, "蛋");
   assert.ok(j.recipeIngredient.includes("鸡蛋 3个"));
   assert.equal(j.recipeInstructions[0]["@type"], "HowToStep");
+  assert.equal(j.tool[0]["@type"], "HowToTool");
+  assert.equal(j.tool[0].name, "电动打蛋器");
+  assert.match(j.tool[0].description, /Alternative: 手动打蛋器/);
   assert.equal(j.nutrition["@type"], "NutritionInformation");
   assert.equal(j.nutrition.calories, "180 kcal");
 });

@@ -127,6 +127,19 @@ function normalizeNutrition(raw) {
   return { per_serving: per, disclaimer: "来自外部 JSON-LD，未由庖丁估算。", estimated: false };
 }
 
+function normalizeTool(raw) {
+  const name = isObj(raw) ? (cleanText(raw.name) || cleanText(raw)) : cleanText(raw);
+  if (!name) return null;
+  return {
+    name,
+    purpose: isObj(raw) ? cleanText(raw.description) : "",
+    essential: true,
+    substitute: null,
+    substitute_note: "外部 JSON-LD 未提供替代信息。",
+    inferred: false,
+  };
+}
+
 export function mapSchemaRecipeToPaoding(input, { now = () => new Date().toISOString() } = {}) {
   const node = findRecipeNode(input);
   if (!node) throw Object.assign(new Error("未找到 schema.org Recipe"), { statusCode: 400 });
@@ -136,6 +149,7 @@ export function mapSchemaRecipeToPaoding(input, { now = () => new Date().toISOSt
   const cook = parseIsoDurationMinutes(node.cookTime);
   const instructions = collectInstructionNodes(node.recipeInstructions);
   const nutrition = normalizeNutrition(node.nutrition);
+  const tools = arr(node.tool ?? node.tools).map(normalizeTool).filter(Boolean);
   const recipe = {
     title: cleanText(node.name) || "未命名导入菜谱",
     servings: cleanText(node.recipeYield ?? node.yield) || null,
@@ -154,6 +168,7 @@ export function mapSchemaRecipeToPaoding(input, { now = () => new Date().toISOSt
     imported: true,
     created_at: now(),
   };
+  if (tools.length) recipe.tools = tools;
   if (nutrition) recipe.nutrition = nutrition;
   return recipe;
 }

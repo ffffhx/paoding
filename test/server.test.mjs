@@ -398,6 +398,7 @@ test("分享页包含 JSON-LD、营养卡片和技法标注", async () => {
       per_serving: { calories_kcal: 120, protein_g: 9, fat_g: 7, carbs_g: 2, sodium_mg: 300 },
       disclaimer: "AI 估算，仅供参考。",
     },
+    tools: [{ name: "电动打蛋器", purpose: "打发蛋白", essential: true, substitute: "手动打蛋器", substitute_note: "耗时更长", inferred: true }],
     steps: [{ index: 1, title: "快炒", action: "大火翻炒到断生。", why: { reason: "快速受热。" } }],
   }, null, 2));
   try {
@@ -408,6 +409,7 @@ test("分享页包含 JSON-LD、营养卡片和技法标注", async () => {
     assert.match(html, /导出 JSON-LD/);
     assert.match(html, /复制到自己的庖丁/);
     assert.match(html, /每份营养/);
+    assert.match(html, /需要的工具/);
     assert.match(html, /<span class="tech">翻炒<\/span>/);
 
     const match = html.match(/<script type="application\/ld\+json" id="jsonld">([\s\S]*?)<\/script>/);
@@ -416,6 +418,9 @@ test("分享页包含 JSON-LD、营养卡片和技法标注", async () => {
     assert.equal(jsonld["@type"], "Recipe");
     assert.equal(jsonld.name, id);
     assert.equal(jsonld.nutrition.calories, "120 kcal");
+    assert.equal(jsonld.tool[0]["@type"], "HowToTool");
+    assert.equal(jsonld.tool[0].name, "电动打蛋器");
+    assert.match(jsonld.tool[0].description, /Alternative: 手动打蛋器/);
   } finally {
     fs.rmSync(fp, { force: true });
   }

@@ -550,6 +550,16 @@ function toolsCardHtml(r) {
     </div>`).join('')}
   </div>`;
 }
+function schemaToolDescription(t) {
+  const note = String(t.substitute_note || '').trim();
+  const parts = [
+    t.purpose,
+    t.essential ? 'Essential' : '',
+    t.inferred ? 'Inferred' : '',
+    t.substitute ? `Alternative: ${t.substitute}${note ? ` (${note})` : ''}` : `No alternative${note ? `: ${note}` : ''}`,
+  ].filter(Boolean);
+  return parts.join('; ');
+}
 function hasRecipeWhy(r) {
   return (r.steps || []).some(s => s.why && (s.why.reason || s.why.if_not || s.why.cue));
 }
@@ -1666,6 +1676,17 @@ function shareRecipe(r, factor) {
 function recipeToText(r, f) {
   let s = tr('export.body.title', { title: r.title || '' });
   s += (r.ingredients || []).map(i => `· ${i.name} ${scaledAmount(i, f || 1) || ''}`).join('\n') + '\n\n';
+  const tools = recipeTools(r);
+  if (tools.length) {
+    s += `${tr('detail.tools.title')}\n`;
+    tools.forEach(t => {
+      const badges = [t.essential && tr('detail.tools.essential'), t.inferred && tr('detail.tools.inferred')].filter(Boolean).join(' / ');
+      s += `· ${t.name}${t.purpose ? `：${t.purpose}` : ''}${badges ? `（${badges}）` : ''}\n`;
+      if (t.substitute) s += `   ${tr('detail.tools.substitute', { substitute: t.substitute })}${t.substitute_note ? `；${tr('detail.tools.note', { note: t.substitute_note })}` : ''}\n`;
+      else s += `   ${tr('detail.tools.noSubstitute')}${t.substitute_note ? `；${tr('detail.tools.noSubstituteReason', { reason: t.substitute_note })}` : ''}\n`;
+    });
+    s += '\n';
+  }
   (r.steps || []).forEach(x => {
     s += tr(x.title ? 'export.body.step' : 'export.body.stepNoTitle', { index: x.index, title: x.title || '', action: x.action || '' });
     if (x.why?.reason) s += tr('export.body.why', { reason: x.why.reason });
@@ -1700,6 +1721,7 @@ function recipeToSchemaOrg(r) {
     recipeYield: undef(r.servings), totalTime: r.total_time_min ? `PT${r.total_time_min}M` : undefined,
     recipeIngredient: (r.ingredients || []).map(i => `${i.name} ${i.amount || ''}`.trim()),
     recipeInstructions: (r.steps || []).map(s => ({ '@type': 'HowToStep', name: undef(s.title), text: s.action || '' })),
+    tool: recipeTools(r).length ? recipeTools(r).map(t => ({ '@type': 'HowToTool', name: t.name, description: schemaToolDescription(t) })) : undefined,
     nutrition: n ? {
       '@type': 'NutritionInformation',
       calories: Number.isFinite(n.calories_kcal) ? `${n.calories_kcal} kcal` : undefined,

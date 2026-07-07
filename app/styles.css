@@ -387,6 +387,13 @@ html[data-theme="dark"] .hl{color:var(--amber)}
   .ing .irow:last-child{border-bottom:none!important}
   .ing .name{color:#111!important;flex:1!important}
   .ing .amt{color:#333!important;text-decoration:none!important;opacity:1!important}
+  .tools-card{margin:0!important;border:1px solid #d8d8d8!important;border-radius:0!important;background:#fff!important;padding:3mm 4mm!important;break-inside:avoid}
+  .tools-title{font-size:11.5pt!important;margin:0 0 2mm!important;color:#111!important}
+  .tool-row{border-top:1px solid #eee!important;padding:2.5mm 0 0!important;margin:2.5mm 0 0!important;break-inside:avoid}
+  .tool-main{font-size:10.5pt!important;color:#111!important}
+  .tool-purpose,.tool-sub{color:#333!important;font-size:10pt!important}
+  .tool-badge{border:1px solid #ddd!important;background:#fff!important;color:#333!important;border-radius:0!important}
+  .tool-sub.no{color:#111!important;font-weight:700!important}
   .stepmini{margin:0 0 5mm!important;border:1px solid #d8d8d8!important;border-radius:0!important;background:#fff!important;box-shadow:none!important;padding:4mm!important;break-inside:avoid}
   .stepmini .t{font-size:13pt!important;line-height:1.35!important;color:#111!important}
   .stepmini .n{background:#111!important;color:#fff!important;width:7mm!important;height:7mm!important;font-size:10pt!important;margin-right:3mm!important}
