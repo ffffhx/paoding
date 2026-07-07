@@ -33,6 +33,25 @@ export function extractFromHtml(html) {
   return { title, text: text.trim() };
 }
 
+const MISSING_OR_BLOCKED_RE = /(你访问的页面不见了|页面不存在|内容不存在|笔记不存在|请先登录|登录后|访问受限|安全验证|Access Denied|Not Found)/i;
+const RECIPE_HEADING_RE = /(菜谱|食谱|食材|材料|用料|配料|做法|步骤|调料|教程)/;
+const COOKING_VERB_RE = /(加入|放入|倒入|切|炒|煮|蒸|煎|炸|烤|焖|炖|拌|腌|出锅|焯水|调味|搅拌|翻炒)/g;
+const AMOUNT_RE = /\d+(?:\.\d+)?\s*(?:克|g|kg|千克|毫升|ml|升|L|勺|匙|个|只|颗|枚|分钟|小时)/i;
+
+export function unusableRecipeTextReason({ title = "", text = "" } = {}) {
+  const body = String(text || "").trim();
+  const combined = `${title}\n${body}`;
+  if (body.length < 20) return "没抓到足够的文字（可能是登录墙或纯图片帖）";
+  if (MISSING_OR_BLOCKED_RE.test(combined)) return "网页显示内容不存在、需要登录或被反爬拦截";
+  const cookingVerbCount = body.match(COOKING_VERB_RE)?.length || 0;
+  const hasRecipeHeading = RECIPE_HEADING_RE.test(combined);
+  const hasAmount = AMOUNT_RE.test(body);
+  if (!hasRecipeHeading && !(cookingVerbCount >= 2 && hasAmount)) {
+    return "没抓到足够的菜谱文字（可能只抓到了站点导航/页脚）";
+  }
+  return "";
+}
+
 async function fetchHtml(url) {
   let current = await assertPublicUrl(url);
   for (let i = 0; i < 5; i++) {

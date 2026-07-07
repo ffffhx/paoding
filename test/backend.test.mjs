@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { extractFromHtml } from "../src/fetchText.mjs";
+import { extractFromHtml, unusableRecipeTextReason } from "../src/fetchText.mjs";
 import { toMarkdown } from "../src/render.mjs";
 import { formatProcessError, isUrl, ytdlpArgs } from "../src/download.mjs";
 import { loadConfig } from "../src/config.mjs";
@@ -54,6 +54,30 @@ test("extractFromHtml 无 og 时用 <title> 与正文", () => {
   const r = extractFromHtml(html);
   assert.equal(r.title, "菜谱页");
   assert.ok(r.text.includes("切葱花"));
+});
+
+test("unusableRecipeTextReason 拒绝小红书空壳页脚，放行菜谱正文", () => {
+  assert.match(
+    unusableRecipeTextReason({
+      title: "小红书 - 你访问的页面不见了",
+      text: "网页版 创作中心 业务合作 发现 RED 直播 发布 通知 沪ICP备13030189号 © 2014-2026 行吟信息科技（上海）有限公司",
+    }),
+    /不存在|反爬/,
+  );
+  assert.match(
+    unusableRecipeTextReason({
+      title: "普通页面",
+      text: "首页 导航 关于我们 联系方式 沪ICP备13030189号 版权声明",
+    }),
+    /站点导航/,
+  );
+  assert.equal(
+    unusableRecipeTextReason({
+      title: "番茄炒蛋菜谱",
+      text: "食材：番茄2个，鸡蛋3个。做法：鸡蛋炒熟盛出，加入番茄炒出汁，再倒入鸡蛋翻炒调味出锅。",
+    }),
+    "",
+  );
 });
 
 test("toMarkdown 结构完整", () => {

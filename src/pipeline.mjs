@@ -5,7 +5,7 @@ import { transcribe, formatTimedTranscript } from "./transcribe.mjs";
 import { structureRecipe, clampStepTimes, sourceTimeCoverage } from "./chef.mjs";
 import { explainSteps } from "./explain.mjs";
 import { toMarkdown } from "./render.mjs";
-import { fetchArticleText } from "./fetchText.mjs";
+import { fetchArticleText, unusableRecipeTextReason } from "./fetchText.mjs";
 import { extractFrames, visionTranscript, probeDuration, extractStepImages, extractIngredientImages, transcribeRecipeImage } from "./vision.mjs";
 
 const slug = (s) =>
@@ -177,8 +177,9 @@ export async function processText(input, config, { onProgress = () => {}, signal
   if (isUrl) {
     emit("acquire", 6, "抓取网页文字…");
     ({ title, text } = await fetchArticleText(input, config.ytdlp || {}));
-    if (text.trim().length < 20) {
-      throw new Error("没抓到足够的文字（可能是登录墙或纯图片帖）。可直接复制帖子文字，用「粘贴文字」解析。");
+    const unusableReason = unusableRecipeTextReason({ title, text });
+    if (unusableReason) {
+      throw new Error(`${unusableReason}。可直接复制帖子文字，用「粘贴文字」解析。`);
     }
   } else {
     text = input;
