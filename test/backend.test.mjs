@@ -325,7 +325,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
 import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, inferBakingToolFallback, annotateRecipeCardSources } from "../src/chef.mjs";
-import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, ensureRecipeCardMarker, mapLimitSettled, extractIngredientImages, visionTranscript } from "../src/vision.mjs";
+import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, ensureRecipeCardMarker, mapLimitSettled, extractIngredientImages, visionTranscript, stepImageCandidateCount } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
   const out = parseWhisperJson({
@@ -610,6 +610,14 @@ test("candidateTimes 段内取样、偏向段末、夹回视频范围", () => {
   // 极短区间不产出重叠时刻
   const short = candidateTimes([5, 6], 300);
   assert.ok(short.length >= 1);
+});
+
+test("stepImageCandidateCount 短视频使用单候选帧，长视频按步骤跨度扩展", () => {
+  assert.equal(stepImageCandidateCount([0, 30], 133), 1);
+  assert.equal(stepImageCandidateCount([10, 18], 600), 1);
+  assert.equal(stepImageCandidateCount([10, 30], 600), 2);
+  assert.equal(stepImageCandidateCount([10, 60], 600), 4);
+  assert.equal(stepImageCandidateCount(null, 600), 1);
 });
 
 test("mapLimitSettled 限制并发并把单项失败保留为 rejected", async () => {

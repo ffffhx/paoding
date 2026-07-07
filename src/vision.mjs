@@ -216,6 +216,16 @@ export function candidateTimes([start, end], duration, n = 4) {
   return out;
 }
 
+export function stepImageCandidateCount(sourceTime, duration) {
+  const d = Number(duration);
+  if (Number.isFinite(d) && d > 0 && d <= 180) return 1;
+  if (!Array.isArray(sourceTime) || sourceTime.length < 2) return 1;
+  const span = Math.max(0, Number(sourceTime[1]) - Number(sourceTime[0]));
+  if (!Number.isFinite(span) || span <= 10) return 1;
+  if (span <= 25) return 2;
+  return 4;
+}
+
 // 在第 tSec 秒抽一帧存为 jpg。-ss 放在 -i 前走快速 seek，抽几十帧也只要几秒。
 export async function extractFrameAt(videoPath, tSec, outPath, signal) {
   await run(resolveFfmpegBin(), ["-y", "-ss", String(tSec), "-i", videoPath, "-frames:v", "1", "-vf", `scale=${FRAME_WIDTH}:-2`, "-q:v", "3", outPath], signal);
@@ -325,7 +335,7 @@ export async function extractStepImages(vision, videoPath, recipe, { duration, i
       const s = steps[i];
       onProgress({ pct: Math.round((i / steps.length) * 100), message: `截取步骤画面…（${i + 1}/${steps.length}）` });
       try {
-        const times = candidateTimes(s.source_time, duration);
+        const times = candidateTimes(s.source_time, duration, stepImageCandidateCount(s.source_time, duration));
         const files = [];
         for (let k = 0; k < times.length; k++) {
           const fp = path.join(tmp, `s${s.index}-c${k}.jpg`);
