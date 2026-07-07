@@ -42,6 +42,7 @@ before(async () => {
     PAODING_API_TOKENS: "",
     PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL || "http://localhost:11434/v1",
     PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY || "test",
+    PAODING_LLM_RATE_LIMIT_PER_MIN: "1000",
     PAODING_VISION_MODEL: "",
   });
   ({ handleRequest } = await import(`../app/server.mjs?test=${Date.now()}`));
@@ -923,6 +924,40 @@ test("tools endpoint 调用 LLM 推断工具、清洗后写回菜谱", async () 
   } finally {
     globalThis.fetch = originalFetch;
     fs.rmSync(fp, { force: true });
+  }
+});
+
+test("pantry-ideas 走 LLM 并返回 AI 推荐标记", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    assert.ok(String(input).endsWith("/chat/completions"));
+    const body = JSON.parse(String(init.body || "{}"));
+    const user = String(body.messages?.find((m) => m.role === "user")?.content || "");
+    assert.ok(user.includes("鸡蛋"));
+    assert.ok(user.includes("小葱（半把）"));
+    assert.equal(user.match(/鸡蛋/g).length, 1);
+    calls++;
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "1. 葱花炒蛋\n2. 蛋炒饭\n3. 葱油拌面" } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const empty = await request("/api/pantry-ideas", J({ pantry: [] }));
+    assert.equal(empty.status, 400);
+
+    const res = await request("/api/pantry-ideas", J({ pantry: [
+      { name: "鸡蛋" },
+      { name: "小葱", note: "半把" },
+      { name: "鸡蛋", note: "重复项应去重" },
+    ] }));
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.ai, true);
+    assert.match(data.answer, /葱花炒蛋/);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

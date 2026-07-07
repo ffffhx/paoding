@@ -523,7 +523,7 @@ const llmLimiter = createSlidingWindowRateLimiter({
 const LLM_ENDPOINTS = new Set([
   "/api/parse-url", "/api/parse-text", "/api/parse-file",
   "/api/parse-images",
-  "/api/ask", "/api/troubleshoot", "/api/nutrition", "/api/tools", "/api/overview", "/api/explain-recipe", "/api/import-recipe",
+  "/api/ask", "/api/troubleshoot", "/api/nutrition", "/api/tools", "/api/pantry-ideas", "/api/overview", "/api/explain-recipe", "/api/import-recipe",
 ]);
 const LIMITED_READ_ENDPOINTS = new Set([
   "/api/techniques",
@@ -1086,6 +1086,29 @@ async function answerTerm({ term, force }, { req } = {}) {
   return { body: { answer, cached: false, created_at: createdAt } };
 }
 
+function normalizePantryPayload(list) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(list) ? list : []) {
+    const name = String(raw?.name || raw || "").trim().slice(0, 48);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const note = String(raw?.note || raw?.amount || "").trim().slice(0, 80);
+    out.push({ name, note });
+  }
+  return out.slice(0, 80);
+}
+async function answerPantryIdeas({ pantry }) {
+  const items = normalizePantryPayload(pantry);
+  if (!items.length) return { code: 400, body: { error: "请先提供食材库存" } };
+  const prompt = {
+    system: llmSystem("你是务实的家庭厨房助手。根据用户已有食材，给 3 个可做菜思路。每个思路包含菜名、会用到的已有食材、最多 2 个建议补买项、关键做法。不要声称一定完全齐料。"),
+    user: `已有食材：\n${items.map((x) => `- ${x.name}${x.note ? `（${x.note}）` : ""}`).join("\n")}`,
+  };
+  const answer = await chatText(config.llm, prompt);
+  return { body: { answer, ai: true } };
+}
+
 const AI_ENDPOINTS = {
   _ingredientAsrDefense: "食材名可能包含语音识别的同音错别字（如 白纸 实为 白芷、肉豆扣 实为 肉豆蔻）。先判断名字是否为误写：若是，回答开头先指出正确名称，再按正确食材给替代建议；若名字本身不是食材也无法推断，直说无法识别，不要硬编。",
   "/api/ask": {
@@ -1143,6 +1166,9 @@ const AI_ENDPOINTS = {
       writeRecipeFile(id, saved);
       return { body: { ok: true, tools, recipe: { ...saved, id }, cached: false } };
     },
+  },
+  "/api/pantry-ideas": {
+    handle: answerPantryIdeas,
   },
   "/api/overview": {
     recipe: { required: true },

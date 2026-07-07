@@ -550,6 +550,50 @@ test("菜谱集规范化、成员查询和跨设备合并", () => {
   assert.ok(merged.some(x => x.id === "light"));
 });
 
+test("食材库存匹配覆盖度并标记购物清单已有项", () => {
+  const pantry = app.normalizePantry([
+    { name: "鸡蛋", note: "6个", updated_at: "2026-01-02T00:00:00.000Z" },
+    { name: "小葱" },
+    { name: "鸡蛋", note: "4个", updated_at: "2026-01-01T00:00:00.000Z" },
+    { name: "" },
+  ]);
+  assert.deepEqual(Array.from(pantry.map(x => x.name)), ["鸡蛋", "小葱"]);
+  assert.equal(pantry.find(x => x.name === "鸡蛋").note, "6个");
+  assert.equal(app.pantryHasIngredient("鸡蛋", pantry), true);
+  assert.equal(app.pantryHasIngredient("葱花", pantry), true);
+  assert.equal(app.pantryHasIngredient("番茄", pantry), false);
+
+  const recipe = {
+    title: "番茄炒蛋",
+    ingredients: [
+      { name: "鸡蛋", amount: "2个" },
+      { name: "番茄", amount: "1个" },
+      { name: "盐", amount: "适量" },
+      { name: "生抽", amount: "少许" },
+    ],
+  };
+  const coverage = app.recipeIngredientCoverage(recipe, pantry, { ignoreLooseSeasonings: true });
+  assert.equal(coverage.total, 2);
+  assert.equal(coverage.hit, 1);
+  assert.deepEqual(Array.from(coverage.missing), ["番茄 1个"]);
+
+  const strictCoverage = app.recipeIngredientCoverage(recipe, pantry, { ignoreLooseSeasonings: false });
+  assert.equal(strictCoverage.total, 4);
+  assert.equal(strictCoverage.hit, 1);
+
+  const ranked = app.rankRecipesByPantry([
+    recipe,
+    { title: "葱花蛋", ingredients: [{ name: "鸡蛋" }, { name: "小葱" }] },
+  ], pantry, { ignoreLooseSeasonings: true });
+  assert.equal(ranked[0].recipe.title, "葱花蛋");
+  assert.equal(ranked[0].coverage, 1);
+
+  const shopping = app.shoppingItemsForRecipe(recipe, 1, pantry);
+  assert.equal(shopping.find(x => x.name === "鸡蛋").owned, true);
+  assert.equal(shopping.find(x => x.name === "番茄").owned, false);
+  assert.ok(app.shoppingTextBySection(shopping).includes("鸡蛋 2个（已有）"));
+});
+
 test("mergeUserDataConflict 按字段合并跨设备数据", () => {
   const merged = app.mergeUserDataConflict({
     rev: 3,
@@ -557,6 +601,7 @@ test("mergeUserDataConflict 按字段合并跨设备数据", () => {
     favSteps: [{ key: "a#1", title: "A" }],
     shopping: [{ name: "盐", amount: "1勺", from: "A", checked: false }],
     cookbooks: [{ id: "breakfast", name: "早餐", recipeIds: ["a"], updated_at: "2026-01-01T00:00:00.000Z" }],
+    pantry: [{ name: "鸡蛋", note: "2个", updated_at: "2026-01-01T00:00:00.000Z" }],
     meta: { a: { notes: "旧", ingChecked: [1], cooked: true, cooked_at: "2026-01-01T00:00:00.000Z" } },
     mealPlan: { "2026-01-01": ["a"] },
     settings: { lang: "zh" },
@@ -565,9 +610,10 @@ test("mergeUserDataConflict 按字段合并跨设备数据", () => {
     favSteps: [{ key: "b#1", title: "B" }, { key: "a#1", title: "A2" }],
     shopping: [{ name: "盐", amount: "1勺", from: "A", checked: true }, { name: "糖", amount: "2勺", from: "B" }],
     cookbooks: [{ id: "breakfast", name: "早午餐", recipeIds: ["b"], updated_at: "2026-01-02T00:00:00.000Z" }],
+    pantry: [{ name: "鸡蛋", note: "6个", updated_at: "2026-01-02T00:00:00.000Z" }, { name: "番茄" }],
     meta: { a: { notes: "新", ingChecked: [2], cooked_at: "2026-01-02T00:00:00.000Z" } },
     mealPlan: { "2026-01-01": ["b", "a"] },
-    settings: { lang: "en" },
+    settings: { lang: "en", pantryIgnoreLooseSeasonings: false },
   });
   assert.equal(merged.rev, 3);
   assert.deepEqual(Array.from(merged.favRecipes), ["a", "b"]);
@@ -576,10 +622,13 @@ test("mergeUserDataConflict 按字段合并跨设备数据", () => {
   assert.ok(merged.shopping.some((x) => x.name === "糖"));
   assert.equal(merged.cookbooks[0].name, "早午餐");
   assert.deepEqual(Array.from(merged.cookbooks[0].recipeIds), ["a", "b"]);
+  assert.equal(merged.pantry.find(x => x.name === "鸡蛋").note, "6个");
+  assert.ok(merged.pantry.some(x => x.name === "番茄"));
   assert.deepEqual(Array.from(merged.meta.a.ingChecked), [1, 2]);
   assert.equal(merged.meta.a.notes, "新");
   assert.equal(merged.meta.a.cooked, true);
   assert.equal(merged.meta.a.cooked_at, "2026-01-02T00:00:00.000Z");
   assert.deepEqual(Array.from(merged.mealPlan["2026-01-01"]), ["a", "b"]);
   assert.equal(merged.settings.lang, "en");
+  assert.equal(merged.settings.pantryIgnoreLooseSeasonings, false);
 });

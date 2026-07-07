@@ -273,6 +273,34 @@ html[data-theme="dark"] .job-row.running::after,html[data-theme="dark"] .job-row
 .cb-check span{flex:1;min-width:0}
 .cb-check em{font-style:normal;color:var(--muted);font-size:12px}
 
+.pantry-shell{display:grid;gap:14px}
+.pantry-panel{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:14px}
+.pantry-add{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:8px;align-items:center}
+.pantry-quick{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}
+.pantry-quick>span{color:var(--muted);font-size:13px;font-weight:700}
+.pantry-chip{font-size:12px;padding:5px 10px;min-height:30px}
+.pantry-items{display:flex;flex-wrap:wrap;gap:8px}
+.pantry-item{display:inline-flex;align-items:center;gap:8px;max-width:100%;border:1px solid var(--line);border-radius:999px;background:var(--bg);padding:6px 6px 6px 12px}
+.pantry-item b{font-size:14px}
+.pantry-item span{color:var(--muted);font-size:12px;margin-left:6px}
+.pantry-item .iconbtn{width:28px;height:28px;min-height:28px}
+.pantry-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.pantry-head h2{margin:0;font-size:18px}
+.pantry-toggle{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;margin:0 0 12px}
+.pantry-toggle input{accent-color:var(--tomato)}
+.pantry-match-list{display:flex;flex-direction:column;gap:10px}
+.pantry-match{display:grid;grid-template-columns:78px minmax(0,1fr);gap:12px;align-items:center;border:1px solid var(--line);border-radius:14px;background:var(--bg);padding:12px;cursor:pointer}
+.pantry-match:hover{border-color:var(--tomato)}
+.pantry-score{height:58px;border-radius:12px;background:var(--card);border:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center}
+.pantry-score b{font-size:20px;color:var(--herb);font-variant-numeric:tabular-nums}
+.pantry-score span{font-size:11px;color:var(--muted)}
+.pantry-match-main{min-width:0}
+.pantry-match-main h3{margin:0 0 4px;font-size:16px;line-height:1.25}
+.pantry-match-main p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}
+.ai-card{border:1px solid var(--line);border-radius:14px;background:var(--bg);padding:12px;margin:0 0 12px}
+.ai-card .ai-note{font-size:12px;color:var(--tomato);font-weight:700;margin-bottom:6px}
+.ai-card p{margin:0;color:var(--ink);font-size:14px;line-height:1.6}
+
 .planday{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px}
 .planhd{display:flex;align-items:center;gap:8px}
 .planhd .act{margin-left:auto;color:var(--tomato);font-size:13px;font-weight:600}
@@ -301,6 +329,8 @@ html[data-theme="dark"] .job-row.running::after,html[data-theme="dark"] .job-row
 .shop-item:active,.tech-card:active,.skill:active,.setrow:active{transform:translateY(1px);background:var(--wash)}
 .shop-item.checked .txt{text-decoration:line-through;opacity:.5}
 .shop-item .txt{flex:1}.shop-item .sub{color:var(--muted);font-size:12px}
+.shop-item.owned{border-style:dashed}
+.owned-tag{display:inline-flex;align-items:center;min-height:20px;border-radius:999px;background:var(--wash);color:var(--herb);font-size:12px;font-weight:700;padding:1px 8px;vertical-align:1px}
 
 .setrow{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:10px;gap:12px}
 .setrow .lbl{font-size:15px}.setrow .desc{color:var(--muted);font-size:12px;margin-top:2px}
@@ -363,6 +393,8 @@ html[data-theme="dark"] .hl{color:var(--amber)}
     grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));
   }
   .cookbook-grid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  #view-pantry.list{padding:22px 28px 90px}
+  .pantry-shell{grid-template-columns:minmax(280px,.85fr) minmax(360px,1.15fr);align-items:start}
   .list .empty{grid-column:1/-1}
   .skill{margin-bottom:0}
 
@@ -399,6 +431,8 @@ html[data-theme="dark"] .hl{color:var(--amber)}
   .nutrition-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .recipe-tools{flex-wrap:wrap}
   .recipe-tools input,.recipe-tools select{width:100%;min-width:0}
+  .pantry-add{grid-template-columns:1fr}
+  .pantry-head{align-items:flex-start;flex-direction:column}
 }
 
 /* 更宽的屏幕再放一列 */
@@ -429,7 +463,7 @@ html[data-theme="dark"] .hl{color:var(--amber)}
   @page{margin:14mm}
   html,body,#app{background:#fff!important;color:#111!important;max-width:none!important;margin:0!important;padding:0!important}
   #app>header,#app>.parsebar,#app>.tabs,#searchrow,#recipeTools,#filters,
-  #view-recipes,#view-cookbooks,#view-plan,#view-techniques,#view-skills,#view-shopping,#view-settings,
+  #view-recipes,#view-cookbooks,#view-pantry,#view-plan,#view-techniques,#view-skills,#view-shopping,#view-settings,
   .toast,#timerhud,#cook,.overlay,.lightbox{display:none!important}
   .page{position:static!important;inset:auto!important;display:block!important;max-width:none!important;margin:0!important;overflow:visible!important;border:0!important;box-shadow:none!important;animation:none!important;background:#fff!important;color:#111!important}
   .page .topbar,.page .scaler,.page .import-note,.page .cta,.page .notes,.page .rating,

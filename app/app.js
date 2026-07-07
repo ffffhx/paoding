@@ -13,7 +13,7 @@ const I18N = window.PaodingI18n || {
 };
 const normalizeUiLang = (v) => I18N.normalizeLang ? I18N.normalizeLang(v) : (String(v || 'zh').toLowerCase() === 'en' ? 'en' : 'zh');
 const tr = (key, params) => I18N.t ? I18N.t(key, params) : key;
-const settings = Object.assign({ theme: 'light', fontScale: 1, tts: true, ttsRate: 1, apiBase: '', apiToken: '', depth: 'balanced', lang: 'zh' }, store.get('settings', {}));
+const settings = Object.assign({ theme: 'light', fontScale: 1, tts: true, ttsRate: 1, apiBase: '', apiToken: '', depth: 'balanced', lang: 'zh', pantryIgnoreLooseSeasonings: true }, store.get('settings', {}));
 function setLanguage(lang) {
   settings.lang = normalizeUiLang(lang);
   if (I18N.setLang) I18N.setLang(settings.lang);
@@ -47,6 +47,7 @@ const API = {
   troubleshoot: (recipeId, stepIndex, problem) => F('/api/troubleshoot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, stepIndex, problem }) }).then(j),
   nutrition: (recipeId) => F('/api/nutrition', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
   tools: (recipeId) => F('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
+  pantryIdeas: (pantry) => F('/api/pantry-ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pantry }) }).then(j),
   overview: (recipeId) => F('/api/overview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId }) }).then(j),
   explainRecipe: (recipeId, depth) => F('/api/explain-recipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipeId, depth }) }).then(j),
   userdataGet: () => F('/api/userdata').then(r => r.json()).catch(() => ({ rev: 0 })),
@@ -130,6 +131,7 @@ let favRecipes = store.get('favRecipes', []);
 let favSteps = store.get('favSteps', []);
 let shopping = store.get('shopping', []);
 let cookbooks = normalizeCookbooks(store.get('cookbooks', []));
+let pantry = normalizePantry(store.get('pantry', []));
 let mealPlan = store.get('mealPlan', {}); // { 'YYYY-MM-DD': [recipeId,...] }
 function saveMealPlan() { store.set('mealPlan', mealPlan); }
 let meta = store.get('meta', {}); // {recipeId:{cooked,cooked_at,rating,notes,ingChecked:[]}}
@@ -144,16 +146,17 @@ const stepKey = (id, i) => id + '#' + i;
    收藏/技巧/购物清单/笔记评分等原本只存在各设备的 localStorage，手机和电脑不通。
    这里拦截对这些键的写入 → 防抖后回传后端；启动时先从后端拉一份，实现多端共享。 */
 const _storeSet = store.set.bind(store);
-const SYNC_KEYS = new Set(['favRecipes', 'favSteps', 'shopping', 'cookbooks', 'meta', 'mealPlan', 'settings']);
+const SYNC_KEYS = new Set(['favRecipes', 'favSteps', 'shopping', 'cookbooks', 'pantry', 'meta', 'mealPlan', 'settings']);
 let syncT = null;
 function revOf(d) { const n = Number(d && d.rev); return Number.isInteger(n) && n >= 0 ? n : 0; }
 function syncSettingsFrom(value) {
   const out = {};
   if (value && typeof value === 'object' && !Array.isArray(value) && value.lang != null) out.lang = normalizeUiLang(value.lang);
+  if (value && typeof value === 'object' && !Array.isArray(value) && value.pantryIgnoreLooseSeasonings != null) out.pantryIgnoreLooseSeasonings = value.pantryIgnoreLooseSeasonings !== false;
   return out;
 }
-function currentSyncSettings() { return { lang: settings.lang }; }
-function localUserData() { return { rev: userdataRev, favRecipes, favSteps, shopping, cookbooks, meta, mealPlan, settings: currentSyncSettings() }; }
+function currentSyncSettings() { return { lang: settings.lang, pantryIgnoreLooseSeasonings: settings.pantryIgnoreLooseSeasonings !== false }; }
+function localUserData() { return { rev: userdataRev, favRecipes, favSteps, shopping, cookbooks, pantry, meta, mealPlan, settings: currentSyncSettings() }; }
 function uniqList(a, b, keyFn = (x) => JSON.stringify(x)) {
   const out = [], seen = new Set();
   for (const x of [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]) {
@@ -169,7 +172,7 @@ function mergeShopping(remote, local) {
   for (const it of [...(Array.isArray(remote) ? remote : []), ...(Array.isArray(local) ? local : [])]) {
     const k = key(it);
     const prev = map.get(k);
-    map.set(k, prev ? { ...prev, ...it, checked: !!prev.checked || !!it.checked } : { ...it });
+    map.set(k, prev ? { ...prev, ...it, checked: !!prev.checked || !!it.checked, owned: !!prev.owned || !!it.owned } : { ...it });
   }
   return [...map.values()];
 }
@@ -263,6 +266,117 @@ function mergeCookbooks(remote, local) {
   normalizeCookbooks(local).forEach(add);
   return normalizeCookbooks([...merged.values()]);
 }
+const PANTRY_QUICK_GROUPS = [
+  { label: '葱姜蒜', items: ['葱', '姜', '蒜'] },
+  { label: '生抽', items: ['生抽'] },
+  { label: '老抽', items: ['老抽'] },
+  { label: '料酒', items: ['料酒'] },
+  { label: '盐', items: ['盐'] },
+  { label: '糖', items: ['糖'] },
+  { label: '醋', items: ['醋'] },
+  { label: '淀粉', items: ['淀粉'] },
+  { label: '鸡蛋', items: ['鸡蛋'] },
+  { label: '米饭', items: ['米饭'] },
+];
+const PANTRY_LOOSE_AMOUNT_RE = /(适量|少许|若干|可选|按口味|酌情|视频未明确|未明确|to taste|optional)/i;
+const PANTRY_SEASONING_KEYWORDS = ['盐', '糖', '白糖', '冰糖', '酱油', '生抽', '老抽', '蚝油', '耗油', '醋', '料酒', '味精', '鸡精', '胡椒', '胡椒粉', '花椒', '八角', '桂皮', '香叶', '孜然', '五香粉', '十三香', '辣椒', '干辣椒', '辣椒面', '淀粉', '生粉', '香油', '食用油', '油', '葱', '姜', '蒜'];
+function normalizeIngredientName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[（(].*?[）)]/g, '')
+    .replace(/[·•,，、;；:：\s]/g, '')
+    .trim();
+}
+function pantryItemKey(item) {
+  return normalizeIngredientName(typeof item === 'string' ? item : item?.name);
+}
+function ingredientKeyVariants(name) {
+  const key = normalizeIngredientName(name);
+  const trimmed = key
+    .replace(/^(新鲜|鲜|小|大|老|嫩|干)/, '')
+    .replace(/(花|末|碎|片|丝|段|粒|丁|块|条)$/g, '');
+  return uniqList([key, trimmed], [], String).filter(Boolean);
+}
+function normalizePantryItem(raw) {
+  const obj = typeof raw === 'string' ? { name: raw } : raw;
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  const name = String(obj.name || '').trim().slice(0, 48);
+  if (!name) return null;
+  const note = String(obj.note || obj.amount || '').trim().slice(0, 80);
+  return {
+    id: safeDataId(obj.id, name),
+    name,
+    note,
+    created_at: String(obj.created_at || obj.createdAt || ''),
+    updated_at: String(obj.updated_at || obj.updatedAt || ''),
+  };
+}
+function normalizePantry(list) {
+  const byName = new Map();
+  for (const raw of Array.isArray(list) ? list : []) {
+    const item = normalizePantryItem(raw);
+    if (!item) continue;
+    const key = pantryItemKey(item);
+    if (!key) continue;
+    const prev = byName.get(key);
+    if (!prev) {
+      byName.set(key, item);
+      continue;
+    }
+    const preferNext = item.updated_at && (!prev.updated_at || item.updated_at >= prev.updated_at);
+    byName.set(key, {
+      ...prev,
+      name: preferNext ? item.name : prev.name,
+      note: preferNext ? item.note : (prev.note || item.note),
+      created_at: prev.created_at || item.created_at,
+      updated_at: [prev.updated_at, item.updated_at].filter(Boolean).sort().pop() || '',
+    });
+  }
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+}
+function mergePantry(remote, local) {
+  return normalizePantry([...(Array.isArray(remote) ? remote : []), ...(Array.isArray(local) ? local : [])]);
+}
+function pantryHasIngredient(name, items = pantry) {
+  const keys = ingredientKeyVariants(name);
+  if (!keys.length) return false;
+  return normalizePantry(items).some((item) => {
+    const pantryKeys = ingredientKeyVariants(item.name);
+    return keys.some(key => pantryKeys.some(pk => pk === key || (pk.length >= 2 && key.includes(pk)) || (key.length >= 2 && pk.includes(key))));
+  });
+}
+function isLooseSeasoningIngredient(ingredient) {
+  const name = String(ingredient?.name || '');
+  const amountText = `${ingredient?.amount || ''} ${ingredient?.note || ''}`;
+  if (!PANTRY_LOOSE_AMOUNT_RE.test(amountText)) return false;
+  return PANTRY_SEASONING_KEYWORDS.some(k => name.includes(k));
+}
+function pantryCoverageOptions(opts = {}) {
+  return { ignoreLooseSeasonings: opts.ignoreLooseSeasonings !== false };
+}
+function shouldIgnoreIngredientForPantry(ingredient, opts = {}) {
+  const options = pantryCoverageOptions(opts);
+  return options.ignoreLooseSeasonings && isLooseSeasoningIngredient(ingredient);
+}
+function recipeIngredientCoverage(recipe, pantryItems = pantry, opts = {}) {
+  const considered = (recipe?.ingredients || [])
+    .filter(i => i?.name)
+    .filter(i => !shouldIgnoreIngredientForPantry(i, opts));
+  const missing = [];
+  const matched = [];
+  for (const ing of considered) {
+    if (pantryHasIngredient(ing.name, pantryItems)) matched.push(ing.name);
+    else missing.push([ing.name, ing.amount].filter(Boolean).join(' '));
+  }
+  const total = considered.length;
+  const hit = matched.length;
+  return { hit, total, coverage: total ? hit / total : 0, matched, missing };
+}
+function rankRecipesByPantry(list = recipes, pantryItems = pantry, opts = {}) {
+  return (Array.isArray(list) ? list : []).map(r => ({ recipe: r, ...recipeIngredientCoverage(r, pantryItems, opts) }))
+    .filter(x => x.total > 0)
+    .sort((a, b) => b.coverage - a.coverage || b.hit - a.hit || a.missing.length - b.missing.length || String(a.recipe?.title || '').localeCompare(String(b.recipe?.title || ''), 'zh-CN'));
+}
 function mergeSyncSettings(remote, local) {
   const r = syncSettingsFrom(remote);
   const l = syncSettingsFrom(local);
@@ -275,6 +389,7 @@ function mergeUserDataConflict(remote, local) {
     favSteps: uniqList(remote?.favSteps, local?.favSteps, (x) => x?.key || JSON.stringify(x)),
     shopping: mergeShopping(remote?.shopping, local?.shopping),
     cookbooks: mergeCookbooks(remote?.cookbooks, local?.cookbooks),
+    pantry: mergePantry(remote?.pantry, local?.pantry),
     meta: mergeMeta(remote?.meta, local?.meta),
     mealPlan: mergeMealPlan(remote?.mealPlan, local?.mealPlan),
     settings: mergeSyncSettings(remote?.settings, local?.settings),
@@ -286,11 +401,14 @@ function applyUserData(d) {
   favSteps = Array.isArray(d.favSteps) ? d.favSteps : [];
   shopping = Array.isArray(d.shopping) ? d.shopping : [];
   cookbooks = normalizeCookbooks(d.cookbooks);
+  pantry = normalizePantry(d.pantry);
   meta = d.meta && typeof d.meta === 'object' && !Array.isArray(d.meta) ? d.meta : {};
   mealPlan = d.mealPlan && typeof d.mealPlan === 'object' && !Array.isArray(d.mealPlan) ? d.mealPlan : {};
   const syncedSettings = syncSettingsFrom(d.settings);
-  if (syncedSettings.lang) { setLanguage(syncedSettings.lang); applyStaticI18n(); _storeSet('settings', settings); }
-  _storeSet('favRecipes', favRecipes); _storeSet('favSteps', favSteps); _storeSet('shopping', shopping); _storeSet('cookbooks', cookbooks); _storeSet('meta', meta); _storeSet('mealPlan', mealPlan);
+  if (syncedSettings.lang) setLanguage(syncedSettings.lang);
+  if (syncedSettings.pantryIgnoreLooseSeasonings != null) settings.pantryIgnoreLooseSeasonings = syncedSettings.pantryIgnoreLooseSeasonings;
+  if (syncedSettings.lang || syncedSettings.pantryIgnoreLooseSeasonings != null) { applyStaticI18n(); _storeSet('settings', settings); }
+  _storeSet('favRecipes', favRecipes); _storeSet('favSteps', favSteps); _storeSet('shopping', shopping); _storeSet('cookbooks', cookbooks); _storeSet('pantry', pantry); _storeSet('meta', meta); _storeSet('mealPlan', mealPlan);
 }
 async function syncUserDataNow(retry = true) {
   try {
@@ -322,6 +440,7 @@ async function loadUserData() {
   favSteps = merge(d.favSteps, favSteps); _storeSet('favSteps', favSteps);
   shopping = merge(d.shopping, shopping); _storeSet('shopping', shopping);
   cookbooks = normalizeCookbooks(merge(d.cookbooks, cookbooks)); _storeSet('cookbooks', cookbooks);
+  pantry = normalizePantry(merge(d.pantry, pantry)); _storeSet('pantry', pantry);
   meta = merge(d.meta, meta); _storeSet('meta', meta);
   mealPlan = merge(d.mealPlan, mealPlan); _storeSet('mealPlan', mealPlan);
   const remoteSettings = syncSettingsFrom(d.settings);
@@ -330,6 +449,12 @@ async function loadUserData() {
     applyStaticI18n();
     _storeSet('settings', settings);
   } else if (settings.lang !== 'zh') {
+    needPush = true;
+  }
+  if (remoteSettings.pantryIgnoreLooseSeasonings != null) {
+    settings.pantryIgnoreLooseSeasonings = remoteSettings.pantryIgnoreLooseSeasonings;
+    _storeSet('settings', settings);
+  } else if (settings.pantryIgnoreLooseSeasonings === false) {
     needPush = true;
   }
   if (needPush) syncUp(); // 把后端缺的本地数据推上去，避免下次又被空值覆盖
@@ -543,12 +668,13 @@ function batchInfoText(r, batchFactor = 1) {
   if (info.makes_note) parts.push(String(info.makes_note));
   return parts.join(' · ');
 }
-function shoppingItemsForRecipe(r, factors = 1) {
+function shoppingItemsForRecipe(r, factors = 1, pantryItems = pantry) {
   return (r?.ingredients || []).filter(i => i?.name).map(i => ({
     name: i.name,
     amount: scaledIngredientAmount(i, factors),
     from: r.title,
     checked: false,
+    owned: pantryHasIngredient(i.name, pantryItems),
   }));
 }
 function shoppingFactorsForRecipeMeta(r, m = {}) {
@@ -1278,6 +1404,133 @@ function showCookbookPicker(r) {
   };
 }
 
+/* ================= 我的食材（库存 + 能做什么）================= */
+function pantryMatchOptions() {
+  return { ignoreLooseSeasonings: settings.pantryIgnoreLooseSeasonings !== false };
+}
+function savePantry() {
+  pantry = normalizePantry(pantry);
+  store.set('pantry', pantry);
+}
+function addPantryItem(name, note = '') {
+  const cleanName = String(name || '').trim();
+  if (!cleanName) return false;
+  const now = new Date().toISOString();
+  const key = normalizeIngredientName(cleanName);
+  const found = pantry.find(x => pantryItemKey(x) === key);
+  if (found) {
+    found.note = String(note || found.note || '').trim().slice(0, 80);
+    found.updated_at = now;
+  } else {
+    pantry.push({ id: safeDataId('', cleanName + now), name: cleanName.slice(0, 48), note: String(note || '').trim().slice(0, 80), created_at: now, updated_at: now });
+  }
+  savePantry();
+  return true;
+}
+function addPantryFromInputs() {
+  const name = $('#pantryName')?.value || '';
+  const note = $('#pantryNote')?.value || '';
+  if (!addPantryItem(name, note)) return;
+  $('#pantryName').value = '';
+  $('#pantryNote').value = '';
+  renderPantry();
+  renderShopping();
+  toast(tr('pantry.saved'));
+}
+function deletePantryItem(id) {
+  pantry = pantry.filter(x => x.id !== id);
+  savePantry();
+  renderPantry();
+  renderShopping();
+  toast(tr('pantry.saved'));
+}
+function pantryQuickLabel(group) {
+  return group.label || (group.items || []).join('、');
+}
+function renderPantryItems() {
+  if (!pantry.length) return `<div class="empty">${esc(tr('pantry.empty.title'))}<br>${esc(tr('pantry.empty.help'))}</div>`;
+  return `<div class="pantry-items">${pantry.map(item => `
+    <div class="pantry-item">
+      <div><b>${esc(item.name)}</b>${item.note ? `<span>${esc(item.note)}</span>` : ''}</div>
+      <button class="iconbtn pantry-del" data-id="${esc(item.id)}" title="${esc(tr('pantry.remove'))}">✕</button>
+    </div>`).join('')}</div>`;
+}
+function renderPantryMatches() {
+  const ranked = rankRecipesByPantry(recipes, pantry, pantryMatchOptions()).slice(0, 12);
+  if (!ranked.length) return `<div class="empty">${esc(tr('pantry.noMatch'))}</div>`;
+  return `<div class="pantry-match-list">${ranked.map((x) => {
+    const pct = Math.round(x.coverage * 100);
+    const missing = x.missing.slice(0, 6).join('、');
+    return `<div class="pantry-match" data-id="${esc(x.recipe.id)}">
+      <div class="pantry-score"><b>${pct}%</b><span>${esc(tr('pantry.coverage', { hit: x.hit, total: x.total }))}</span></div>
+      <div class="pantry-match-main">
+        <h3>${esc(x.recipe.title || tr('recipe.untitled'))}</h3>
+        <p>${x.missing.length ? esc(tr('pantry.missing', { items: missing })) : esc(tr('pantry.ready'))}</p>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+async function askPantryIdeas() {
+  if (!pantry.length) { toast(tr('pantry.empty.title')); return; }
+  const btn = $('#pantryIdeasBtn');
+  const box = $('#pantryIdeasBox');
+  if (btn) { btn.disabled = true; btn.textContent = tr('pantry.ai.loading'); }
+  try {
+    const res = await API.pantryIdeas(pantry);
+    if (box) box.innerHTML = `<div class="ai-card"><div class="ai-note">${esc(tr('pantry.ai.label'))}</div><p>${esc(res.answer || '').replace(/\n/g, '<br>')}</p></div>`;
+  } catch (e) {
+    toast(tr('pantry.ai.failed', { message: e.message }));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = tr('pantry.ai.button'); }
+  }
+}
+function renderPantry() {
+  const box = $('#view-pantry');
+  if (!box) return;
+  box.innerHTML = `
+    <div class="pantry-shell">
+      <div class="pantry-panel">
+        <div class="pantry-add">
+          <input type="text" id="pantryName" placeholder="${esc(tr('pantry.add.name'))}">
+          <input type="text" id="pantryNote" placeholder="${esc(tr('pantry.add.note'))}">
+          <button class="btn sm" id="pantryAddBtn">${esc(tr('pantry.add'))}</button>
+        </div>
+        <div class="pantry-quick"><span>${esc(tr('pantry.quick'))}</span>${PANTRY_QUICK_GROUPS.map((group, i) => `<button class="chip pantry-chip" data-i="${i}">${esc(pantryQuickLabel(group))}</button>`).join('')}</div>
+        ${renderPantryItems()}
+      </div>
+      <div class="pantry-panel">
+        <div class="pantry-head">
+          <h2>${esc(tr('pantry.matches.title'))}</h2>
+          <button class="btn ghost sm" id="pantryIdeasBtn">${esc(tr('pantry.ai.button'))}</button>
+        </div>
+        <label class="pantry-toggle"><input type="checkbox" id="pantryIgnoreLoose" ${settings.pantryIgnoreLooseSeasonings === false ? '' : 'checked'}> ${esc(tr('pantry.ignoreLoose'))}</label>
+        <div id="pantryIdeasBox"></div>
+        ${renderPantryMatches()}
+      </div>
+    </div>`;
+  $('#pantryAddBtn') && ($('#pantryAddBtn').onclick = addPantryFromInputs);
+  $('#pantryName') && ($('#pantryName').onkeydown = (e) => { if (e.key === 'Enter') addPantryFromInputs(); });
+  $('#pantryNote') && ($('#pantryNote').onkeydown = (e) => { if (e.key === 'Enter') addPantryFromInputs(); });
+  box.querySelectorAll('.pantry-chip').forEach(btn => btn.onclick = () => {
+    const group = PANTRY_QUICK_GROUPS[Number(btn.dataset.i)];
+    (group?.items || []).forEach(name => addPantryItem(name));
+    renderPantry();
+    renderShopping();
+    toast(tr('pantry.saved'));
+  });
+  box.querySelectorAll('.pantry-del').forEach(btn => btn.onclick = (e) => { e.stopPropagation(); deletePantryItem(btn.dataset.id); });
+  box.querySelectorAll('.pantry-match').forEach(node => node.onclick = () => {
+    const r = recipes.find(x => x.id === node.dataset.id);
+    if (r) openDetail(r);
+  });
+  $('#pantryIgnoreLoose') && ($('#pantryIgnoreLoose').onchange = (e) => {
+    settings.pantryIgnoreLooseSeasonings = !!e.target.checked;
+    saveSettings();
+    renderPantry();
+  });
+  $('#pantryIdeasBtn') && ($('#pantryIdeasBtn').onclick = askPantryIdeas);
+}
+
 /* ================= 购物清单（按货架分区 + 同名合并）================= */
 const SHOP_SECTION_ORDER = ['蔬菜水果', '肉禽蛋', '水产', '调味干货', '粮油米面', '乳品豆制品', '冷冻', '其他'];
 const SHOP_SECTION_I18N = {
@@ -1332,9 +1585,10 @@ function groupShoppingItems(list) {
   const groups = {};
   (Array.isArray(list) ? list : []).forEach((it, i) => {
     if (!it || !it.name) return;
-    const g = groups[it.name] = groups[it.name] || { name: it.name, section: shopCat(it.name), amounts: [], froms: new Set(), idxs: [] };
+    const g = groups[it.name] = groups[it.name] || { name: it.name, section: shopCat(it.name), amounts: [], froms: new Set(), idxs: [], owned: false };
     if (it.amount) g.amounts.push(it.amount);
     if (it.from) g.froms.add(it.from);
+    if (it.owned) g.owned = true;
     g.idxs.push(i);
   });
   const bySection = {};
@@ -1343,6 +1597,7 @@ function groupShoppingItems(list) {
       name: g.name, section: g.section, idxs: g.idxs,
       amount: mergeAmounts(g.amounts), src: [...g.froms].join('、'),
       checked: g.idxs.every(i => list[i].checked),
+      owned: g.owned,
     };
     (bySection[g.section] = bySection[g.section] || []).push(item);
   });
@@ -1352,12 +1607,12 @@ function groupShoppingItems(list) {
   })).filter(g => g.items.length);
 }
 function shoppingTextBySection(list = shopping) {
-  return groupShoppingItems(list).map(g => `【${shopSectionLabel(g.section)}】\n` + g.items.map(it => `${it.checked ? '✓ ' : ''}${it.name}${it.amount ? ' ' + it.amount : ''}`).join('\n')).join('\n\n');
+  return groupShoppingItems(list).map(g => `【${shopSectionLabel(g.section)}】\n` + g.items.map(it => `${it.checked ? '✓ ' : ''}${it.name}${it.amount ? ' ' + it.amount : ''}${it.owned ? `（${tr('shopping.owned')}）` : ''}`).join('\n')).join('\n\n');
 }
 function shopManualAdd() {
   const inp = $('#shopAdd'); if (!inp) return;
   const v = inp.value.trim(); if (!v) return;
-  shopping.push({ name: v, amount: '', from: '手动添加', checked: false });
+  shopping.push({ name: v, amount: '', from: '手动添加', checked: false, owned: pantryHasIngredient(v) });
   store.set('shopping', shopping); updateBadges(); renderShopping();
 }
 function renderShopping() {
@@ -1378,9 +1633,9 @@ function renderShopping() {
   for (const group of groupShoppingItems(shopping)) {
     html += `<div class="sec-title" style="margin:14px 0 6px 0;padding:0">${esc(shopSectionLabel(group.section))}</div>`;
     html += group.items.map(m => `
-      <div class="shop-item ${m.checked ? 'checked' : ''}" data-idxs="${m.idxs.join(',')}">
+      <div class="shop-item ${m.checked ? 'checked' : ''} ${m.owned ? 'owned' : ''}" data-idxs="${m.idxs.join(',')}">
         <div class="ck ${m.checked ? 'on' : ''}">${m.checked ? '✓' : ''}</div>
-        <div class="txt">${esc(m.name)}${m.amount ? ` · <span style="color:var(--muted)">${esc(m.amount)}</span>` : ''}<div class="sub">${esc(shoppingSourceLabel(m.src))}${m.idxs.length > 1 ? ` · ${esc(tr('shopping.mergedFrom', { count: m.idxs.length }))}` : ''}</div></div>
+        <div class="txt">${esc(m.name)}${m.amount ? ` · <span style="color:var(--muted)">${esc(m.amount)}</span>` : ''}${m.owned ? ` <span class="owned-tag">${esc(tr('shopping.owned'))}</span>` : ''}<div class="sub">${esc(shoppingSourceLabel(m.src))}${m.idxs.length > 1 ? ` · ${esc(tr('shopping.mergedFrom', { count: m.idxs.length }))}` : ''}</div></div>
       </div>`).join('');
   }
   box.innerHTML = html;
@@ -2470,7 +2725,7 @@ function updateBadges() {
   set('#tabSkillsBadge', favSteps.length);
   set('#tabShopBadge', shoppingUnchecked());
 }
-function renderAll() { renderFilters(); renderRecipes(); renderCookbooks(); renderTechniques(); renderSkills(); renderShopping(); updateBadges(); }
+function renderAll() { renderFilters(); renderRecipes(); renderCookbooks(); renderPantry(); renderTechniques(); renderSkills(); renderShopping(); updateBadges(); }
 function syncDepthChips() { document.querySelectorAll('#depth .chip').forEach(x => x.classList.toggle('on', x.dataset.d === depth)); }
 async function refresh() {
   try { recipes = await API.list(); } catch { recipes = store.get('cacheRecipes', []); }
@@ -2484,10 +2739,10 @@ function initTabs() {
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     curTab = t.dataset.tab;
     document.querySelectorAll('.tab').forEach(x => { const on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', on ? 'true' : 'false'); });
-    ['recipes', 'cookbooks', 'plan', 'techniques', 'skills', 'shopping', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== curTab));
+    ['recipes', 'cookbooks', 'pantry', 'plan', 'techniques', 'skills', 'shopping', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== curTab));
     const showSearch = curTab === 'recipes';
     $('#searchrow').classList.toggle('hidden', !showSearch); $('#recipeTools').classList.toggle('hidden', !showSearch); $('#filters').classList.toggle('hidden', !showSearch);
-    if (curTab === 'cookbooks') renderCookbooks(); if (curTab === 'techniques') renderTechniques(); if (curTab === 'skills') renderSkills(); if (curTab === 'shopping') renderShopping(); if (curTab === 'settings') renderSettings(); if (curTab === 'plan') renderPlan();
+    if (curTab === 'cookbooks') renderCookbooks(); if (curTab === 'pantry') renderPantry(); if (curTab === 'techniques') renderTechniques(); if (curTab === 'skills') renderSkills(); if (curTab === 'shopping') renderShopping(); if (curTab === 'settings') renderSettings(); if (curTab === 'plan') renderPlan();
   });
   // 加载时同步一次 aria-selected，读屏用户一进来就知道当前在哪个标签
   document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x.classList.contains('on') ? 'true' : 'false'));
