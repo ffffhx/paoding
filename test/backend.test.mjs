@@ -10,6 +10,7 @@ import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 import { createJobQueue } from "../src/jobs.mjs";
 import { fetchWithRetry } from "../src/fetchRetry.mjs";
 import { outputLanguageInstruction, withOutputLanguage } from "../src/outputLanguage.mjs";
+import { applyIngredientFixes, fixIngredientName, replaceIngredientTypos } from "../src/ingredientFix.mjs";
 
 test("isUrl 只认 http(s)", () => {
   assert.equal(isUrl("https://x.com"), true);
@@ -68,6 +69,37 @@ test("输出语言约束默认 zh 不改变 prompt，en 才追加", () => {
   assert.equal(withOutputLanguage(system, "zh"), system);
   assert.match(withOutputLanguage(system, "en"), /Output language: English/);
   assert.throws(() => outputLanguageInstruction("fr"), /只支持 zh 或 en/);
+});
+
+test("ingredientFix 纠正常见 ASR 食材同音字并保留不确定词", () => {
+  assert.deepEqual(fixIngredientName("白纸"), { name: "白芷", corrected: true, original: "白纸" });
+  assert.deepEqual(fixIngredientName("肉豆扣粉"), { name: "肉豆蔻粉", corrected: true, original: "肉豆扣粉" });
+  assert.deepEqual(fixIngredientName("白糖"), { name: "白糖", corrected: false });
+  assert.equal(replaceIngredientTypos("加入白纸、肉豆扣和草扣。"), "加入白芷、肉豆蔻和草蔻。");
+});
+
+test("applyIngredientFixes 修正食材名、追加 note 并替换步骤文本", () => {
+  const recipe = {
+    ingredients: [
+      { name: "白纸", amount: "2片", note: "香料" },
+      { name: "肉豆扣", amount: "1个", note: "" },
+      { name: "白糖", amount: "10克", note: "" },
+    ],
+    steps: [
+      { title: "下白纸", action: "加入白纸和肉豆扣，小火煮香。", params: { cue: "白纸香味出来" } },
+    ],
+  };
+  applyIngredientFixes(recipe);
+  assert.equal(recipe.ingredients[0].name, "白芷");
+  assert.equal(recipe.ingredients[0].note, "香料；转写作「白纸」，已按烹饪常识纠正。");
+  assert.equal(recipe.ingredients[1].name, "肉豆蔻");
+  assert.equal(recipe.ingredients[1].note, "转写作「肉豆扣」，已按烹饪常识纠正。");
+  assert.equal(recipe.ingredients[2].note, "");
+  assert.equal(recipe.steps[0].title, "下白芷");
+  assert.equal(recipe.steps[0].action, "加入白芷和肉豆蔻，小火煮香。");
+  assert.equal(recipe.steps[0].params.cue, "白芷香味出来");
+  applyIngredientFixes(recipe);
+  assert.equal(recipe.ingredients[0].note, "香料；转写作「白纸」，已按烹饪常识纠正。");
 });
 
 test("loadConfig 读取 PAODING_OUTPUT_LANG", () => {

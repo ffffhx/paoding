@@ -971,6 +971,7 @@ function runJob(id, input, depth, kind = "video", wantVision = false, wantImages
 }
 
 const AI_ENDPOINTS = {
+  _ingredientAsrDefense: "食材名可能包含语音识别的同音错别字（如 白纸 实为 白芷、肉豆扣 实为 肉豆蔻）。先判断名字是否为误写：若是，回答开头先指出正确名称，再按正确食材给替代建议；若名字本身不是食材也无法推断，直说无法识别，不要硬编。",
   "/api/ask": {
     recipe: { required: true },
     prompt: ({ body, r }) => {
@@ -979,7 +980,7 @@ const AI_ENDPOINTS = {
       const ctx = `菜名：${r.title}\n当前步骤：${s ? s.title + " — " + s.action : "（整体）"}\n` +
         `食材：${(r.ingredients || []).map((i) => i.name + i.amount).join("、")}`;
       return {
-        system: "你是一位耐心的中餐老师，正在指导用户做这道菜。用简洁、通俗、可操作的中文回答用户对当前步骤的疑问。不确定就说不确定，别编造具体数字。",
+        system: "你是一位耐心的中餐老师，正在指导用户做这道菜。用简洁、通俗、可操作的中文回答用户对当前步骤的疑问。不确定就说不确定，别编造具体数字。\n" + AI_ENDPOINTS._ingredientAsrDefense,
         user: `${ctx}\n\n用户的问题：${question}`,
       };
     },
@@ -990,13 +991,14 @@ const AI_ENDPOINTS = {
       system: "你是经验丰富的中餐厨师，实话实说、不糊弄。用户做某道菜时缺了某种食材/调料，针对性判断：\n" +
         "- 大多数食材都有可接受的替代——只要有靠谱替代就给1~3个，标出最推荐的，说明用量换算和风味差异（例：白糖可用冰糖或红糖、老抽可用生抽加少量糖色、香醋可用米醋、生粉可用玉米淀粉）。\n" +
         "- 只有当它是这道菜的灵魂、任何替代都会明显翻车或跑味时，才说「不建议替代」，讲清为什么、硬替会怎样、给务实建议（例：用醋替料酒去腥、用清水替高汤——这类才算不能替）。\n" +
-        "- 别为了凑数硬编烂替代，也别把「有点影响」当成「不能替代」。简洁中文，分点。",
+        "- 别为了凑数硬编烂替代，也别把「有点影响」当成「不能替代」。简洁中文，分点。\n" +
+        AI_ENDPOINTS._ingredientAsrDefense,
       user: `菜名：${r ? r.title : "某道菜"}。用户缺的是「${body.ingredient}」，有什么可以替代？若确实没有好替代就直说。`,
     }),
   },
   "/api/term": {
     prompt: ({ body }) => ({
-      system: "你是食品科学科普作者。用3~4句通俗中文解释这个烹饪术语/原理是什么、为什么重要。",
+      system: "你是食品科学科普作者。用3~4句通俗中文解释这个烹饪术语/原理是什么、为什么重要。\n" + AI_ENDPOINTS._ingredientAsrDefense,
       user: `解释一下烹饪里的「${body.term}」。`,
     }),
   },

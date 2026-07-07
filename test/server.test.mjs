@@ -695,6 +695,38 @@ test("AI ask 菜谱不存在 → 404", async () => {
   assert.deepEqual(await r.json(), { error: "菜谱不存在" });
 });
 
+test("AI 助手端点 prompt 包含食材 ASR 同音字防御", async () => {
+  const id = "同音防御菜";
+  const fp = path.join(recipesDir, `${id}.json`);
+  fs.writeFileSync(fp, JSON.stringify({
+    title: id,
+    ingredients: [{ name: "白纸", amount: "2片" }],
+    steps: [{ index: 1, title: "炖", action: "加入白纸炖煮。" }],
+  }, null, 2));
+  const originalFetch = globalThis.fetch;
+  const systems = [];
+  globalThis.fetch = async (input, init = {}) => {
+    assert.ok(String(input).endsWith("/chat/completions"));
+    const body = JSON.parse(String(init.body || "{}"));
+    systems.push(String(body.messages?.find((m) => m.role === "system")?.content || ""));
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "ok" } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    assert.equal((await request("/api/ask", J({ recipeId: id, stepIndex: 1, question: "白纸是什么？" }))).status, 200);
+    assert.equal((await request("/api/substitute", J({ recipeId: id, ingredient: "肉豆扣" }))).status, 200);
+    assert.equal((await request("/api/term", J({ term: "白纸" }))).status, 200);
+    assert.equal(systems.length, 3);
+    assert.ok(systems.every((s) => s.includes("食材名可能包含语音识别的同音错别字")));
+    assert.ok(systems.every((s) => s.includes("白纸 实为 白芷")));
+    assert.ok(systems.every((s) => s.includes("肉豆扣 实为 肉豆蔻")));
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(fp, { force: true });
+  }
+});
+
 test("nutrition 缓存返回结构化结果，编辑食材后失效", async () => {
   const id = "营养测试菜";
   fs.writeFileSync(path.join(recipesDir, `${id}.json`), JSON.stringify({
