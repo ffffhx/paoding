@@ -6,9 +6,88 @@
 - L2 真实视频：完成 3 条矩阵视频端到端验证，另有 1 条烘焙候选因 YouTube 403 放弃并换源。
 - 第十五批：完成工具兜底、`source_time` 覆盖、食材图性能和配方卡 K1 正向复验；最终 `npm test` 157/157。
 - 第十六批：完成 B站、无口播纯字幕、图文 URL 兜底三条中文平台真实验证；最终 `npm test` 161/161。
+- 第十七批：完成管线分阶段耗时埋点、同视频性能基线、TOP 瓶颈优化、降质优化回滚和抖音路径探测；最终 `npm test` 167/167。
 - 修复：所有代码修复均已 `npm test` 全绿后单独 commit。
-- 收尾：保留 2 组代表产物在 `recipes/`；第十五、十六批产物在 gitignored 的 `paoding-out/`；未执行 `git push`。
-- 额度：当前环境没有可查询 weekly 百分比的本地接口；按交接要求完成 3 条真实矩阵验证后收尾。
+- 收尾：保留 2 组代表产物在 `recipes/`；第十五至十七批产物在 gitignored 的 `paoding-out/`；未执行 `git push`。
+- 额度：当前环境没有可查询 weekly 百分比的本地接口；按第十七批 Q1-Q4 完成后收尾。
+
+## 第十七批性能优化与抖音探测
+
+按 `docs/handoff-2026-07-batch17.md` 的 Q1 → Q4 顺序执行。核心纪律为先测量再优化、同视频前后对比、质量下降即回退。最终 `npm test` 为 167/167 通过；未执行 `git push`。当前环境仍没有可查询 weekly 百分比的本地接口。
+
+### Q1 耗时剖析
+
+已新增管线阶段耗时记录：视频/文字/图片管线会写入 `recipe.timings`，CLI 结束时打印固定顺序耗时表。覆盖阶段包括 `acquire`、`transcribe`、`vision`、`structure`、`explain`、`step_images`、`ingredient_images`、`total`。纯函数和管线落盘均有测试覆盖。
+
+基线视频复用第十六批已跑通的 B站短视频：
+
+```bash
+PAODING_INGREDIENT_IMAGE_TIMEOUT_MIN=1 node bin/paoding.mjs "http://www.bilibili.com/video/av114814995141749" --images --keep-transcript --out paoding-out/batch17-baseline
+```
+
+结果为《手撕包菜》，8 个食材、7 步，`source_time_coverage` 为 7/7。阶段耗时：
+
+| 阶段 | 耗时 |
+|---|---:|
+| acquire | 5.8s |
+| transcribe | 88.0s |
+| vision | 194.0s |
+| structure | 122.7s |
+| explain | 55.4s |
+| step_images | 180.0s |
+| total | 646.0s |
+
+TOP 瓶颈为视觉读屏和步骤图挑帧，其中步骤图阶段 3 分钟超时，只产出 3/7 张步骤图。
+
+### Q2 优化与回滚
+
+尝试 1：短视频减少视觉读屏帧数。该优化使 `vision` 从 194.0s 降到 122.1s，`total` 从 646.0s 降到 596.0s，但质量下降：步骤从 7 步变 6 步，`source_time_coverage` 从 7/7 降到 5/6，且把调味出锅合并为无时间戳步骤。已按纪律用 `d25ca70` 回滚 `ff3daf9`。
+
+尝试 2：短视频步骤图跳过逐步 VL 挑帧，直接用每步时间段内偏后候选帧；长视频仍按步骤跨度保留 1/2/4 个候选。复验同一视频：
+
+```bash
+PAODING_INGREDIENT_IMAGE_TIMEOUT_MIN=1 node bin/paoding.mjs "http://www.bilibili.com/video/av114814995141749" --images --keep-transcript --out paoding-out/batch17-stepimg-opt
+```
+
+结果为《手撕包菜》，8 个食材、8 步，`source_time_coverage` 为 8/8，步骤图覆盖 8/8。未见质量下降。阶段耗时对比：
+
+| 指标 | 基线 | 优化后 | 变化 |
+|---|---:|---:|---:|
+| total | 646.0s | 582.1s | -63.9s |
+| step_images | 180.0s | 1.0s | -179.0s |
+| 步骤图覆盖 | 3/7 | 8/8 | 提升 |
+| source_time 覆盖 | 7/7 | 8/8 | 持平/提升 |
+
+注：优化后 `structure`、`explain` 受 LLM 波动比基线更慢，且食材图阶段继续跑到 60s 超时，所以总耗时净收益小于步骤图阶段收益。
+
+### Q3 抖音路径探测
+
+公开网页搜索未找到稳定做菜直链：`site:douyin.com/video` 查询无可用结果；抖音搜索页返回 330KB CSR 壳，未暴露视频 ID；搜索接口 `/aweme/v1/web/search/item/` 返回 `blocked`。
+
+yt-dlp 当前版本 `2026.06.09` 的 Douyin extractor 可用，两个公开视频直链均能抽到元数据和视频格式：
+
+| URL | 结果 |
+|---|---|
+| `https://www.douyin.com/video/6961737553342991651` | `extractor=Douyin`，19s，标题 `#杨超越 小小水手带你去远航❤️` |
+| `https://www.douyin.com/video/6982497745948921092` | `extractor=Douyin`，42s，标题 `这个夏日和小羊@杨超越 一起遇见白色幻想` |
+
+`/api/parse-url` 实测：
+
+| 输入 | 结果 |
+|---|---|
+| `https://v.douyin.com/i5w3MNdX/` | 短链解析到抖音首页，视频抓取失败后走文字兜底；网页质量门槛拒绝站点壳，错误提示用户复制帖子文字到「粘贴文字」解析。 |
+| `https://www.douyin.com/video/6961737553342991651` | 直链能进入下载、ASR 和结构化阶段；因样本不是做菜内容，不能作为正向菜谱验收。该跑暴露服务端 bug：结构化阶段失败也会被错误地转文字兜底并覆盖原始错误。 |
+
+已修复：视频 URL 仅在 `yt-dlp`/下载抽取失败时转文字兜底，ASR、结构化、LLM 等后续阶段错误保留原始错误，避免用站点壳错误掩盖真实失败。README/README.en 已补充抖音限定语：抖音直链依赖 `yt-dlp` 当前支持，短链/搜索页/登录墙可能失败，建议上传本地视频或粘贴正文。
+
+### 第十七批修复清单
+
+| Commit | 类型 | 内容 | 验证 |
+|---|---|---|---|
+| `cb954f2` | 可观测性 | 记录管线阶段耗时并在 CLI 打印耗时表。 | `npm test` 165/165 |
+| `ff3daf9` / `d25ca70` | 回滚 | 短视频减少视觉帧数虽提速但导致步骤和时间戳质量下降，已回滚。 | `npm test` 166/166 |
+| `86c6b77` | 性能 | 短视频步骤图跳过 VL 挑帧，使用单候选帧；同视频总耗时 646.0s → 582.1s，步骤图 180.0s → 1.0s。 | `npm test` 166/166 |
+| `5b7e6ff` | 兜底准确性 | 视频 URL 只在下载抽取失败时转文字兜底，结构化/ASR 等错误不再被站点壳兜底覆盖。 | `npm test` 167/167 |
 
 ## 第十六批中文平台验证
 

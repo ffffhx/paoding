@@ -29,7 +29,7 @@ _Paste a video, text post, screenshot, or photo. Paoding extracts the recipe, ex
 
 ## What It Is
 
-Paoding accepts cooking videos from Bilibili, Douyin, YouTube, local files, pasted text, recipe posts, screenshots, and photos. It then:
+Paoding accepts cooking videos from Bilibili, YouTube, local files, and Douyin direct links when `yt-dlp` can currently extract them, plus pasted text, recipe posts, screenshots, and photos. It then:
 
 1. Transcribes speech or reads text and images.
 2. Structures the content into a recipe with ingredients, quantities, heat, timing, doneness cues, and source timestamps.
@@ -64,7 +64,7 @@ Paoding combines automatic parsing with step-level cooking reasoning. You can fo
 
 | Area | What Paoding Provides |
 |---|---|
-| Smart import | Parse links, uploads, pasted text, web posts, screenshots, and recipe photos with live job progress and queueing. |
+| Smart import | Parse Bilibili/YouTube links, Douyin direct links when `yt-dlp` supports them, uploads, pasted text, web posts, screenshots, and recipe photos with live job progress and queueing. |
 | Visual fallback | Optional vision model support for scene-change frames plus dedicated opening/ending recipe-card capture, on-screen subtitles, recipe images, step screenshots, and ingredient close-ups. Total sampled frames still stay under the configured cap. |
 | Cook mode | One step per screen, large type, keep-awake, swipe navigation, desktop keyboard shortcuts, resume progress, highlighted ingredients, and source timestamp jumps. |
 | Explanations | Three-part reasoning for each step, key heat/time/quantity highlights, and tappable cooking terms. |
@@ -142,6 +142,7 @@ If Ollama already runs on the host, the default Docker LLM base URL can point to
 - Set `PAODING_API_TOKEN` for any LAN or public deployment. `PAODING_API_TOKENS=alice:token1,bob:token2` enables household user isolation.
 - Set `PAODING_VISION_MODEL` to enable screenshot/photo OCR, scene-change video OCR, dedicated opening/ending recipe-card capture, and visual step images. The extra recipe-card quota is merged into the same frame cap.
 - Set `PAODING_COOKIES_FROM_BROWSER=chrome` if a video platform requires logged-in browser cookies.
+- Douyin support depends on the current `yt-dlp` extractor and platform anti-bot behavior. Public direct video URLs may work, while short links, search pages, login walls, or risk-control pages may only expose a site shell. If that happens, upload a local recording/downloaded video or paste the post text instead.
 - Jobs, recipes, user data, and backups are stored as local files. See `.env.example` for paths and limits.
 
 ## Private Deployment Note
