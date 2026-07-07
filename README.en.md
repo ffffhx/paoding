@@ -49,6 +49,10 @@ Paoding combines automatic parsing with step-level cooking reasoning. You can fo
 | Per-step source screenshots | Yes | No | Rare | Editorial only |
 | Step-by-step why explanations | Yes | No | No | Yes, manually edited |
 | Chinese platforms | First-class | No | No | No |
+| Cookbooks / collections | Multi-collection organization with detail-page membership editing | Yes | Common | Mostly content bookmarking |
+| Pantry / what-can-I-cook | Local coverage ranking, missing ingredients, and AI ideas | Deployment/integration-dependent | Common in some apps | No |
+| AI recipe variants | Vegetarian, healthier, lower-salt, and ingredient-replacement variants saved as new recipes | Integration-dependent | Some commercial apps | Mostly editorial content |
+| Mobile cook-along polish | PWA/APK, dark mode, touch/focus states, reduced motion, print refinement | Web-first | Strong native apps | Strong reading experience |
 | Self-hosted no-cost setup | Ollama + whisper.cpp | Open-source and mature | Commercial apps | Content sites/courses |
 | Multi-user/i18n maturity | Household token isolation; i18n in progress | Strong | Product-dependent | Not recipe management |
 
@@ -62,16 +66,19 @@ Paoding combines automatic parsing with step-level cooking reasoning. You can fo
 |---|---|
 | Smart import | Parse links, uploads, pasted text, web posts, screenshots, and recipe photos with live job progress and queueing. |
 | Visual fallback | Optional vision model support for scene-change frames plus dedicated opening/ending recipe-card capture, on-screen subtitles, recipe images, step screenshots, and ingredient close-ups. Total sampled frames still stay under the configured cap. |
-| Cook mode | One step per screen, large type, keep-awake, swipe navigation, resume progress, highlighted ingredients, and source timestamp jumps. |
+| Cook mode | One step per screen, large type, keep-awake, swipe navigation, desktop keyboard shortcuts, resume progress, highlighted ingredients, and source timestamp jumps. |
 | Explanations | Three-part reasoning for each step, key heat/time/quantity highlights, and tappable cooking terms. |
 | Technique library | Aggregates recurring techniques across recipes and can summarize when to use them, key cues, and common failure points. |
 | AI helper | Ask about a step, rescue a failed dish, substitute ingredients, design the whole dish, or estimate nutrition. |
+| AI recipe variants | Create vegetarian, healthier, lower-salt, or ingredient-replacement versions from the recipe detail page. Variants are saved as new recipes with original-recipe links and a clear AI-adapted notice. |
+| Cookbooks | Create collections such as breakfast, dinner party, or lighter meals. A recipe can belong to multiple cookbooks; deleting a cookbook does not delete recipes. |
 | Tools and equipment | Dessert/baking-focused tool lists for mixers, piping bags, spatulas, molds, and similar equipment; alternatives include tradeoffs, no-alternative items include the reason, and inferred items are marked. |
 | Honest parsing | Missing video details stay marked as unspecified; unambiguous cooking homophones from speech transcription are corrected with the original wording kept in notes, and fuzzy quantities get common-sense reference notes marked as inferred. |
-| Pantry and planning | Scalable structured quantities, Chinese-unit reference, merged shopping lists by aisle, weekly meal planning, and multi-dish timelines. |
-| Editing and records | Edit titles, ingredients, steps, explanations, tags, notes, ratings, favorites, and cook history. |
-| Sync and backup | Shared recipes plus token-isolated household user data; export/import backup; automatic server backups. |
-| Interop | Import schema.org Recipe JSON-LD; export Markdown, Cooklang, schema.org JSON-LD with standard HowTo `tool`, print/PDF with tools, and public read-only share pages. |
+| Pantry and planning | Pantry inventory with notes and quick chips; local "what can I cook" coverage ranking with missing ingredients; optional AI ideas; owned items are marked when added to the shopping list. Structured quantity scaling, Chinese-unit reference, weekly meal planning, nutrition summaries, and multi-dish timelines remain available. |
+| Editing and records | Edit titles, ingredients, steps, explanations, tags, notes, ratings, favorites, and cook history. My Kitchen stats summarize weekly/monthly cooking, streaks, and most-cooked recipes locally. |
+| Sync and backup | Shared recipes plus token-isolated household user data, including favorites, notes, shopping lists, cookbooks, pantry inventory, and meal plans; export/import backup; automatic server backups. |
+| Interop | Import schema.org Recipe JSON-LD; export Markdown, Cooklang, schema.org JSON-LD with standard HowTo `tool`, recipe image cards, print/PDF with tools, and public read-only share pages. |
+| UI polish | Unified design tokens, hover/active/focus-visible states, responsive desktop/mobile layouts, skeleton loading, dark mode consistency, reduced-motion handling, localized date/time/number formatting, and print-safe detail pages. |
 | Self-hosting | Plain Node app, Docker/Compose, PWA, and runtime-configurable Android APK. |
 
 <div align="center">
@@ -106,7 +113,7 @@ node app/server.mjs
 
 Open the printed local/LAN URL in a browser. On a phone in the same Wi-Fi network, add it to the home screen for a full-screen PWA.
 
-Optional: set `PAODING_OUTPUT_LANG=en` to ask the LLM to generate structured recipes, step explanations, nutrition estimates, technique summaries, and AI helper answers in English. The frontend language is switched in the app settings; date and number formatting are not localized yet.
+Optional: set `PAODING_OUTPUT_LANG=en` to ask the LLM to generate structured recipes, step explanations, nutrition estimates, technique summaries, and AI helper answers in English. The frontend language is switched in the app settings; dates, times, and numbers follow the selected language.
 
 ### Scheme B: Command Line
 
@@ -163,6 +170,6 @@ The test suite uses Node's built-in test runner and local fakes/stubs for extern
 
 ## Roadmap Snapshot
 
-- Done: text posts, video fallback, Android/PWA shell, sync and backup, editing, quantity scaling, shopping lists, dessert-focused tool/equipment lists with alternatives, Cooklang/schema.org export, optional visual OCR with scene-change sampling plus opening/ending recipe-card capture, step screenshots, weekly meal planning, multi-dish timelines, household isolation, Docker/Compose, source timestamp jumps, nutrition estimates, technique library, public share pages, print/PDF, Chinese-unit references, and frontend i18n infrastructure.
-- i18n status: `app/i18n.js`, `t()` fallback, zh/en dictionaries, the settings-page language selector, and userdata sync are in place. English UI coverage now includes settings, home/list views, recipe detail, cook-along mode, shopping/planning, techniques, the install banner, tag-edit modal, exported recipe text, toasts, and error prompts. Date and number formatting are intentionally not localized yet.
-- Next: date/number localization, more real-world video prompt tuning, broader technique vocabulary, and higher-quality technique matching.
+- Done: text posts, video fallback, Android/PWA shell, sync and backup, editing, quantity scaling, shopping lists, cookbooks, pantry inventory with what-can-I-cook matching, AI recipe variants, recipe image cards, desktop keyboard shortcuts, My Kitchen cooking stats, dessert-focused tool/equipment lists with alternatives, Cooklang/schema.org export, optional visual OCR with scene-change sampling plus opening/ending recipe-card capture, step screenshots, weekly meal planning, multi-dish timelines, household isolation, Docker/Compose, source timestamp jumps, nutrition estimates, technique library, public share pages, print/PDF, Chinese-unit references, frontend i18n infrastructure, localized date/time/number formatting, and UI system polish.
+- i18n status: `app/i18n.js`, `t()` fallback, zh/en dictionaries, the settings-page language selector, userdata sync, and Intl-based date/time/number formatting are in place. English UI coverage now includes settings, home/list views, recipe detail, cook-along mode, shopping/planning, techniques, kitchen stats, recent jobs, the install banner, tag-edit modal, exported recipe text, toasts, and error prompts.
+- Next: more real-world video prompt tuning, broader technique vocabulary, and higher-quality technique matching.

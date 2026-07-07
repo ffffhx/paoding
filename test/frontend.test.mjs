@@ -50,6 +50,7 @@ test("settingsLanguageRowHtml 切 en 后关键 UI 字符串是英文", () => {
   const html = app.settingsLanguageRowHtml();
   assert.ok(html.includes("Language"));
   assert.ok(html.includes("Switch the interface language"));
+  assert.ok(!html.includes("not localized yet"));
   assert.ok(html.includes("Chinese"));
   assert.equal(app.t("settings.theme.label"), "Dark mode");
   assert.equal(app.t("settings.backend.placeholder"), "e.g. http://192.168.1.5:4177");
@@ -89,6 +90,14 @@ test("首页/列表文案切 en 后使用英文标签", () => {
   assert.equal(app.recentJobTypeLabel({ type: "images" }), "Images");
   assert.equal(app.recentJobStatusLabel({ status: "interrupted" }), "Interrupted");
   assert.equal(app.recentJobTitle({ type: "text", params: { input: "番茄炒蛋" } }), "Pasted text");
+  assert.equal(app.formatNumber(12345), "12,345");
+  assert.equal(app.formatDateShort("2026-07-07T12:00:00"), "Jul 7");
+  assert.ok(app.formatDateTimeShort("2026-07-07T14:30:00").startsWith("Jul 7, 2026"));
+  assert.equal(app.recentJobProgressLabel({ progress: { stage: "queued", message: "排队中，第 1 位" } }), "Queued");
+  assert.ok(app.recentJobMetaText({ progress: { stage: "queued", message: "排队中，第 1 位" }, updated_at: "2026-07-07T14:30:00" }).startsWith("Queued · Jul 7, 2026"));
+  app.setLanguage("zh");
+  assert.equal(app.formatDateShort("2026-07-07T12:00:00"), "7月7日");
+  assert.ok(app.recentJobMetaText({ progress: { stage: "queued", message: "排队中，第 1 位" }, updated_at: "2026-07-07T14:30:00" }).startsWith("排队中 · 2026年7月7日"));
   app.setLanguage("zh");
 });
 
@@ -406,6 +415,22 @@ test("跟做模式辅助片段切 en 后输出英文 UI 文案", () => {
   app.setLanguage("zh");
 });
 
+test("keyboardShortcutAction 映射桌面快捷键且输入框聚焦不劫持", () => {
+  const input = { tagName: "INPUT" };
+  assert.equal(app.keyboardShortcutAction({ key: "/", target: input }, { cookMode: false, hasOverlay: false }), "");
+  assert.equal(app.keyboardShortcutAction({ key: " ", target: input }, { cookMode: true, hasOverlay: false }), "");
+  assert.equal(app.keyboardShortcutAction({ key: "/", target: { tagName: "BODY" } }, { cookMode: false, hasOverlay: false }), "focus_search");
+  assert.equal(app.keyboardShortcutAction({ key: "Escape", target: { tagName: "BODY" } }, { hasOverlay: true }), "close_overlay");
+  assert.equal(app.keyboardShortcutAction({ key: "ArrowRight", target: { tagName: "BODY" } }, { cookMode: true }), "cook_next");
+  assert.equal(app.keyboardShortcutAction({ key: "j", target: { tagName: "BODY" } }, { cookMode: true }), "cook_next");
+  assert.equal(app.keyboardShortcutAction({ key: "ArrowLeft", target: { tagName: "BODY" } }, { cookMode: true }), "cook_prev");
+  assert.equal(app.keyboardShortcutAction({ key: "k", target: { tagName: "BODY" } }, { cookMode: true }), "cook_prev");
+  assert.equal(app.keyboardShortcutAction({ key: " ", target: { tagName: "BODY" } }, { cookMode: true }), "cook_timer");
+  assert.equal(app.keyboardShortcutAction({ key: "r", target: { tagName: "BODY" } }, { cookMode: true }), "cook_read");
+  assert.equal(app.keyboardShortcutAction({ key: "?", target: { tagName: "BODY" } }, { cookMode: true }), "cook_help");
+  assert.equal(app.keyboardShortcutAction({ key: " ", target: { tagName: "BUTTON" } }, { cookMode: true }), "");
+});
+
 test("技法页辅助文案切 en 后输出英文 UI 文案", () => {
   app.setLanguage("en");
   assert.equal(app.techCountText(3), "3 uses");
@@ -414,6 +439,73 @@ test("技法页辅助文案切 en 后输出英文 UI 文案", () => {
   assert.equal(app.techSamplesText([{ recipeTitle: "A" }, { recipeTitle: "B" }]), "A, B");
   assert.equal(app.techSummaryNoteText(true), "AI summary, for reference only · loaded from cache");
   assert.equal(app.t("skills.empty.title"), "Your saved tips are empty.");
+  app.setLanguage("zh");
+});
+
+test("computeKitchenStats 空数据返回零值和空 top", () => {
+  const stats = app.computeKitchenStats({}, { now: "2026-03-01T12:00:00+08:00" });
+  assert.equal(stats.weekCount, 0);
+  assert.equal(stats.monthCount, 0);
+  assert.equal(stats.cookedRecipeCount, 0);
+  assert.equal(stats.favoriteCount, 0);
+  assert.equal(stats.masteredTechniqueCount, 0);
+  assert.equal(stats.streakDays, 0);
+  assert.deepEqual(Array.from(stats.topRecipes), []);
+});
+
+test("computeKitchenStats 统计老数据、多次打卡、跨月 streak 和掌握技法", () => {
+  const stats = app.computeKitchenStats({
+    recipes: [
+      { id: "a", title: "番茄炒蛋" },
+      { id: "b", title: "红烧肉" },
+      { id: "c", title: "清炒菜心" },
+      { id: "d", title: "未做菜" },
+    ],
+    meta: {
+      a: {
+        cooked: true,
+        cooked_history: ["2026-02-27T08:00:00+08:00", "2026-02-28T08:00:00+08:00"],
+        cooked_at: "2026-03-01T08:00:00+08:00",
+      },
+      b: { cooked: true, cooked_at: "2026-02-01T08:00:00+08:00" },
+      c: { cooked: true },
+      d: {},
+    },
+    favRecipes: ["a", "d"],
+    techniques: [
+      { technique: "焯水", occurrences: [{ recipeId: "a" }, { recipeId: "d" }] },
+      { technique: "勾芡", occurrences: [{ recipeId: "d" }] },
+      { technique: "快炒", occurrences: [{ recipeId: "c" }] },
+    ],
+  }, { now: "2026-03-01T12:00:00+08:00" });
+  assert.equal(stats.weekCount, 3);
+  assert.equal(stats.monthCount, 1);
+  assert.equal(stats.cookedRecipeCount, 3);
+  assert.equal(stats.favoriteCount, 2);
+  assert.equal(stats.masteredTechniqueCount, 2);
+  assert.equal(stats.streakDays, 3);
+  assert.equal(stats.legacyCookedCount, 1);
+  assert.deepEqual(Array.from(stats.topRecipes.map(r => `${r.title}:${r.count}`)), ["番茄炒蛋:3", "红烧肉:1", "清炒菜心:1"]);
+});
+
+test("kitchenStatsHtml 切 en 后输出英文统计文案", () => {
+  app.setLanguage("en");
+  const html = app.kitchenStatsHtml({
+    weekCount: 1234,
+    monthCount: 2,
+    cookedRecipeCount: 3,
+    favoriteCount: 4,
+    masteredTechniqueCount: 5,
+    streakDays: 6,
+    topRecipes: [{ title: "Egg", count: 1234 }],
+    legacyCookedCount: 1234,
+  });
+  assert.ok(html.includes("My Kitchen"));
+  assert.ok(html.includes("This week"));
+  assert.ok(html.includes("Most cooked"));
+  assert.ok(html.includes("Egg"));
+  assert.ok(html.includes("1,234 times"));
+  assert.ok(html.includes("older cooked records"));
   app.setLanguage("zh");
 });
 
@@ -465,6 +557,46 @@ test("shareRecipeUrl 优先使用远程后端地址", () => {
   assert.equal(app.shareRecipeUrl("红烧肉", { origin: "https://cook.example", base: "" }), "https://cook.example/r/%E7%BA%A2%E7%83%A7%E8%82%89");
   assert.equal(app.shareRecipeUrl("红烧肉", { origin: "https://cook.example", base: "/paoding" }), "https://cook.example/paoding/r/%E7%BA%A2%E7%83%A7%E8%82%89");
   assert.equal(app.shareRecipeUrl("红烧肉", { apiBase: "http://192.168.1.5:4177/paoding/", origin: "capacitor://localhost", base: "" }), "http://192.168.1.5:4177/paoding/r/%E7%BA%A2%E7%83%A7%E8%82%89");
+});
+
+test("recipeShareCardLayout 覆盖超长标题、无图和 30+ 食材边界", () => {
+  const recipe = {
+    id: "long",
+    title: "这是一道标题非常非常长需要被折行并且最终带省略号的番茄牛腩煲".repeat(2),
+    ingredients: Array.from({ length: 35 }, (_, i) => ({ name: `食材${i + 1}`, amount: `${i + 1}克` })),
+    steps: Array.from({ length: 9 }, (_, i) => ({ title: `步骤${i + 1}`, action: "处理食材并观察状态变化，避免过度烹调导致口感变差" })),
+  };
+  const layout = app.recipeShareCardLayout(recipe, 1, { shareUrl: "https://cook.example/r/long" });
+  assert.equal(layout.width, 1080);
+  assert.ok(layout.height >= 1440 && layout.height <= 1920);
+  assert.equal(layout.cover.kind, "placeholder");
+  assert.ok(layout.title.lines.length <= 3);
+  assert.ok(layout.title.lines.at(-1).endsWith("…"));
+  const ingredients = Array.from(layout.ingredientSection.columns[0]).concat(Array.from(layout.ingredientSection.columns[1]));
+  assert.equal(ingredients.length, 32);
+  assert.ok(ingredients.at(-1).includes("还有 4 项食材"));
+  assert.equal(layout.stepsSection.lines.length, 7);
+  assert.ok(layout.stepsSection.lines.at(-1).includes("还有 3 步"));
+  assert.equal(layout.footer.url, "https://cook.example/r/long");
+});
+
+test("recipeShareCardLayout 切 en 后使用英文标签并取第一张步骤图", () => {
+  app.setLanguage("en");
+  const layout = app.recipeShareCardLayout({
+    id: "egg",
+    title: "Egg",
+    ingredients: [{ name: "egg", qty: 2, unit: "pcs" }],
+    steps: [
+      { title: "Prep", action: "Beat eggs", image: "first.jpg" },
+      { title: "Cook", action: "Pan fry", image: "second.jpg" },
+    ],
+  }, 1, { shareUrl: "https://cook.example/r/egg" });
+  assert.equal(layout.cover.kind, "image");
+  assert.equal(layout.cover.image, "first.jpg");
+  assert.equal(layout.ingredientSection.label, "Ingredients");
+  assert.equal(layout.stepsSection.label, "Steps");
+  assert.ok(layout.footer.brand.includes("Paoding"));
+  app.setLanguage("zh");
 });
 
 test("filterAndSortRecipes 支持食材 AND 筛选、快捷筛选和排序", () => {
@@ -527,12 +659,108 @@ test("购物清单和计划摘要切 en 后输出英文 UI 文案", () => {
   app.setLanguage("zh");
 });
 
+test("菜谱集规范化、成员查询和跨设备合并", () => {
+  const books = app.normalizeCookbooks([
+    { id: "breakfast", name: "早餐", recipeIds: ["a", "b", "a"], updated_at: "2026-01-01T00:00:00.000Z" },
+    { id: "party", name: "宴客", recipes: ["b"] },
+    { name: "" },
+  ]);
+  assert.deepEqual(Array.from(books.map(x => x.id)).sort(), ["breakfast", "party"]);
+  assert.deepEqual(Array.from(books.find(x => x.id === "breakfast").recipeIds), ["a", "b"]);
+  assert.deepEqual(Array.from(app.cookbookRecipeIdsFor("b", books)).sort(), ["breakfast", "party"]);
+  assert.deepEqual(Array.from(app.recipesInCookbook(books[0], [{ id: "b", title: "B" }, { id: "a", title: "A" }]).map(r => r.id)), ["a", "b"]);
+
+  const merged = app.mergeCookbooks([
+    { id: "breakfast", name: "早餐", recipeIds: ["a"], updated_at: "2026-01-01T00:00:00.000Z" },
+  ], [
+    { id: "breakfast", name: "早午餐", recipeIds: ["b"], updated_at: "2026-01-02T00:00:00.000Z" },
+    { id: "light", name: "减脂", recipeIds: ["c"] },
+  ]);
+  const breakfast = merged.find(x => x.id === "breakfast");
+  assert.equal(breakfast.name, "早午餐");
+  assert.deepEqual(Array.from(breakfast.recipeIds), ["a", "b"]);
+  assert.ok(merged.some(x => x.id === "light"));
+});
+
+test("食材库存匹配覆盖度并标记购物清单已有项", () => {
+  const pantry = app.normalizePantry([
+    { name: "鸡蛋", note: "6个", updated_at: "2026-01-02T00:00:00.000Z" },
+    { name: "小葱" },
+    { name: "鸡蛋", note: "4个", updated_at: "2026-01-01T00:00:00.000Z" },
+    { name: "" },
+  ]);
+  assert.deepEqual(Array.from(pantry.map(x => x.name)), ["鸡蛋", "小葱"]);
+  assert.equal(pantry.find(x => x.name === "鸡蛋").note, "6个");
+  assert.equal(app.pantryHasIngredient("鸡蛋", pantry), true);
+  assert.equal(app.pantryHasIngredient("葱花", pantry), true);
+  assert.equal(app.pantryHasIngredient("番茄", pantry), false);
+
+  const recipe = {
+    title: "番茄炒蛋",
+    ingredients: [
+      { name: "鸡蛋", amount: "2个" },
+      { name: "番茄", amount: "1个" },
+      { name: "盐", amount: "适量" },
+      { name: "生抽", amount: "少许" },
+    ],
+  };
+  const coverage = app.recipeIngredientCoverage(recipe, pantry, { ignoreLooseSeasonings: true });
+  assert.equal(coverage.total, 2);
+  assert.equal(coverage.hit, 1);
+  assert.deepEqual(Array.from(coverage.missing), ["番茄 1个"]);
+
+  const strictCoverage = app.recipeIngredientCoverage(recipe, pantry, { ignoreLooseSeasonings: false });
+  assert.equal(strictCoverage.total, 4);
+  assert.equal(strictCoverage.hit, 1);
+
+  const fullCoverage = app.recipeIngredientCoverage({
+    title: "葱花蛋",
+    ingredients: [{ name: "鸡蛋" }, { name: "小葱" }, { name: "盐", amount: "适量" }],
+  }, pantry, { ignoreLooseSeasonings: true });
+  assert.equal(fullCoverage.total, 2);
+  assert.equal(fullCoverage.hit, 2);
+  assert.equal(fullCoverage.coverage, 1);
+  assert.deepEqual(Array.from(fullCoverage.missing), []);
+  assert.deepEqual(Array.from(app.rankRecipesByPantry([recipe], [], { ignoreLooseSeasonings: true })), []);
+
+  const ranked = app.rankRecipesByPantry([
+    recipe,
+    { title: "葱花蛋", ingredients: [{ name: "鸡蛋" }, { name: "小葱" }] },
+  ], pantry, { ignoreLooseSeasonings: true });
+  assert.equal(ranked[0].recipe.title, "葱花蛋");
+  assert.equal(ranked[0].coverage, 1);
+
+  const shopping = app.shoppingItemsForRecipe(recipe, 1, pantry);
+  assert.equal(shopping.find(x => x.name === "鸡蛋").owned, true);
+  assert.equal(shopping.find(x => x.name === "番茄").owned, false);
+  assert.ok(app.shoppingTextBySection(shopping).includes("鸡蛋 2个（已有）"));
+});
+
+test("AI 菜谱变体标题与关联查询", () => {
+  assert.equal(app.recipeVariantTitle("宫保鸡丁", "vegetarian"), "宫保鸡丁（素食版）");
+  assert.equal(app.recipeVariantTitle("宫保鸡丁", "low_salt"), "宫保鸡丁（低盐版）");
+  assert.equal(app.recipeVariantTitle("宫保鸡丁", "replace", "鸡肉→豆腐"), "宫保鸡丁（替换鸡肉→豆腐版）");
+  app.setLanguage("en");
+  assert.equal(app.recipeVariantTitle("Kung Pao Chicken", "low_salt"), "Kung Pao Chicken (lower-salt)");
+  assert.equal(app.recipeVariantTitle("Kung Pao Chicken", "replace", "chicken -> tofu"), "Kung Pao Chicken (chicken -> tofu replacement)");
+  app.setLanguage("zh");
+  const list = [
+    { id: "a", title: "原菜" },
+    { id: "b", title: "原菜（低盐版）", variant_of: "a", variant_type: "low_salt" },
+    { id: "c", title: "别的菜" },
+  ];
+  assert.deepEqual(Array.from(app.variantsForRecipe("a", list).map(x => x.id)), ["b"]);
+  assert.equal(app.originalRecipeForVariant(list[1], list).id, "a");
+});
+
 test("mergeUserDataConflict 按字段合并跨设备数据", () => {
   const merged = app.mergeUserDataConflict({
     rev: 3,
     favRecipes: ["a"],
     favSteps: [{ key: "a#1", title: "A" }],
     shopping: [{ name: "盐", amount: "1勺", from: "A", checked: false }],
+    cookbooks: [{ id: "breakfast", name: "早餐", recipeIds: ["a"], updated_at: "2026-01-01T00:00:00.000Z" }],
+    pantry: [{ name: "鸡蛋", note: "2个", updated_at: "2026-01-01T00:00:00.000Z" }],
     meta: { a: { notes: "旧", ingChecked: [1], cooked: true, cooked_at: "2026-01-01T00:00:00.000Z" } },
     mealPlan: { "2026-01-01": ["a"] },
     settings: { lang: "zh" },
@@ -540,19 +768,26 @@ test("mergeUserDataConflict 按字段合并跨设备数据", () => {
     favRecipes: ["b", "a"],
     favSteps: [{ key: "b#1", title: "B" }, { key: "a#1", title: "A2" }],
     shopping: [{ name: "盐", amount: "1勺", from: "A", checked: true }, { name: "糖", amount: "2勺", from: "B" }],
+    cookbooks: [{ id: "breakfast", name: "早午餐", recipeIds: ["b"], updated_at: "2026-01-02T00:00:00.000Z" }],
+    pantry: [{ name: "鸡蛋", note: "6个", updated_at: "2026-01-02T00:00:00.000Z" }, { name: "番茄" }],
     meta: { a: { notes: "新", ingChecked: [2], cooked_at: "2026-01-02T00:00:00.000Z" } },
     mealPlan: { "2026-01-01": ["b", "a"] },
-    settings: { lang: "en" },
+    settings: { lang: "en", pantryIgnoreLooseSeasonings: false },
   });
   assert.equal(merged.rev, 3);
   assert.deepEqual(Array.from(merged.favRecipes), ["a", "b"]);
   assert.deepEqual(Array.from(merged.favSteps).map((x) => x.key), ["a#1", "b#1"]);
   assert.equal(merged.shopping.find((x) => x.name === "盐").checked, true);
   assert.ok(merged.shopping.some((x) => x.name === "糖"));
+  assert.equal(merged.cookbooks[0].name, "早午餐");
+  assert.deepEqual(Array.from(merged.cookbooks[0].recipeIds), ["a", "b"]);
+  assert.equal(merged.pantry.find(x => x.name === "鸡蛋").note, "6个");
+  assert.ok(merged.pantry.some(x => x.name === "番茄"));
   assert.deepEqual(Array.from(merged.meta.a.ingChecked), [1, 2]);
   assert.equal(merged.meta.a.notes, "新");
   assert.equal(merged.meta.a.cooked, true);
   assert.equal(merged.meta.a.cooked_at, "2026-01-02T00:00:00.000Z");
   assert.deepEqual(Array.from(merged.mealPlan["2026-01-01"]), ["a", "b"]);
   assert.equal(merged.settings.lang, "en");
+  assert.equal(merged.settings.pantryIgnoreLooseSeasonings, false);
 });

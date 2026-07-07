@@ -42,6 +42,7 @@ before(async () => {
     PAODING_API_TOKENS: "",
     PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL || "http://localhost:11434/v1",
     PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY || "test",
+    PAODING_LLM_RATE_LIMIT_PER_MIN: "1000",
     PAODING_VISION_MODEL: "",
   });
   ({ handleRequest } = await import(`../app/server.mjs?test=${Date.now()}`));
@@ -923,6 +924,170 @@ test("tools endpoint 调用 LLM 推断工具、清洗后写回菜谱", async () 
   } finally {
     globalThis.fetch = originalFetch;
     fs.rmSync(fp, { force: true });
+  }
+});
+
+test("pantry-ideas 走 LLM 并返回 AI 推荐标记", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    assert.ok(String(input).endsWith("/chat/completions"));
+    const body = JSON.parse(String(init.body || "{}"));
+    const user = String(body.messages?.find((m) => m.role === "user")?.content || "");
+    assert.ok(user.includes("鸡蛋"));
+    assert.ok(user.includes("小葱（半把）"));
+    assert.equal(user.match(/鸡蛋/g).length, 1);
+    calls++;
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "1. 葱花炒蛋\n2. 蛋炒饭\n3. 葱油拌面" } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const empty = await request("/api/pantry-ideas", J({ pantry: [] }));
+    assert.equal(empty.status, 400);
+
+    const res = await request("/api/pantry-ideas", J({ pantry: [
+      { name: "鸡蛋" },
+      { name: "小葱", note: "半把" },
+      { name: "鸡蛋", note: "重复项应去重" },
+    ] }));
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.ai, true);
+    assert.match(data.answer, /葱花炒蛋/);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("recipe-variant 复用结构化路径并落库清洗", async () => {
+  const id = "宫保鸡丁";
+  const fp = path.join(recipesDir, `${id}.json`);
+  fs.writeFileSync(fp, JSON.stringify({
+    title: id,
+    servings: "2人份",
+    ingredients: [{ name: "鸡腿肉", amount: "300克" }, { name: "生抽", amount: "2勺" }],
+    tools: [{ name: "炒锅", purpose: "翻炒", essential: true, substitute: "", substitute_note: "普通锅也可", inferred: false }],
+    steps: [{ index: 1, title: "炒", action: "鸡肉下锅，加生抽翻炒。", params: { heat: "中火" } }],
+  }, null, 2));
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    assert.ok(String(input).endsWith("/chat/completions"));
+    const body = JSON.parse(String(init.body || "{}"));
+    assert.equal(body.response_format?.type, "json_object");
+    const user = String(body.messages?.find((m) => m.role === "user")?.content || "");
+    assert.ok(user.includes("AI 菜谱变体任务"));
+    assert.ok(user.includes("低盐"));
+    assert.ok(user.includes("宫保鸡丁"));
+    calls++;
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: JSON.stringify({
+        title: "模型低盐鸡丁",
+        servings: "2人份",
+        total_time_min: 18,
+        difficulty: "medium",
+        cuisine: "川菜",
+        tags: ["低盐", "下饭"],
+        batch_info: { yield: "一份低盐调味汁", makes_servings: "2", makes_note: "按两人份推算（推算）", serving_desc: "每份鸡肉配半份调味汁" },
+        ingredients: [
+          { name: "香醋汁", amount: "1份", qty: 1, unit: "份", phase: "batch" },
+          { name: "鸡腿肉", amount: "300克", qty: 300, unit: "克", phase: "serving" },
+        ],
+        tools: [
+          { name: "炒锅", purpose: "翻炒鸡丁", essential: true, substitute: "", substitute_note: "普通炒锅即可", inferred: false },
+          { purpose: "缺名字应丢弃", essential: true },
+        ],
+        nutrition: { per_serving: { calories: "320 kcal", protein: "24g", fat: "12g", carbs: "22g", sodium: "480mg" } },
+        steps: [
+          { index: 1, title: "调汁", action: "香醋调成低盐汁。", params: {}, phase: "batch" },
+          { index: 2, title: "低盐调味", action: "鸡肉下锅后用低盐汁调味。", params: { heat: "中火" }, phase: "serving" },
+        ],
+      }) } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const res = await request("/api/recipe-variant", J({ recipeId: id, type: "low_salt" }));
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.recipe.title, "宫保鸡丁（低盐版）");
+    assert.equal(data.recipe.variant_of, id);
+    assert.equal(data.recipe.variant_type, "low_salt");
+    assert.equal(data.recipe.ai_variant, true);
+    assert.equal(calls, 1);
+
+    const saved = JSON.parse(fs.readFileSync(path.join(recipesDir, `${data.id}.json`), "utf8"));
+    assert.equal(saved.variant_of, id);
+    assert.equal(saved.variant_notice, "AI 改编，未经实做验证");
+    assert.deepEqual(saved.tools, [{ name: "炒锅", purpose: "翻炒鸡丁", essential: true, substitute: null, substitute_note: "普通炒锅即可", inferred: false }]);
+    assert.equal(saved.nutrition.per_serving.calories_kcal, 320);
+    assert.equal(saved.nutrition.per_serving.sodium_mg, 480);
+    assert.equal(saved.batch_info.makes_servings, 2);
+    assert.deepEqual(saved.ingredients.map((x) => x.phase), ["batch", "serving"]);
+    assert.deepEqual(saved.steps.map((x) => x.phase), ["batch", "serving"]);
+    fs.rmSync(path.join(recipesDir, `${data.id}.json`), { force: true });
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(fp, { force: true });
+  }
+});
+
+test("recipe-variant 英文输出语言使用英文标题后缀和标注", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-variant-en-"));
+  const originalFetch = globalThis.fetch;
+  try {
+    const port = 41995;
+    const recipes2 = path.join(root, "recipes");
+    fs.mkdirSync(recipes2, { recursive: true });
+    fs.writeFileSync(path.join(recipes2, "Kung-Pao-Chicken.json"), JSON.stringify({
+      title: "Kung Pao Chicken",
+      servings: "2 servings",
+      ingredients: [{ name: "chicken", amount: "300g" }],
+      steps: [{ index: 1, title: "Stir-fry", action: "Stir-fry chicken." }],
+    }, null, 2));
+    const { handleRequest: h } = await importServerWithEnv({
+      PAODING_PORT: String(port),
+      PAODING_HOST: "127.0.0.1",
+      PAODING_RECIPES_DIR: recipes2,
+      PAODING_USERDATA_FILE: path.join(root, "ud.json"),
+      PAODING_API_TOKEN: "",
+      PAODING_API_TOKENS: "",
+      PAODING_LLM_RATE_LIMIT_PER_MIN: "1000",
+      PAODING_LLM_BASE_URL: process.env.PAODING_LLM_BASE_URL || "http://localhost:11434/v1",
+      PAODING_LLM_API_KEY: process.env.PAODING_LLM_API_KEY || "test",
+      PAODING_OUTPUT_LANG: "en",
+    });
+    globalThis.fetch = async (input, init = {}) => {
+      assert.ok(String(input).endsWith("/chat/completions"));
+      const body = JSON.parse(String(init.body || "{}"));
+      const user = String(body.messages?.find((m) => m.role === "user")?.content || "");
+      assert.ok(user.includes("Kung Pao Chicken (lower-salt)"));
+      return new Response(JSON.stringify({
+        choices: [{ message: { role: "assistant", content: JSON.stringify({
+          title: "Model title should be overridden",
+          servings: "2 servings",
+          difficulty: "easy",
+          cuisine: "Chinese",
+          tags: ["lower salt"],
+          ingredients: [{ name: "chicken", amount: "300g", qty: 300, unit: "g" }],
+          tools: [],
+          steps: [{ index: 1, title: "Season lightly", action: "Use less soy sauce.", params: {} }],
+        }) } }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+
+    const res = await requestWith(h, "/api/recipe-variant", J({ recipeId: "Kung-Pao-Chicken", type: "low_salt" }), port);
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.recipe.title, "Kung Pao Chicken (lower-salt)");
+    assert.equal(data.recipe.variant_notice, "AI adapted, not tested in a real kitchen");
+    const saved = JSON.parse(fs.readFileSync(path.join(recipes2, `${data.id}.json`), "utf8"));
+    assert.equal(saved.title, "Kung Pao Chicken (lower-salt)");
+    assert.equal(saved.variant_notice, "AI adapted, not tested in a real kitchen");
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
