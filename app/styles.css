@@ -58,8 +58,9 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--tomato);
 .chip{border:1px solid var(--line);border-radius:var(--r-pill);padding:6px 12px;font-size:13px;color:var(--muted);background:var(--card);min-height:32px;display:inline-flex;align-items:center}
 .chip:hover{border-color:var(--tomato);color:var(--ink)}
 .chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
-.vischk{display:flex;align-items:center;gap:7px;margin-top:10px;font-size:13px;cursor:pointer}
-.vischk input{width:16px;height:16px;accent-color:var(--tomato)}
+.vischk{display:flex;align-items:flex-start;gap:7px;margin-top:10px;font-size:13px;line-height:1.45;cursor:pointer}
+.vischk input{flex:0 0 16px;width:16px;height:16px;min-width:16px;margin:2px 0 0;accent-color:var(--tomato)}
+.vischk .viscopy{min-width:0;display:flex;flex:1 1 auto;flex-wrap:wrap;align-items:baseline;column-gap:4px;row-gap:2px}
 .vischk .muted{color:var(--muted)}
 
 .searchrow{display:flex;gap:8px;padding:10px 16px 2px}
