@@ -893,7 +893,9 @@ test("tools endpoint 调用 LLM 推断工具、清洗后写回菜谱", async () 
     assert.equal(body.response_format?.type, "json_object");
     const system = String(body.messages?.find((m) => m.role === "system")?.content || "");
     assert.ok(system.includes("甜品/烘焙"));
-    assert.ok(system.includes("没有替代品"));
+    assert.ok(system.includes("保鲜袋剪小口"));
+    assert.ok(system.includes("装饰步骤可跳过"));
+    assert.ok(system.includes("substitute_note 只写原因本身"));
     calls++;
     return new Response(JSON.stringify({
       choices: [{ message: { role: "assistant", content: JSON.stringify({

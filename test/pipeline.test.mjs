@@ -560,6 +560,7 @@ test("processText 保留生活化定量并为模糊量写参考 note", async () 
       assert.ok(String(structurePrompt.messages[0].content).includes("多道菜合集信号"));
       assert.ok(String(structurePrompt.messages[0].content).includes("不要只整理第一道"));
       assert.ok(String(structurePrompt.messages[0].content).includes("至少为每一道菜输出 1 个步骤"));
+      assert.ok(String(structurePrompt.messages[0].content).includes("裱花袋/裱花嘴→保鲜袋剪小口"));
     });
   } finally {
     await llm.close();
