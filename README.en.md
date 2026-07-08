@@ -137,6 +137,12 @@ docker compose up --build
 
 If Ollama already runs on the host, the default Docker LLM base URL can point to `http://host.docker.internal:11434/v1`. Compose can also start Ollama with the `ollama` profile.
 
+### Access Model: Users, Instance Owners, and Sharing
+
+1. **People who want to use Paoding** should self-host their own instance with the local or Docker setup above. `PAODING_API_TOKEN` is a private credential generated for each instance, stored only in that instance's `.env` or runtime environment, and **not kept in the code repository**.
+2. **Instance owners can invite family or friends** with named tokens such as `PAODING_API_TOKENS="ming:tokenA,hua:tokenB"`. The recipe library is shared, while favorites, notes, ratings, shopping lists, cookbooks, pantry inventory, meal plans, and recent jobs are isolated per token. Remove a person's token and restart the service to revoke access.
+3. **Do not run a private instance as a public service for strangers**. Local models and home machines have limited capacity; concurrency caps, queueing, and rate limits are abuse safeguards, not public-service capacity. For public sharing, use the read-only `/r/` recipe share page, or ask the other person to self-host.
+
 ## Configuration Notes
 
 - Set `PAODING_API_TOKEN` for any LAN or public deployment. `PAODING_API_TOKENS=alice:token1,bob:token2` enables household user isolation.
