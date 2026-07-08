@@ -530,7 +530,7 @@ test("processText 保留生活化定量并为模糊量写参考 note", async () 
       total_time_min: 20,
       difficulty: "easy",
       cuisine: "家常菜",
-      tags: ["家常"],
+      tags: ["下饭菜/快手/炖菜", "快手"],
       ingredients: [
         { name: "姜", amount: "拇指长一段", qty: null, unit: "", note: "" },
         { name: "蒜", amount: "一片", qty: null, unit: "", note: "参考：约硬币大、2毫米厚（常识推测）" },
@@ -552,6 +552,7 @@ test("processText 保留生活化定量并为模糊量写参考 note", async () 
       assert.match(recipe.ingredients[1].note, /常识推测/);
       assert.match(recipe.steps[0].action, /拇指长一段/);
       assert.match(recipe.steps[0].params.cue, /拇指长/);
+      assert.deepEqual(recipe.tags, ["下饭菜", "快手", "炖菜"]);
       const structurePrompt = llm.requests.find((r) => String(r.messages?.[0]?.content || "").includes("专业中餐厨师兼菜谱编辑"));
       assert.ok(String(structurePrompt.messages[0].content).includes("生活化定量描述"));
       assert.ok(String(structurePrompt.messages[0].content).includes("参考："));

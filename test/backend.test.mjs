@@ -354,7 +354,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
-import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, extractMultiDishOutline, inferBakingToolFallback, annotateRecipeCardSources } from "../src/chef.mjs";
+import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTags, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, extractMultiDishOutline, inferBakingToolFallback, annotateRecipeCardSources } from "../src/chef.mjs";
 import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, ensureRecipeCardMarker, mapLimitSettled, extractIngredientImages, extractStepImages, visionTranscript, stepImageCandidateCount } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
@@ -430,6 +430,19 @@ test("normalizeTools 清洗工具清单并保留替代说明", () => {
     { name: "戚风模具", purpose: "帮助爬升", essential: true, substitute: null, substitute_note: "防粘模具会影响爬升", inferred: true },
     { name: "抹刀", purpose: "整理 奶油", essential: true, substitute: "勺子", substitute_note: "边缘粗糙", inferred: true },
   ]);
+});
+
+test("normalizeTags 拆分合并脏标签、去重去空并截断超长项", () => {
+  assert.deepEqual(normalizeTags([
+    " 下饭菜/快手/炖菜 ",
+    "快手、家常，宴客",
+    "宴客,",
+    { name: "<b>快手</b>" },
+    "",
+    null,
+  ]), ["下饭菜", "快手", "炖菜", "家常", "宴客"]);
+  assert.deepEqual(normalizeTags(["quick dinner,weeknight"]), ["quick dinner", "weeknight"]);
+  assert.deepEqual(normalizeTags(["这是一个非常非常非常长的标签"], 8), ["这是一个非常非常"]);
 });
 
 test("inferBakingToolFallback 为甜品烘焙步骤补齐缺失工具且不重复已有工具", () => {

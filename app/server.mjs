@@ -9,7 +9,7 @@ import { processVideo, processText, processImages } from "../src/pipeline.mjs";
 import { shouldFallbackVideoUrlToText } from "../src/videoFallback.mjs";
 import { chatJSON, chatText } from "../src/llm.mjs";
 import { DEPTHS, explainSteps } from "../src/explain.mjs";
-import { TOOL_PROMPT_RULES, normalizeRecipePhases, normalizeTools, structureRecipe } from "../src/chef.mjs";
+import { TOOL_PROMPT_RULES, normalizeRecipePhases, normalizeTags, normalizeTools, structureRecipe } from "../src/chef.mjs";
 import { assertPublicUrl } from "../src/urlSafety.mjs";
 import { createSlidingWindowRateLimiter } from "../src/rateLimit.mjs";
 import { FileJobStore, createJobQueue, createJobRecord, publicJob, TERMINAL_JOB_STATUSES } from "../src/jobs.mjs";
@@ -138,12 +138,13 @@ function schemaOrgRecipe(r) {
   const undef = (v) => (v == null || v === "" ? undefined : v);
   const n = r.nutrition?.per_serving;
   const tools = normalizeTools(r.tools);
+  const tags = normalizeTags(r.tags);
   return {
     "@context": "https://schema.org",
     "@type": "Recipe",
     name: r.title,
     recipeCuisine: undef(r.cuisine),
-    keywords: undef((r.tags || []).join(", ")),
+    keywords: undef(tags.join(", ")),
     recipeYield: undef(r.servings),
     totalTime: r.total_time_min ? `PT${r.total_time_min}M` : undefined,
     recipeIngredient: (r.ingredients || []).map((i) => `${i.name || ""} ${i.amount || ""}`.trim()).filter(Boolean),
@@ -264,8 +265,10 @@ function normalizeRecipeToolsField(recipe) {
   return recipe;
 }
 function normalizeRecipeFields(recipe) {
+  if (!recipe || typeof recipe !== "object" || Array.isArray(recipe)) return recipe;
   normalizeRecipeToolsField(recipe);
   normalizeRecipePhases(recipe);
+  recipe.tags = normalizeTags(recipe.tags);
   return recipe;
 }
 function writeRecipeFile(id, recipe) {
@@ -649,9 +652,10 @@ async function estimateNutrition(r) {
   return normalizeNutrition(raw);
 }
 function recipeToolContext(r) {
+  const tags = normalizeTags(r.tags);
   return [
     `菜名：${r.title || "未知"}`,
-    `标签：${(r.tags || []).join("、") || "无"}`,
+    `标签：${tags.join("、") || "无"}`,
     `菜系：${r.cuisine || "未知"}`,
     `食材：${(r.ingredients || []).map((i) => `${i.name || ""}${i.amount || ""}${i.note ? `（${i.note}）` : ""}`).filter(Boolean).join("、") || "未列出"}`,
     `步骤：${(r.steps || []).map((s) => `${s.index || ""}.${s.title || ""} ${s.action || ""}`).join("\n")}`,

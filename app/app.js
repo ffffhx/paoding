@@ -14,6 +14,8 @@ const I18N = window.PaodingI18n || {
 const normalizeUiLang = (v) => I18N.normalizeLang ? I18N.normalizeLang(v) : (String(v || 'zh').toLowerCase() === 'en' ? 'en' : 'zh');
 const tr = (key, params) => I18N.t ? I18N.t(key, params) : key;
 const settings = Object.assign({ theme: 'light', fontScale: 1, tts: true, ttsRate: 1, apiBase: '', apiToken: '', depth: 'balanced', lang: 'zh', pantryIgnoreLooseSeasonings: true }, store.get('settings', {}));
+const TAG_MAX_LEN = 24;
+const TAG_SPLIT_RE = /[\/／、,，]+/u;
 function setLanguage(lang) {
   settings.lang = normalizeUiLang(lang);
   if (I18N.setLang) I18N.setLang(settings.lang);
@@ -86,12 +88,54 @@ function apiErrorFromResponse(response, data = {}) {
   e.data = data;
   return e;
 }
+function cleanTagText(v, max = TAG_MAX_LEN) {
+  if (v == null) return '';
+  if (Array.isArray(v)) return v.map(x => cleanTagText(x, max)).filter(Boolean).join('、').slice(0, max);
+  if (typeof v === 'object') return cleanTagText(v.text ?? v.name ?? v.description ?? v['@value'] ?? v.value, max);
+  return String(v)
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+function normalizeRecipeTags(tags, opts = {}) {
+  const items = Array.isArray(tags) ? tags : (tags == null ? [] : [tags]);
+  const splitRe = opts.splitWhitespace ? /[\/／、,，\s]+/u : TAG_SPLIT_RE;
+  const out = [];
+  const seen = new Set();
+  for (const item of items) {
+    const text = cleanTagText(item, Math.max(TAG_MAX_LEN * 4, 120));
+    for (const part of text.split(splitRe)) {
+      const tag = cleanTagText(part);
+      if (!tag || seen.has(tag)) continue;
+      seen.add(tag);
+      out.push(tag);
+    }
+  }
+  return out;
+}
+function recipeTags(r) {
+  return normalizeRecipeTags(r?.tags);
+}
 function updateAuthStateFromResponse(response, requestToken = settings.apiToken || '') {
   if (shouldApplyUnauthorizedResponse(response, requestToken, settings.apiToken || '')) setAuthRequired(true);
 }
 function normalizeRecipeListPayload(data) {
   if (!Array.isArray(data)) throw new Error(data?.error || tr('error.recipeListFormat'));
-  return data;
+  let changed = false;
+  const list = data.map(r => {
+    if (!r || typeof r !== 'object' || Array.isArray(r)) return r;
+    const tags = recipeTags(r);
+    const rawTags = Array.isArray(r.tags) ? r.tags : [];
+    const same = rawTags.length === tags.length && rawTags.every((tag, i) => tag === tags[i]);
+    if (same && (Object.prototype.hasOwnProperty.call(r, 'tags') || !tags.length)) return r;
+    changed = true;
+    return { ...r, tags };
+  });
+  return changed ? list : data;
 }
 async function exportData() {
   try {
@@ -1132,17 +1176,18 @@ function compareRecent(a, b) {
 }
 function matchRecipeFilter(r, opts = {}, ctx = {}) {
   const tag = opts.tag || '';
+  const tags = recipeTags(r);
   const m = recipeMeta(ctx, r.id);
   const faved = Array.isArray(ctx.favRecipes) && ctx.favRecipes.includes(r.id);
   if (tag === '__fav') { if (!faved) return false; }
   else if (tag === '__cooked') { if (!m.cooked) return false; }
   else if (tag === '__uncooked') { if (m.cooked) return false; }
   else if (tag === '__nutrition') { if (!r.nutrition?.per_serving) return false; }
-  else if (tag && !(r.tags || []).includes(tag) && r.difficulty !== tag && r.cuisine !== tag) return false;
+  else if (tag && !tags.includes(tag) && r.difficulty !== tag && r.cuisine !== tag) return false;
 
   const q = String(opts.q || '').trim().toLowerCase();
   if (q) {
-    const hay = `${r.title || ''} ${(r.tags || []).join(' ')} ${recipeIngredientText(r)} ${r.cuisine || ''} ${r.difficulty || ''}`.toLowerCase();
+    const hay = `${r.title || ''} ${tags.join(' ')} ${recipeIngredientText(r)} ${r.cuisine || ''} ${r.difficulty || ''}`.toLowerCase();
     if (!hay.includes(q)) return false;
   }
 
@@ -1203,7 +1248,7 @@ function recentJobMetaText(j) {
   return [recentJobProgressLabel(j), formatJobTime(j)].filter(Boolean).join(' · ');
 }
 function renderFilters() {
-  const tags = new Set(); recipes.forEach(r => (r.tags || []).forEach(t => tags.add(t)));
+  const tags = new Set(); recipes.forEach(r => recipeTags(r).forEach(t => tags.add(t)));
   const chips = homeFilterChips([...tags]);
   $('#filters').innerHTML = chips.map(([v, l]) => `<span class="chip ${filter.tag === v ? 'on' : ''}" data-f="${esc(v)}">${esc(l)}</span>`).join('');
   $('#filters').querySelectorAll('.chip').forEach(c => c.onclick = () => { filter.tag = c.dataset.f; renderFilters(); renderRecipes(); });
@@ -1224,6 +1269,7 @@ function renderRecipes() {
     const m = rmeta(r.id), faved = favRecipes.includes(r.id);
     const totalMin = recipeTotalTimeMin(r);
     const timeText = recipeListTimeText(totalMin) ? `<span>${esc(recipeListTimeText(totalMin))}</span>` : '';
+    const tags = recipeTags(r);
     // 封面：取最后一个有截图的步骤（通常是接近成品的状态图）
     const cover = (r.steps || []).slice().reverse().find(s => s.image);
     const card = el(`<div class="rcard">
@@ -1237,7 +1283,7 @@ function renderRecipes() {
           ${m.cooked ? `<span class="cooked">${esc(tr('recipe.cooked'))}</span>` : ''}
           ${m.rating ? `<span class="cooked">${'★'.repeat(m.rating)}</span>` : ''}
         </div>
-        ${(r.tags || []).length ? `<div class="tags">${r.tags.slice(0, 4).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
+        ${tags.length ? `<div class="tags">${tags.slice(0, 4).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
       </div>
       <button class="star ${faved ? 'on' : ''}">${faved ? '★' : '☆'}</button></div>`);
     card.querySelector('div').onclick = () => openDetail(r);
@@ -2180,11 +2226,11 @@ function showBackendSetupIfNeeded() {
 
 /* ================= 详情页 ================= */
 function parseTagsText(text) {
-  return String(text || '').split(/[,，、\s]+/).map(t => t.trim()).filter(Boolean);
+  return normalizeRecipeTags(String(text || ''), { splitWhitespace: true });
 }
 async function editRecipeTags(r, onSaved) {
   const ov = openModal(`<h3 style="text-align:left">${esc(tr('tag.edit.title'))}</h3>
-    <input type="text" id="tagEditInput" placeholder="${esc(tr('tag.edit.placeholder'))}" value="${esc((r.tags || []).join(settings.lang === 'en' ? ', ' : '、'))}">
+    <input type="text" id="tagEditInput" placeholder="${esc(tr('tag.edit.placeholder'))}" value="${esc(recipeTags(r).join(settings.lang === 'en' ? ', ' : '、'))}">
     <div id="tagEditPreview" class="tags" style="margin-top:10px"></div>
     <div class="mrow"><button class="btn ghost" id="tagCancel">${esc(tr('common.cancel'))}</button><button class="btn" id="tagSave">${esc(tr('tag.edit.save'))}</button></div>`, 'left');
   const draw = () => {
@@ -2288,6 +2334,7 @@ function openDetail(r, focusStepIndex = null) {
   const phaseGroups = recipePhaseGroups(r);
   const hasPhases = phaseGroups.hasPhases;
   const importedNeedsWhy = !!r.imported && !hasRecipeWhy(r);
+  const tags = recipeTags(r);
   const p = el(`<div class="page">
     <div class="topbar">
       <button class="back">${esc(tr('detail.back'))}</button>
@@ -2307,7 +2354,7 @@ function openDetail(r, focusStepIndex = null) {
         ${r.total_time_min ? `<span>${esc(tr('recipe.time.approxMin', { min: r.total_time_min }))}</span>` : ''}
         <span>${esc(tr('recipe.steps', { count: (r.steps || []).length }))}</span>
         ${/^https?:\/\//.test(r.source || '') ? `<a class="src-link" href="${esc(r.source)}" target="_blank" rel="noopener">${esc(tr('detail.watchOriginal'))}</a>` : ''}</div>
-      ${(r.tags || []).length ? `<div class="tags" style="margin-top:8px">${r.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
+      ${tags.length ? `<div class="tags" style="margin-top:8px">${tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
     </div>
     ${!hasPhases && base ? `<div class="scaler"><span>${esc(tr('detail.servings'))}</span><button class="st" data-s="-">－</button><b id="svVal">${base * factor}</b><button class="st" data-s="+">＋</button><span>${esc(tr('detail.servingsUnit'))}</span></div>` : ''}
     <div class="no-print" style="display:flex;gap:8px;padding:8px 16px 0;flex-wrap:wrap">
@@ -2580,7 +2627,7 @@ function openEdit(r) {
   const hadTools = hasOwnToolsField(r);
   d.ingredients = Array.isArray(d.ingredients) ? d.ingredients : [];
   d.steps = Array.isArray(d.steps) ? d.steps : [];
-  d.tags = Array.isArray(d.tags) ? d.tags : [];
+  d.tags = recipeTags(d);
   d.tools = Array.isArray(d.tools) ? d.tools : [];
   const fld = 'border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;font-size:15px;color:var(--ink);font-family:inherit;width:100%';
   const p = el(`<div class="page">
@@ -2808,12 +2855,13 @@ function recipeToText(r, f) {
 }
 // 导出为 Cooklang（.cook，开放的纯文本菜谱标准，可被整个生态消费）
 function recipeToCooklang(r) {
+  const tags = recipeTags(r);
   const meta = [
     `>> title: ${r.title || ''}`,
     r.servings ? `>> servings: ${r.servings}` : '',
     r.total_time_min ? `>> time: ${r.total_time_min} min` : '',
     r.cuisine ? `>> cuisine: ${r.cuisine}` : '',
-    (r.tags && r.tags.length) ? `>> tags: ${r.tags.join(', ')}` : '',
+    tags.length ? `>> tags: ${tags.join(', ')}` : '',
     r.source ? `>> source: ${r.source}` : '',
   ].filter(Boolean).join('\n');
   const ings = (r.ingredients || []).map(i =>
@@ -2828,9 +2876,10 @@ function recipeToCooklang(r) {
 function recipeToSchemaOrg(r) {
   const undef = (v) => (v == null || v === '' ? undefined : v);
   const n = r.nutrition && r.nutrition.per_serving;
+  const tags = recipeTags(r);
   return {
     '@context': 'https://schema.org', '@type': 'Recipe',
-    name: r.title, recipeCuisine: undef(r.cuisine), keywords: undef((r.tags || []).join(', ')),
+    name: r.title, recipeCuisine: undef(r.cuisine), keywords: undef(tags.join(', ')),
     recipeYield: undef(r.servings), totalTime: r.total_time_min ? `PT${r.total_time_min}M` : undefined,
     recipeIngredient: (r.ingredients || []).map(i => `${i.name} ${i.amount || ''}`.trim()),
     recipeInstructions: (r.steps || []).map(s => ({ '@type': 'HowToStep', name: undef(s.title), text: s.action || '' })),
@@ -3524,7 +3573,7 @@ async function refresh() {
       recipeListAuthBlocked = true;
       recipes = [];
     } else {
-      recipes = store.get('cacheRecipes', []);
+      recipes = normalizeRecipeListPayload(store.get('cacheRecipes', []) || []);
     }
   }
   try { const data = await API.techniques(); techniques = Array.isArray(data) ? data : []; } catch { techniques = []; }

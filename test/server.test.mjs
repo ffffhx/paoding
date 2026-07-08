@@ -149,6 +149,34 @@ test("空库 GET /api/recipes 返回 []", async () => {
   assert.deepEqual(await (await request("/api/recipes")).json(), []);
 });
 
+test("recipes 列表和 PUT 边界会拆分合并脏标签", async () => {
+  const id = "脏标签边界菜";
+  const fp = path.join(recipesDir, `${id}.json`);
+  fs.writeFileSync(fp, JSON.stringify({
+    title: id,
+    tags: ["下饭菜/快手/炖菜", "快手、家常，宴客"],
+    ingredients: [{ name: "鸡蛋", amount: "2个" }],
+    steps: [{ index: 1, title: "炒", action: "炒熟。" }],
+    created_at: "2026-07-08T00:00:00.000Z",
+  }, null, 2));
+  try {
+    const list = await (await request("/api/recipes")).json();
+    const found = list.find((r) => r.id === id);
+    assert.deepEqual(found.tags, ["下饭菜", "快手", "炖菜", "家常", "宴客"]);
+
+    const put = await request(`/api/recipes/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags: ["快手/炖菜", "宴客，家常"] }),
+    });
+    assert.equal(put.status, 200);
+    const saved = JSON.parse(fs.readFileSync(fp, "utf8"));
+    assert.deepEqual(saved.tags, ["快手", "炖菜", "宴客", "家常"]);
+  } finally {
+    fs.rmSync(fp, { force: true });
+  }
+});
+
 test("启动时 running 任务标记为 interrupted 并可查询", async () => {
   const jobs = await (await request("/api/jobs")).json();
   const j = jobs.find((x) => x.id === "restart-job");

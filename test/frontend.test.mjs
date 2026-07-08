@@ -98,6 +98,20 @@ test("标签编辑弹窗切 en 后使用英文文案", () => {
   app.setLanguage("zh");
 });
 
+test("normalizeRecipeTags 拆分合并脏标签并去重截断", () => {
+  assert.deepEqual(Array.from(app.normalizeRecipeTags([
+    "下饭菜/快手/炖菜",
+    "快手、家常，宴客",
+    "宴客,",
+    "",
+  ])), ["下饭菜", "快手", "炖菜", "家常", "宴客"]);
+  assert.deepEqual(Array.from(app.normalizeRecipeTags("quick dinner,weeknight")), ["quick dinner", "weeknight"]);
+  assert.deepEqual(Array.from(app.parseTagsText("home quick,weeknight")), ["home", "quick", "weeknight"]);
+  const longTag = "标签".repeat(20);
+  assert.equal(app.normalizeRecipeTags(longTag)[0], longTag.slice(0, 24));
+  assert.deepEqual(Array.from(app.normalizeRecipeListPayload([{ title: "红烧", tags: ["下饭菜/快手/炖菜"] }])[0].tags), ["下饭菜", "快手", "炖菜"]);
+});
+
 test("首页/列表文案切 en 后使用英文标签", () => {
   app.setLanguage("en");
   assert.deepEqual(Array.from(app.homeFilterChips(["家常"]).slice(0, 6).map((x) => x[1])), [
@@ -702,7 +716,7 @@ test("recipeShareCardLayout 切 en 后使用英文标签并取第一张步骤图
 test("filterAndSortRecipes 支持食材 AND 筛选、快捷筛选和排序", () => {
   const list = [
     { id: "a", title: "番茄炒蛋", created_at: "2026-01-03T00:00:00.000Z", total_time: "PT15M", ingredients: [{ name: "番茄" }, { name: "鸡蛋" }], nutrition: { per_serving: { calories_kcal: 1 } } },
-    { id: "b", title: "葱油面", created_at: "2026-01-04T00:00:00.000Z", ingredients: [{ name: "面条" }, { name: "小葱" }] },
+    { id: "b", title: "葱油面", created_at: "2026-01-04T00:00:00.000Z", tags: ["下饭菜/快手/炖菜"], ingredients: [{ name: "面条" }, { name: "小葱" }] },
     { id: "c", title: "白灼青菜", created_at: "2026-01-02T00:00:00.000Z", ingredients: [{ name: "青菜" }], steps: [{ params: { time: "5分钟" } }, { duration: "PT2M" }] },
   ];
   const ctx = { favRecipes: ["b"], meta: { a: { cooked: true, rating: 2 }, b: { rating: 5 } } };
@@ -711,6 +725,7 @@ test("filterAndSortRecipes 支持食材 AND 筛选、快捷筛选和排序", () 
   assert.deepEqual(app.filterAndSortRecipes(list, { tag: "__fav" }, ctx).map(r => r.id), ["b"]);
   assert.deepEqual(app.filterAndSortRecipes(list, { tag: "__uncooked", sort: "name" }, ctx).map(r => r.id), ["c", "b"]);
   assert.deepEqual(app.filterAndSortRecipes(list, { tag: "__nutrition" }, ctx).map(r => r.id), ["a"]);
+  assert.deepEqual(app.filterAndSortRecipes(list, { tag: "快手", sort: "name" }, ctx).map(r => r.id), ["b"]);
   assert.deepEqual(app.filterAndSortRecipes(list, { sort: "rating" }, ctx).map(r => r.id), ["b", "a", "c"]);
   assert.deepEqual(app.filterAndSortRecipes(list, { sort: "time" }, ctx).map(r => r.id), ["c", "a", "b"]);
 });

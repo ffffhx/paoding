@@ -223,6 +223,22 @@ function cleanText(v, max = 240) {
     .slice(0, max);
 }
 
+export function normalizeTags(tags, max = 24) {
+  const items = Array.isArray(tags) ? tags : (tags == null ? [] : [tags]);
+  const out = [];
+  const seen = new Set();
+  for (const item of items) {
+    const text = cleanText(item, Math.max(max * 4, 120));
+    for (const part of text.split(/[\/／、,，]+/u)) {
+      const tag = cleanText(part, max);
+      if (!tag || seen.has(tag)) continue;
+      seen.add(tag);
+      out.push(tag);
+    }
+  }
+  return out;
+}
+
 function recipeText(recipe, { includeSteps = true } = {}) {
   if (!recipe || typeof recipe !== "object") return "";
   const values = [];
@@ -423,7 +439,7 @@ function applyMultiDishFallback(recipe, segments, meta) {
   recipe.total_time_min = recipe.total_time_min || Math.ceil((segments.at(-1)?.end || 0) / 60) || null;
   recipe.difficulty = recipe.difficulty || "medium";
   recipe.cuisine = recipe.cuisine || "家常菜";
-  recipe.tags = Array.from(new Set([...(Array.isArray(recipe.tags) ? recipe.tags : []), "合集", "长视频"])).slice(0, 5);
+  recipe.tags = normalizeTags([...(Array.isArray(recipe.tags) ? recipe.tags : []), "合集", "长视频"]).slice(0, 5);
   recipe.ingredients = [];
   recipe.tools = [];
   recipe.steps = segments.map((seg, i) => ({
@@ -582,7 +598,7 @@ ${transcript}`;
   recipe.tools = inferBakingToolFallback(recipe, recipe.tools);
   normalizeRecipePhases(recipe);
   applyMultiDishFallback(recipe, multiDishSegments, meta);
-  if (!Array.isArray(recipe.tags)) recipe.tags = [];
+  recipe.tags = normalizeTags(recipe.tags);
   if (!recipe.difficulty) recipe.difficulty = "medium";
   if (!recipe.cuisine) recipe.cuisine = "家常菜";
 
