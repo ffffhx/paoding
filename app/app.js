@@ -30,7 +30,14 @@ const api = (p) => (settings.apiBase || BASE) + p;
 // 可选 API token：服务端设了 PAODING_API_TOKEN 时，所有 /api/* 都要带上（走 X-Paoding-Token 头）。
 const authHeaders = () => settings.apiToken ? { 'X-Paoding-Token': settings.apiToken } : {};
 // 统一 fetch 包装：自动注入 token 头，与调用方自带 headers 合并。
-const F = (p, opts = {}) => fetch(api(p), { ...opts, headers: { ...(opts.headers || {}), ...authHeaders() } });
+const F = (p, opts = {}) => {
+  const requestToken = settings.apiToken || '';
+  return fetch(api(p), { ...opts, headers: { ...(opts.headers || {}), ...authHeaders() } })
+    .then((response) => {
+      updateAuthStateFromResponse(response, requestToken);
+      return response;
+    });
+};
 const API = {
   list: () => F('/api/recipes').then(j).then(normalizeRecipeListPayload),
   techniques: () => F('/api/techniques').then(r => r.json()),
@@ -61,6 +68,27 @@ const API = {
   importAll: (data) => F('/api/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(j),
   importRecipe: (jsonld) => F('/api/import-recipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonld }) }).then(j),
 };
+function isApiUnauthorizedResponse(response) {
+  return Number(response?.status) === 401;
+}
+function shouldApplyUnauthorizedResponse(response, requestToken = settings.apiToken || '', currentToken = settings.apiToken || '') {
+  return isApiUnauthorizedResponse(response) && String(requestToken || '') === String(currentToken || '');
+}
+function isApiUnauthorizedError(error) {
+  return Number(error?.status) === 401;
+}
+function authBannerVisible(state = {}) {
+  return !!state.required;
+}
+function apiErrorFromResponse(response, data = {}) {
+  const e = new Error(data?.error || ('HTTP ' + response.status));
+  e.status = response.status;
+  e.data = data;
+  return e;
+}
+function updateAuthStateFromResponse(response, requestToken = settings.apiToken || '') {
+  if (shouldApplyUnauthorizedResponse(response, requestToken, settings.apiToken || '')) setAuthRequired(true);
+}
 function normalizeRecipeListPayload(data) {
   if (!Array.isArray(data)) throw new Error(data?.error || tr('error.recipeListFormat'));
   return data;
@@ -106,7 +134,7 @@ function importRecipeJsonFile(file) {
   reader.onload = () => importRecipeJsonLd(reader.result);
   reader.readAsText(file);
 }
-async function j(r) { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); return d; }
+async function j(r) { const d = await r.json().catch(() => ({})); if (!r.ok) throw apiErrorFromResponse(r, d); return d; }
 function readAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -138,6 +166,8 @@ function saveMealPlan() { store.set('mealPlan', mealPlan); }
 let meta = store.get('meta', {}); // {recipeId:{cooked,cooked_at,rating,notes,ingChecked:[]}}
 let depth = settings.depth;
 let curTab = 'recipes';
+let authRequired = false;
+let recipeListAuthBlocked = false;
 let filter = { q: '', tag: '', ingredients: '', sort: 'recent' };
 const rmeta = (id) => (meta[id] = meta[id] || {});
 function saveMeta() { store.set('meta', meta); }
@@ -479,6 +509,44 @@ function hasI18nKey(key) {
   ));
 }
 function trOr(key, fallback, params) { return hasI18nKey(key) ? tr(key, params) : fallback; }
+function setAuthRequired(required) {
+  authRequired = !!required;
+  renderAuthBanner();
+}
+function authGuidanceHtml(kind = 'banner') {
+  const title = esc(tr('auth.required.message'));
+  const help = esc(tr('auth.required.help'));
+  const action = esc(tr('auth.required.action'));
+  if (kind === 'list') {
+    return `<div class="empty auth-empty" role="status"><b>${title}</b><span>${help}</span><button class="btn sm" data-auth-settings>${action}</button></div>`;
+  }
+  return `<div class="auth-banner" id="authBanner" role="alert" aria-live="assertive"><span>${title}</span><button class="btn sm" id="authGoSettings">${action}</button></div>`;
+}
+function renderAuthBanner() {
+  const existing = $('#authBanner');
+  if (!authBannerVisible({ required: authRequired })) { if (existing) existing.remove(); return; }
+  const header = $('header');
+  if (!header) return;
+  if (existing) existing.replaceWith(el(authGuidanceHtml('banner')));
+  else header.after(el(authGuidanceHtml('banner')));
+  const btn = $('#authGoSettings');
+  if (btn) btn.onclick = openSettingsForToken;
+}
+function highlightTokenInput() {
+  const input = $('#apiToken');
+  if (!input) return;
+  input.classList.remove('token-attention');
+  void input.offsetWidth;
+  input.classList.add('token-attention');
+  input.focus();
+  input.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+}
+function openSettingsForToken() {
+  const tab = document.querySelector('[data-tab="settings"]');
+  if (tab) tab.click();
+  else renderSettings();
+  setTimeout(highlightTokenInput, 0);
+}
 function currentLocale(lang = settings.lang) {
   return normalizeUiLang(lang) === 'en' ? 'en-US' : 'zh-CN';
 }
@@ -1130,6 +1198,11 @@ function renderRecipes() {
   const items = filterAndSortRecipes(recipes, filter, { meta, favRecipes });
   box.innerHTML = '';
   renderRecentJobs(box);
+  if (recipeListAuthBlocked) {
+    box.insertAdjacentHTML('beforeend', authGuidanceHtml('list'));
+    box.querySelector('[data-auth-settings]')?.addEventListener('click', openSettingsForToken);
+    return;
+  }
   if (!recipes.length) { box.insertAdjacentHTML('beforeend', `<div class="empty">${esc(tr('recipe.empty.title'))}<br>${esc(tr('recipe.empty.help'))}</div>`); return; }
   if (!items.length) { box.insertAdjacentHTML('beforeend', `<div class="empty">${esc(tr('recipe.noMatch'))}</div>`); return; }
   items.forEach(r => {
@@ -2046,7 +2119,14 @@ function renderSettings() {
   $('#setDepth').querySelectorAll('.chip').forEach(c => c.onclick = () => { settings.depth = c.dataset.d; depth = c.dataset.d; saveSettings(); renderSettings(); syncDepthChips(); });
   $('#uiLang').onchange = (e) => { setLanguage(e.target.value); saveSettings(); applyStaticI18n(); renderAll(); renderSettings(); toast(tr('settings.language.saved')); };
   $('#apiBase').onchange = (e) => { settings.apiBase = e.target.value.trim().replace(/\/$/, ''); saveSettings(); toast(tr('settings.backend.saved')); refresh(); };
-  $('#apiToken').onchange = (e) => { settings.apiToken = e.target.value.trim(); saveSettings(); toast(tr('settings.token.saved')); refresh(); };
+  $('#apiToken').onchange = (e) => {
+    settings.apiToken = e.target.value.trim();
+    saveSettings();
+    recipeListAuthBlocked = false;
+    setAuthRequired(false);
+    toast(tr('settings.token.saved'));
+    refresh();
+  };
   $('#btnExport').onclick = exportData;
   $('#btnImport').onclick = () => $('#importFile').click();
   $('#importFile').onchange = (e) => { const f = e.target.files[0]; if (f) importData(f); e.target.value = ''; };
@@ -2073,6 +2153,8 @@ function showBackendSetupIfNeeded() {
     settings.apiBase = base;
     settings.apiToken = ov.querySelector('#setupApiToken').value.trim();
     saveSettings();
+    recipeListAuthBlocked = false;
+    setAuthRequired(false);
     ov.remove();
     toast(tr('settings.backend.saved'));
     loadUserData().finally(refresh);
@@ -3413,13 +3495,23 @@ function updateBadges() {
   set('#tabSkillsBadge', favSteps.length);
   set('#tabShopBadge', shoppingUnchecked());
 }
-function renderAll() { renderFilters(); renderRecipes(); renderCookbooks(); renderPantry(); renderTechniques(); renderSkills(); renderShopping(); updateBadges(); }
+function renderAll() { renderAuthBanner(); renderFilters(); renderRecipes(); renderCookbooks(); renderPantry(); renderTechniques(); renderSkills(); renderShopping(); updateBadges(); }
 function syncDepthChips() { document.querySelectorAll('#depth .chip').forEach(x => x.classList.toggle('on', x.dataset.d === depth)); }
 async function refresh() {
-  try { recipes = await API.list(); } catch { recipes = store.get('cacheRecipes', []); }
+  try {
+    recipes = await API.list();
+    recipeListAuthBlocked = false;
+  } catch (e) {
+    if (isApiUnauthorizedError(e)) {
+      recipeListAuthBlocked = true;
+      recipes = [];
+    } else {
+      recipes = store.get('cacheRecipes', []);
+    }
+  }
   try { const data = await API.techniques(); techniques = Array.isArray(data) ? data : []; } catch { techniques = []; }
   try { const jobs = await API.jobs(); recentJobs = Array.isArray(jobs) ? jobs : []; } catch { recentJobs = []; }
-  store.set('cacheRecipes', recipes);
+  if (!recipeListAuthBlocked) store.set('cacheRecipes', recipes);
   renderAll();
 }
 

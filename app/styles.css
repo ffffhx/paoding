@@ -386,6 +386,14 @@ html[data-theme="dark"] .job-row.running::after,html[data-theme="dark"] .job-row
 
 .install-banner{margin:8px 16px;background:var(--herb);color:#fff;border-radius:14px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:14px}
 .install-banner .btn{background:#fff;color:var(--herb)}
+.auth-banner{margin:8px 16px 6px;background:var(--ink);color:var(--bg);border:2px solid var(--tomato);border-radius:var(--r-lg);box-shadow:var(--shadow-pop);padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:14px;font-weight:700;line-height:1.45}
+.auth-banner .btn{background:var(--tomato);color:#fff;flex-shrink:0}
+.auth-empty{display:flex;flex-direction:column;align-items:center;gap:10px;color:var(--ink)}
+.auth-empty b{font-size:16px;line-height:1.45}
+.auth-empty span{color:var(--muted);max-width:360px}
+.auth-empty .btn{margin-top:2px}
+.token-attention{border-color:var(--tomato)!important;box-shadow:0 0 0 4px var(--focus),0 0 0 9999px rgba(228,87,46,.04)}
+html[data-theme="dark"] .token-attention{box-shadow:0 0 0 4px var(--focus),0 0 0 9999px rgba(240,118,78,.08)}
 
 .hl{color:var(--tomato);font-weight:700}
 html[data-theme="dark"] .hl{color:var(--amber)}

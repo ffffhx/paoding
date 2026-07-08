@@ -35,6 +35,24 @@ function loadApp() {
 
 const app = loadApp();
 
+test("API 401 状态判定会保留 status 并忽略过期 token 请求", () => {
+  assert.equal(app.isApiUnauthorizedResponse({ status: 401 }), true);
+  assert.equal(app.isApiUnauthorizedResponse({ status: 403 }), false);
+  assert.equal(app.shouldApplyUnauthorizedResponse({ status: 401 }, "", ""), true);
+  assert.equal(app.shouldApplyUnauthorizedResponse({ status: 401 }, "old-token", "new-token"), false);
+  const err = app.apiErrorFromResponse({ status: 401 }, { error: "未授权" });
+  assert.equal(err.message, "未授权");
+  assert.equal(err.status, 401);
+  assert.deepEqual(err.data, { error: "未授权" });
+  assert.equal(app.isApiUnauthorizedError(err), true);
+});
+
+test("鉴权横幅显隐逻辑只由 required 状态控制", () => {
+  assert.equal(app.authBannerVisible({ required: true }), true);
+  assert.equal(app.authBannerVisible({ required: false }), false);
+  assert.equal(app.authBannerVisible({}), false);
+});
+
 test("i18n t 回退 en→zh→key，并支持参数替换", () => {
   app.PaodingI18n.en["test.hello"] = "Hello {name}";
   app.PaodingI18n.zh["test.onlyZh"] = "只有 {name}";
