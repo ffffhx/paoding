@@ -917,12 +917,26 @@ function normalizeRecipeTool(t) {
 function recipeTools(r) {
   return Array.isArray(r?.tools) ? r.tools.map(normalizeRecipeTool).filter(Boolean) : [];
 }
+function stripNoSubstituteReasonPrefix(note) {
+  let text = String(note || '').trim();
+  if (!text) return '';
+  for (let i = 0; i < 3; i++) {
+    const next = text
+      .replace(/^(?:无替代方案|无替代|没有替代方案|没有替代品)\s*[，,。；;：:]?\s*/u, '')
+      .replace(/^因为\s*/u, '')
+      .trim();
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
 function toolSubstituteHtml(t) {
   const note = String(t.substitute_note || '').trim();
   if (t.substitute) {
     return `<div class="tool-sub">${esc(tr('detail.tools.substitute', { substitute: t.substitute }))}${note ? ` · ${esc(tr('detail.tools.note', { note }))}` : ''}</div>`;
   }
-  return `<div class="tool-sub no">${esc(tr('detail.tools.noSubstitute'))}${note ? ` · ${esc(tr('detail.tools.noSubstituteReason', { reason: note }))}` : ''}</div>`;
+  const reason = stripNoSubstituteReasonPrefix(note);
+  return `<div class="tool-sub no">${esc(tr('detail.tools.noSubstitute'))}${reason ? ` · ${esc(tr('detail.tools.noSubstituteReason', { reason }))}` : ''}</div>`;
 }
 function toolsCardHtml(r) {
   if (!hasOwnToolsField(r)) return '';
@@ -941,11 +955,12 @@ function toolsCardHtml(r) {
 }
 function schemaToolDescription(t) {
   const note = String(t.substitute_note || '').trim();
+  const reason = stripNoSubstituteReasonPrefix(note);
   const parts = [
     t.purpose,
     t.essential ? 'Essential' : '',
     t.inferred ? 'Inferred' : '',
-    t.substitute ? `Alternative: ${t.substitute}${note ? ` (${note})` : ''}` : `No alternative${note ? `: ${note}` : ''}`,
+    t.substitute ? `Alternative: ${t.substitute}${note ? ` (${note})` : ''}` : `No alternative${reason ? `: ${reason}` : ''}`,
   ].filter(Boolean);
   return parts.join('; ');
 }
@@ -2778,7 +2793,10 @@ function recipeToText(r, f) {
       const badges = [t.essential && tr('detail.tools.essential'), t.inferred && tr('detail.tools.inferred')].filter(Boolean).join(' / ');
       s += `· ${t.name}${t.purpose ? `：${t.purpose}` : ''}${badges ? `（${badges}）` : ''}\n`;
       if (t.substitute) s += `   ${tr('detail.tools.substitute', { substitute: t.substitute })}${t.substitute_note ? `；${tr('detail.tools.note', { note: t.substitute_note })}` : ''}\n`;
-      else s += `   ${tr('detail.tools.noSubstitute')}${t.substitute_note ? `；${tr('detail.tools.noSubstituteReason', { reason: t.substitute_note })}` : ''}\n`;
+      else {
+        const reason = stripNoSubstituteReasonPrefix(t.substitute_note);
+        s += `   ${tr('detail.tools.noSubstitute')}${reason ? `；${tr('detail.tools.noSubstituteReason', { reason })}` : ''}\n`;
+      }
     });
     s += '\n';
   }

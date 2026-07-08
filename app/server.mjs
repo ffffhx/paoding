@@ -664,7 +664,7 @@ async function inferRecipeTools(r) {
 规则：
 - 所有条目的 inferred 必须为 true，因为这是基于已保存菜谱的后补推断。
 - 甜品/烘焙类（蛋糕、饼干、慕斯、塔派、面包、裱花、巧克力、糖艺等）必须完整列出关键工具：打发器/打蛋器、裱花袋和裱花嘴、抹刀/刮刀、模具（若材料中有尺寸就写进 name 或 purpose）、油纸、厨房秤、温度计、烤箱等。
-- 有替代品时 substitute 写替代方案，substitute_note 写代价/注意点；没有替代品时 substitute 必须为 null，substitute_note 必须写清楚不能替代的原因。
+- 有替代品时 substitute 写替代方案，substitute_note 写代价/注意点；没有替代品时 substitute 必须为 null，substitute_note 只写原因本身，不要复述「无替代/没有替代方案/因为」这类结论或开头。
 - 非甜品只列非常规厨具，常见锅碗瓢盆不要列。
 - 拿不准宁可不列，不要编造视频/菜谱里没有依据的具体尺寸或型号。`),
     user: `schema:
@@ -675,7 +675,7 @@ async function inferRecipeTools(r) {
       "purpose": "用途",
       "essential": true,
       "substitute": "替代方案；无替代为 null",
-      "substitute_note": "替代代价/注意点；无替代则写原因",
+      "substitute_note": "替代代价/注意点；无替代则只写原因本身，不要写“无替代方案，因为…”",
       "inferred": true
     }
   ]

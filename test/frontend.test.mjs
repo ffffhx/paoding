@@ -430,6 +430,22 @@ test("工具卡片和跟做工具提示支持替代与无替代原因", () => {
   app.setLanguage("zh");
 });
 
+test("无替代工具理由渲染时去掉模型复述的结论前缀", () => {
+  assert.equal(app.stripNoSubstituteReasonPrefix("无替代方案，因为防粘模具会影响爬升"), "防粘模具会影响爬升");
+  assert.equal(app.stripNoSubstituteReasonPrefix("无替代，普通容器受热不稳定"), "普通容器受热不稳定");
+  assert.equal(app.stripNoSubstituteReasonPrefix("因为需要稳定温度"), "需要稳定温度");
+  assert.equal(app.stripNoSubstituteReasonPrefix("A nonstick pan prevents climbing"), "A nonstick pan prevents climbing");
+
+  const r = { tools: [{ name: "戚风模具", purpose: "帮助爬升", essential: true, substitute: null, substitute_note: "无替代方案，因为普通容器高度和材质不稳定", inferred: false }] };
+  const html = app.toolsCardHtml(r);
+  assert.ok(html.includes("无替代"));
+  assert.ok(html.includes("原因：普通容器高度和材质不稳定"));
+  assert.ok(!html.includes("原因：无替代"));
+  const text = app.recipeToText(r, 1);
+  assert.ok(text.includes("原因：普通容器高度和材质不稳定"));
+  assert.ok(!text.includes("原因：无替代"));
+});
+
 test("跟做模式辅助片段切 en 后输出英文 UI 文案", () => {
   app.setLanguage("en");
   assert.ok(app.paramsHtml({ heat: "medium", time: "3分钟", cue: "golden" }).includes("Heat"));
