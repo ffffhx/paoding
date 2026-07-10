@@ -3111,8 +3111,8 @@ function drawImageCover(ctx, img, box) {
   ctx.restore();
 }
 function drawShareCardText(ctx, model) {
-  const tomato = '#E4572E', herb = '#6A8D3F', ink = '#2A2724', muted = '#756B63', line = '#EADDCB', wash = '#FFF1DF';
-  ctx.fillStyle = '#FFF9F0';
+  const tomato = '#B03A2E', herb = '#66793F', ink = '#1F1D1A', muted = '#8C857B', line = '#E5DFD2', wash = '#F4EFE4';
+  ctx.fillStyle = '#FAF8F3';
   ctx.fillRect(0, 0, model.width, model.height);
   ctx.fillStyle = tomato;
   ctx.fillRect(0, 0, 18, model.height);
