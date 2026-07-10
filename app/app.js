@@ -1075,6 +1075,82 @@ function sourceSegmentUrl(source, sourceTime) {
   } catch { }
   return source;
 }
+function normalizeSourceSegment(sourceTime) {
+  if (!Array.isArray(sourceTime) || sourceTime.length < 2) return null;
+  const start = Math.max(0, Math.floor(Number(sourceTime[0])));
+  const end = Math.floor(Number(sourceTime[1]));
+  return Number.isFinite(start) && Number.isFinite(end) && end > start ? [start, end] : null;
+}
+function mediaUrlWithToken(url, token) {
+  if (!url || !token) return url || '';
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+}
+function recipeMediaUrl(r) {
+  if (!r?.id || !r?.source_media) return '';
+  const raw = api('/api/recipes/' + encodeURIComponent(r.id) + '/media/' + encodeURIComponent(r.source_media));
+  return mediaUrlWithToken(raw, settings.apiToken);
+}
+function sourceSegmentControlHtml(r, s, extraClass = '') {
+  const segment = normalizeSourceSegment(s?.source_time);
+  if (!segment) return '';
+  const classes = `step-video-link ${extraClass}`.trim();
+  if (r?.source_media) {
+    return `<button type="button" class="${esc(classes)} step-video-btn" data-source-segment="${esc(s.index)}">${esc(tr('detail.watchSegment'))}</button>`;
+  }
+  const external = sourceSegmentUrl(r?.source, s.source_time);
+  return external ? `<a class="${esc(classes)}" href="${esc(external)}" target="_blank" rel="noopener">${esc(tr('detail.watchSegment'))}</a>` : '';
+}
+function segmentClock(seconds) {
+  const value = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
+}
+function openSourceSegment(r, s) {
+  const segment = normalizeSourceSegment(s?.source_time);
+  const mediaUrl = recipeMediaUrl(r);
+  if (!segment || !mediaUrl) return;
+  const [start, end] = segment;
+  const original = sourceSegmentUrl(r.source, s.source_time);
+  const poster = s.image ? recipeImg(r.id, s.image) : '';
+  const audioOnly = /\.(?:mp3|m4a)$/i.test(r.source_media || '');
+  const mediaTag = audioOnly
+    ? `<audio id="sourceSegmentMedia" controls preload="metadata" src="${esc(mediaUrl)}"></audio>`
+    : `<video id="sourceSegmentMedia" controls playsinline preload="metadata"${poster ? ` poster="${esc(poster)}"` : ''} src="${esc(mediaUrl)}"></video>`;
+  const ov = openModal(`<div class="source-video-head">
+      <div><span>${esc(tr('detail.segment.kicker', { range: `${segmentClock(start)}–${segmentClock(end)}` }))}</span><h3>${esc(s.title || tr('detail.segment.title'))}</h3></div>
+      <button type="button" class="iconbtn" id="xClose" aria-label="${esc(tr('common.close'))}">×</button>
+    </div>
+    <div class="source-video-frame">${mediaTag}</div>
+    <p class="source-video-error" id="sourceVideoError" hidden>${esc(tr('detail.segment.loadFailed'))}</p>
+    <div class="source-video-actions">
+      <button type="button" class="btn" id="sourceVideoReplay">${esc(tr('detail.segment.replay'))}</button>
+      ${original ? `<a class="btn ghost" href="${esc(original)}" target="_blank" rel="noopener">${esc(tr('detail.segment.openOriginal'))}</a>` : ''}
+    </div>`, 'source-video-modal left');
+  const media = ov.querySelector('#sourceSegmentMedia');
+  let positioned = false;
+  const playSegment = () => {
+    positioned = true;
+    try { media.currentTime = start; } catch { }
+    media.play?.().catch(() => {});
+  };
+  const close = () => { media.pause?.(); ov.remove(); };
+  media.addEventListener('loadedmetadata', playSegment, { once: true });
+  media.addEventListener('canplay', () => { if (!positioned) playSegment(); }, { once: true });
+  media.addEventListener('timeupdate', () => {
+    if (media.currentTime >= end) media.pause?.();
+  });
+  media.addEventListener('error', () => { ov.querySelector('#sourceVideoError').hidden = false; });
+  ov.querySelector('#sourceVideoReplay').onclick = playSegment;
+  ov.querySelector('#xClose').onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  // 这次 play 仍处在用户点击按钮的手势栈里；先拿到播放许可，元数据就绪后再跳到片段起点。
+  media.play?.().catch(() => {});
+}
+function wireSourceSegments(root, r) {
+  root.querySelectorAll('[data-source-segment]').forEach((btn) => {
+    const step = (r.steps || []).find((s) => String(s.index) === String(btn.dataset.sourceSegment));
+    if (step) btn.onclick = () => openSourceSegment(r, step);
+  });
+}
 // 点图放大；onerror 时图会自行移除（备份导入的菜谱可能没带图片文件）
 function showLightbox(src) {
   const ov = el(`<div class="lightbox"><img src="${esc(src)}" alt=""></div>`);
@@ -2496,15 +2572,15 @@ function openDetail(r, focusStepIndex = null) {
     if (!stepsBox) return;
     stepsBox.innerHTML = '';
     entries.forEach(({ item: s }) => {
-    const segUrl = sourceSegmentUrl(r.source, s.source_time);
     stepsBox.appendChild(el(`<div class="stepmini" data-step-index="${esc(s.index)}">
       ${s.image ? `<img class="mthumb" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="" loading="lazy" onerror="this.remove()">` : ''}
       <div class="t"><span class="n">${s.index}</span>${esc(s.title || '')}${riskBadge(s.risk_level)}</div>
       <div class="a">${esc(s.action || '')}</div>
       ${stepWhyPrintHtml(s)}
-      ${segUrl ? `<a class="step-video-link" href="${esc(segUrl)}" target="_blank" rel="noopener">${esc(tr('detail.watchSegment'))}</a>` : ''}</div>`));
+      ${sourceSegmentControlHtml(r, s)}</div>`));
     });
     wireZoom(stepsBox);
+    wireSourceSegments(stepsBox, r);
   }
   if (hasPhases) {
     renderStepList(phaseGroups.steps.batch, '#batchSteps');
@@ -3280,7 +3356,6 @@ async function openCook(r) {
     }
     const w = s.why || {}, key = stepKey(r.id, s.index), faved = favSteps.some(x => x.key === key);
     const warn = s.confidence === 'low' ? `<span class="warn">${esc(tr('cook.confidence.low'))}</span>` : s.confidence === 'medium' ? `<span class="warn">${esc(tr('cook.confidence.medium'))}</span>` : '';
-    const segUrl = sourceSegmentUrl(r.source, s.source_time);
     box.innerHTML = `
       <div class="cook-top"><button class="x">${esc(tr('cook.exit'))}</button>
         <span style="color:var(--muted);font-size:14px">${cur + 1} / ${steps.length}</span>
@@ -3295,7 +3370,7 @@ async function openCook(r) {
         <h2>${esc(s.title || '')}</h2>
         <div class="action">${richText(s.action || '')}</div>
         ${s.image ? `<img class="stepimg" data-zoom src="${esc(recipeImg(r.id, s.image))}" alt="${esc(tr('cook.stepImageAlt'))}" loading="lazy" onerror="this.remove()">` : ''}
-        ${segUrl ? `<a class="step-video-link cook-src" href="${esc(segUrl)}" target="_blank" rel="noopener">${esc(tr('detail.watchSegment'))}</a>` : ''}
+        ${sourceSegmentControlHtml(r, s, 'cook-src')}
         ${paramsHtml(s.params)}${usedIngsHtml(r, s)}${stepToolsHtml(r, s)}${timerHtml(s.params)}
         ${(w.reason || w.if_not || w.cue) ? `<div class="why"><div class="why-hd"><span>${esc(tr('cook.whyTitle'))}</span>${warn}</div>
           ${w.reason ? `<p><span class="lbl">${esc(tr('cook.principle'))}</span>${richText(w.reason)}</p>` : ''}
@@ -3318,6 +3393,7 @@ async function openCook(r) {
     if (SR) box.querySelector('#voiceBtn').onclick = toggleVoice;
     box.querySelectorAll('.term').forEach(t => t.onclick = () => showTerm(t.dataset.term));
     wireZoom(box);
+    wireSourceSegments(box, r);
     renderQA(s);
     if (settings.tts) speak(tr('cook.speech.stepTitle', { index: s.index, title: s.title || '' }));
   }

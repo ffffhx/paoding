@@ -429,6 +429,61 @@ function sendJSON(res, code, obj) {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(obj));
 }
+const RECIPE_MEDIA_MIME = {
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".m4v": "video/x-m4v",
+  ".mov": "video/quicktime",
+  ".ogv": "video/ogg",
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+};
+function parseByteRange(value, size) {
+  const m = String(value || "").match(/^bytes=(\d*)-(\d*)$/i);
+  if (!m || (!m[1] && !m[2]) || !Number.isFinite(size) || size <= 0) return null;
+  let start;
+  let end;
+  if (!m[1]) {
+    const suffix = Number(m[2]);
+    if (!Number.isFinite(suffix) || suffix <= 0) return null;
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] ? Number(m[2]) : size - 1;
+  }
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start >= size || end < start) return null;
+  return [start, Math.min(end, size - 1)];
+}
+function sendRecipeMedia(req, res, fp, mime) {
+  const size = fs.statSync(fp).size;
+  const rangeHeader = req.headers.range;
+  const common = {
+    "Content-Type": mime,
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "private, max-age=86400",
+  };
+  if (rangeHeader) {
+    const range = parseByteRange(rangeHeader, size);
+    if (!range) {
+      res.writeHead(416, { ...common, "Content-Range": `bytes */${size}` });
+      return res.end();
+    }
+    const [start, end] = range;
+    res.writeHead(206, {
+      ...common,
+      "Content-Length": end - start + 1,
+      "Content-Range": `bytes ${start}-${end}/${size}`,
+    });
+    const stream = fs.createReadStream(fp, { start, end });
+    res.on?.("close", () => stream.destroy());
+    return stream.pipe(res);
+  }
+  res.writeHead(200, { ...common, "Content-Length": size });
+  const stream = fs.createReadStream(fp);
+  res.on?.("close", () => stream.destroy());
+  return stream.pipe(res);
+}
 function readBody(req, limitMB = 800) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -982,7 +1037,7 @@ function runJob(id, input, depth, kind = "video", wantVision = false, wantImages
     run = processImages(input, cfg, { onProgress, signal });
   } else {
     // 视频路径；URL 视频抓不到（如小红书无抽取器）时自动改按文字帖尝试
-    run = processVideo(input, cfg, { onProgress, signal }).catch((e) => {
+    run = processVideo(input, cfg, { retainMedia: true, onProgress, signal }).catch((e) => {
       if (!signal.aborted && /^https?:\/\//i.test(input) && shouldFallbackVideoUrlToText(e)) {
         onProgress({ stage: "acquire", pct: 4, message: "视频抓取失败，改按文字帖尝试…" });
         return processText(input, cfg, { onProgress, signal });
@@ -1361,6 +1416,7 @@ export async function handleRequest(req, res) {
 
   // 菜谱图片 GET 豁免鉴权：<img> 标签带不了自定义头，且分享页 /r/ 本就无鉴权可见整份菜谱，图片同级公开。
   const isRecipeImage = req.method === "GET" && /^\/api\/recipes\/[^/]+\/images\/[^/]+$/.test(p);
+  const isRecipeMedia = req.method === "GET" && /^\/api\/recipes\/[^/]+\/media\/[^/]+$/.test(p);
   // 鉴权：所有 /api/* 都要过（分享页 /r/、静态资源、APK 不拦，PWA 外壳才能加载）。未配 token 时直接放行。
   const auth = authenticate(req, url);
   req.paodingUser = auth.user;
@@ -1451,6 +1507,22 @@ export async function handleRequest(req, res) {
       if (!fp || !fs.existsSync(fp)) { res.writeHead(404); return res.end("Not found"); }
       res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=86400" });
       return res.end(fs.readFileSync(fp));
+    }
+
+    // ---- 菜谱原视频（跟做模式按 source_time 原地播放；支持 Range 才能秒开和拖动）----
+    if (isRecipeMedia) {
+      const m = p.match(/^\/api\/recipes\/([^/]+)\/media\/([^/]+)$/);
+      const id = decodeSafeRouteSegment(m[1]);
+      const file = decodeSafeRouteSegment(m[2]);
+      const ext = path.extname(file).toLowerCase();
+      const fp = /^source\.(?:mp4|webm|m4v|mov|ogv|mp3|m4a)$/i.test(file)
+        ? path.join(RECIPES_DIR, id, file)
+        : "";
+      if (!fp || !RECIPE_MEDIA_MIME[ext] || !fs.existsSync(fp) || !fs.statSync(fp).isFile()) {
+        res.writeHead(404);
+        return res.end("Not found");
+      }
+      return sendRecipeMedia(req, res, fp, RECIPE_MEDIA_MIME[ext]);
     }
 
     // ---- 删除 ----

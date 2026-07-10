@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { acquire } from "./download.mjs";
 import { transcribe, formatTimedTranscript } from "./transcribe.mjs";
 import { structureRecipe, clampStepTimes, sourceTimeCoverage } from "./chef.mjs";
@@ -14,6 +15,67 @@ const slug = (s) =>
     .replace(/[\/\\:*?"<>|]/g, "")
     .replace(/\s+/g, "-")
     .slice(0, 40) || "recipe";
+
+const RETAINED_MEDIA_EXTS = new Set([".mp4", ".webm", ".m4v", ".mov", ".ogv", ".mp3", ".m4a"]);
+
+// App 跟做模式要在原地播放对应时间段，不能只留下会跳出应用的来源链接。
+// 固定写进菜谱同名资源目录，目录会随菜谱删除一起清理。
+export function retainSourceMedia(videoPath, basePath) {
+  if (!videoPath || !fs.existsSync(videoPath)) return "";
+  const rawExt = path.extname(videoPath).toLowerCase();
+  const ext = RETAINED_MEDIA_EXTS.has(rawExt) ? rawExt : ".mp4";
+  fs.mkdirSync(basePath, { recursive: true });
+  for (const old of fs.readdirSync(basePath)) {
+    if (/^source\.(?:mp4|webm|m4v|mov|ogv|mp3|m4a)$/i.test(old)) {
+      fs.rmSync(path.join(basePath, old), { force: true });
+    }
+  }
+  const file = `source${ext}`;
+  fs.copyFileSync(videoPath, path.join(basePath, file));
+  return file;
+}
+
+function transcodeRetainedVideo(ffmpeg, input, output, signal) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffmpeg || "ffmpeg", [
+      "-y", "-i", input,
+      "-vf", "fps=30,scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+      "-c:a", "aac", "-b:a", "96k",
+      "-movflags", "+faststart",
+      output,
+    ], { stdio: ["ignore", "ignore", "pipe"], signal });
+    let errorText = "";
+    child.stderr.on("data", (buf) => { errorText += buf.toString(); });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg 退出码 ${code}${errorText ? `：${errorText.slice(-300)}` : ""}`));
+    });
+  });
+}
+
+export async function retainPlayableSourceMedia(videoPath, basePath, { ffmpeg = "ffmpeg", signal } = {}) {
+  const ext = path.extname(videoPath || "").toLowerCase();
+  if ([".mp3", ".m4a"].includes(ext)) return retainSourceMedia(videoPath, basePath);
+  fs.mkdirSync(basePath, { recursive: true });
+  const tmp = path.join(basePath, "source.tmp.mp4");
+  const dest = path.join(basePath, "source.mp4");
+  fs.rmSync(tmp, { force: true });
+  try {
+    await transcodeRetainedVideo(ffmpeg, videoPath, tmp, signal);
+    for (const old of fs.readdirSync(basePath)) {
+      if (/^source\.(?:mp4|webm|m4v|mov|ogv|mp3|m4a)$/i.test(old)) fs.rmSync(path.join(basePath, old), { force: true });
+    }
+    fs.renameSync(tmp, dest);
+    return "source.mp4";
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    if (signal?.aborted) throw e;
+    console.warn(`  · 原视频 H.264 转码失败，保留原编码：${e.message}`);
+    return retainSourceMedia(videoPath, basePath);
+  }
+}
 
 function timeoutMinutes(envName, fallback) {
   const raw = Number(process.env[envName]);
@@ -53,7 +115,7 @@ async function withStageTimeout(label, minutes, parentSignal, fn) {
 
 // 完整管线：视频 → 音频 → 转写 → 结构化 → 逐步讲解 → 落盘。
 // onProgress({stage, pct, message})：stage 是阶段名，pct 是 0~100 的总体进度。
-export async function processVideo(input, config, { keepTranscript = false, onProgress = () => {}, signal } = {}) {
+export async function processVideo(input, config, { keepTranscript = false, retainMedia = false, onProgress = () => {}, signal } = {}) {
   const step = (n, msg) => console.log(`\x1b[36m[${n}/5]\x1b[0m ${msg}`);
   const emit = (stage, pct, message) => onProgress({ stage, pct: Math.round(pct), message });
   const timer = createStageTimer();
@@ -61,11 +123,12 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
   // vision = 抽帧读屏上字幕；images = 步骤/食材截图。两者都需要完整视频与视觉模型。
   const useVision = !!config.vision;
   const useImages = !!config.images;
-  step(1, useVision || useImages ? "下载视频并抽取音频…" : "获取视频并抽取音频…");
+  const keepSourceMedia = !!retainMedia;
+  step(1, useVision || useImages || keepSourceMedia ? "下载视频并抽取音频…" : "获取视频并抽取音频…");
   emit("acquire", 2, "准备中…");
   const { audioPath, videoPath, meta, cleanup } = await timer.time("acquire", () =>
     acquire(input, config.ytdlp, (p) =>
-      emit("acquire", p.pct * 0.25, p.message), { wantVideo: useVision || useImages, signal }),
+      emit("acquire", p.pct * 0.25, p.message), { wantVideo: useVision || useImages || keepSourceMedia, signal }),
   );
 
   try {
@@ -165,6 +228,17 @@ export async function processVideo(input, config, { keepTranscript = false, onPr
         }
       } catch (e) {
         console.warn(`  · 画面截图失败（跳过，图片可能不完整）：${e.message}`);
+      }
+    }
+
+    if (keepSourceMedia && videoPath) {
+      try {
+        recipe.source_media = await retainPlayableSourceMedia(videoPath, base, {
+          ffmpeg: config.ytdlp?.ffmpegBin,
+          signal,
+        });
+      } catch (e) {
+        console.warn(`  · 原视频保存失败（应用内片段播放将降级为外链）：${e.message}`);
       }
     }
 

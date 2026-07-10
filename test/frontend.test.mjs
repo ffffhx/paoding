@@ -641,6 +641,23 @@ test("sourceSegmentUrl 按平台生成原视频时间戳链接", () => {
   assert.equal(app.sourceSegmentUrl("", [1, 2]), "");
 });
 
+test("原视频片段控件优先使用应用内媒体，旧菜谱才降级为外链", () => {
+  assert.deepEqual(Array.from(app.normalizeSourceSegment([43.8, 72.2])), [43, 72]);
+  assert.equal(app.normalizeSourceSegment([72, 43]), null);
+  assert.equal(app.mediaUrlWithToken("/api/video", "a b"), "/api/video?token=a%20b");
+  assert.equal(app.mediaUrlWithToken("/api/video?v=1", "tok"), "/api/video?v=1&token=tok");
+
+  const step = { index: 4, source_time: [43, 72] };
+  const internal = app.sourceSegmentControlHtml({ id: "蛋", source: "http://xhslink.com/a", source_media: "source.mp4" }, step);
+  assert.ok(internal.includes("<button"));
+  assert.ok(internal.includes('data-source-segment="4"'));
+  assert.ok(!internal.includes("xhslink.com"));
+
+  const fallback = app.sourceSegmentControlHtml({ id: "蛋", source: "http://xhslink.com/a" }, step);
+  assert.ok(fallback.includes("<a"));
+  assert.ok(fallback.includes("xhslink.com/a"));
+});
+
 test("normalizeRecipeListPayload 拒绝错误对象，避免渲染崩溃", () => {
   const list = [{ id: "a", title: "菜" }];
   assert.equal(app.normalizeRecipeListPayload(list), list);

@@ -70,8 +70,9 @@ class MockReq extends EventEmitter {
   }
 }
 
-class MockRes {
+class MockRes extends EventEmitter {
   constructor() {
+    super();
     this.statusCode = 200;
     this.headersSent = false;
     this._headers = new Map();
@@ -88,11 +89,13 @@ class MockRes {
   }
   write(chunk) {
     this._chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+    return true;
   }
   end(chunk) {
     if (chunk != null) this.write(chunk);
     this.headersSent = true;
     this._resolve();
+    this.emit("finish");
   }
   _body() {
     return Buffer.concat(this._chunks);
@@ -1218,4 +1221,41 @@ test("菜谱图片路由：读图/404/防穿越/删除连图一起删", async ()
   // 删除菜谱 → 图片目录一并清掉
   assert.equal((await request(`/api/recipes/${encodeURIComponent(id)}`, { method: "DELETE" })).status, 200);
   assert.ok(!fs.existsSync(dir), "删除菜谱应连图片目录一起删");
+});
+
+test("菜谱原视频路由：支持完整读取、Range、子路径和防穿越", async () => {
+  const id = "视频测菜";
+  fs.writeFileSync(path.join(recipesDir, `${id}.json`), JSON.stringify({
+    title: id,
+    source_media: "source.mp4",
+    steps: [{ index: 1, title: "煎", action: "煎熟", source_time: [2, 5] }],
+  }));
+  const dir = path.join(recipesDir, id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "source.mp4"), Buffer.from("0123456789"));
+
+  const full = await request(`/api/recipes/${encodeURIComponent(id)}/media/source.mp4`);
+  assert.equal(full.status, 200);
+  assert.equal(full.headers.get("content-type"), "video/mp4");
+  assert.equal(full.headers.get("accept-ranges"), "bytes");
+  assert.equal(await full.text(), "0123456789");
+
+  const partial = await request(`/api/recipes/${encodeURIComponent(id)}/media/source.mp4`, { headers: { Range: "bytes=2-5" } });
+  assert.equal(partial.status, 206);
+  assert.equal(partial.headers.get("content-range"), "bytes 2-5/10");
+  assert.equal(await partial.text(), "2345");
+
+  const suffix = await request(`/api/recipes/${encodeURIComponent(id)}/media/source.mp4`, { headers: { Range: "bytes=-3" } });
+  assert.equal(suffix.status, 206);
+  assert.equal(await suffix.text(), "789");
+
+  const invalid = await request(`/api/recipes/${encodeURIComponent(id)}/media/source.mp4`, { headers: { Range: "bytes=99-100" } });
+  assert.equal(invalid.status, 416);
+  assert.equal(invalid.headers.get("content-range"), "bytes */10");
+  assert.equal((await request(`/api/recipes/${encodeURIComponent(id)}/media/${encodeURIComponent("../source.mp4")}`)).status, 404);
+  assert.equal((await request(`/api/recipes/${encodeURIComponent(id)}/media/other.mp4`)).status, 404);
+  assert.equal((await request(`/paoding/api/recipes/${encodeURIComponent(id)}/media/source.mp4`)).status, 200);
+
+  assert.equal((await request(`/api/recipes/${encodeURIComponent(id)}`, { method: "DELETE" })).status, 200);
+  assert.ok(!fs.existsSync(dir), "删除菜谱应连原视频一起删");
 });
