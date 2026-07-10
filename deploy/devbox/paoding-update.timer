@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll GitHub main for Paoding updates
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+RandomizedDelaySec=10
+Persistent=true
+Unit=paoding-update.service
+
+[Install]
+WantedBy=timers.target

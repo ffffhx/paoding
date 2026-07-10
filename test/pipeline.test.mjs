@@ -812,6 +812,7 @@ test("whisper Metal 崩溃时自动使用 CPU 重试", async () => {
       whisperModel,
       ffmpegBin: FAKE_FFMPEG,
       lang: "zh",
+      whisperThreads: 16,
     }, audioPath));
 
     assert.match(out.text, /准备鸡蛋和番茄/);
@@ -819,6 +820,7 @@ test("whisper Metal 崩溃时自动使用 CPU 重试", async () => {
     assert.equal(calls.length, 2);
     assert.equal(calls[0].includes("--no-gpu"), false);
     assert.equal(calls[1].includes("--no-gpu"), true);
+    assert.deepEqual(calls[0].slice(calls[0].indexOf("--threads"), calls[0].indexOf("--threads") + 2), ["--threads", "16"]);
   });
 });
 

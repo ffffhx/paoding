@@ -88,6 +88,7 @@ function runWhisperLocal(bin, asr, audioPath, onProgress = () => {}, signal, { n
     const outBase = path.join(os.tmpdir(), `paoding-asr-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}${noGpu ? "-cpu" : ""}`);
     const args = [
       ...(noGpu ? ["--no-gpu"] : []),
+      ...(Number(asr.whisperThreads) > 0 ? ["--threads", String(Math.floor(asr.whisperThreads))] : []),
       "-m", asr.whisperModel,
       "-f", audioPath,
       "-l", asr.lang || "zh",

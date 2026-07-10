@@ -9,6 +9,11 @@ paoding-out/
 
 # App 里解析出的菜谱=用户数据，不进仓库（App 会自动重建目录）
 app/recipes/
+app/jobs/
+app/backups/
+
+# DevBox 部署器写入的当前在线 commit 标记
+app/deploy-version.txt
 
 # Node 依赖（Capacitor 打包用）
 node_modules/

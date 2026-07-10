@@ -1,0 +1,32 @@
+[Unit]
+Description=Paoding cooking assistant
+After=network-online.target paoding-llm.service
+Wants=network-online.target paoding-llm.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/fenghongxin.123/Code/paoding
+Environment="PATH=/home/fenghongxin.123/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="NODE_ENV=production"
+Environment="PAODING_LLM_BASE_URL=http://127.0.0.1:11435/v1"
+Environment="PAODING_LLM_API_KEY=local"
+Environment="PAODING_LLM_MODEL=paoding-qwen3-vl-30b"
+Environment="PAODING_VISION_BASE_URL=http://127.0.0.1:11435/v1"
+Environment="PAODING_VISION_API_KEY=local"
+Environment="PAODING_VISION_MODEL=paoding-qwen3-vl-30b"
+Environment="PAODING_WHISPER_BIN=/home/fenghongxin.123/opt/whisper.cpp/build/bin/whisper-cli"
+Environment="PAODING_WHISPER_MODEL=/home/fenghongxin.123/Code/paoding/models/ggml-large-v3-turbo.bin"
+Environment="PAODING_WHISPER_NO_GPU=1"
+Environment="PAODING_WHISPER_THREADS=16"
+Environment="PAODING_ASR_PROVIDER=local"
+Environment="PAODING_ASR_LANG=zh"
+Environment="PAODING_YTDLP_BIN=/home/fenghongxin.123/.local/bin/yt-dlp"
+Environment="PAODING_FFMPEG_BIN=/usr/bin/ffmpeg"
+Environment="PAODING_MAX_JOBS=1"
+ExecStart=/usr/bin/node app/server.mjs
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

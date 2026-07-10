@@ -1,0 +1,25 @@
+[Unit]
+Description=Paoding Qwen3-VL model server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/fenghongxin.123/opt/llama.cpp/build/bin/llama-server \
+  --model /data00/paoding/qwen3vl30b/Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf \
+  --mmproj /data00/paoding/qwen3vl30b/mmproj-Qwen3VL-30B-A3B-Instruct-F16.gguf \
+  --alias paoding-qwen3-vl-30b \
+  --host 127.0.0.1 \
+  --port 11435 \
+  --ctx-size 65536 \
+  --parallel 1 \
+  --threads 16 \
+  --threads-batch 32 \
+  --flash-attn off \
+  --image-min-tokens 1024
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

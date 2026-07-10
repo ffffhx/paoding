@@ -1,0 +1,11 @@
+[Unit]
+Description=Update Paoding from GitHub main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment="http_proxy=http://sys-proxy-rd-relay.byted.org:8118"
+Environment="https_proxy=http://sys-proxy-rd-relay.byted.org:8118"
+Environment="no_proxy=.byted.org,.bytedance.net,127.0.0.1,localhost"
+ExecStart=/home/fenghongxin.123/.local/bin/paoding-update

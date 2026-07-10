@@ -1,0 +1,15 @@
+[Unit]
+Description=Paoding reverse SSH tunnel to public relay
+After=network-online.target paoding.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment="AUTOSSH_GATETIME=0"
+Environment="AUTOSSH_POLL=30"
+ExecStart=/usr/bin/autossh -M 0 -N -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new -i /home/fenghongxin.123/.ssh/paoding-relay-ed25519 -R 127.0.0.1:14177:127.0.0.1:4177 deploy@124.221.36.36
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

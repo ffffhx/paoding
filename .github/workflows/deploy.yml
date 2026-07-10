@@ -6,59 +6,31 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: paoding-local-deploy
+  group: paoding-devbox-deploy
   cancel-in-progress: true
 
 env:
-  DEPLOY_DIR: /Users/bytedance/Code/paoding
-  APP_LAUNCHD_SERVICE: com.paoding.server
-  TUNNEL_LAUNCHD_SERVICE: com.paoding.tunnel
-  LOCAL_HEALTH_URL: http://127.0.0.1:4177/
-  PUBLIC_HEALTH_URL: https://124-221-36-36.anyip.dev:8443/paoding/
-  SERVER_LOG: /tmp/paoding-server.log
-  TUNNEL_LOG: /tmp/paoding-tunnel.log
+  PUBLIC_ROOT: https://124-221-36-36.anyip.dev:8443/paoding
 
 jobs:
   deploy:
-    runs-on: [self-hosted, macOS, paoding]
+    runs-on: ubuntu-latest
     steps:
-      - name: Pull latest code into live checkout
-        run: |
-          set -euo pipefail
-          cd "$DEPLOY_DIR"
-          git fetch origin main
-          git pull --ff-only origin main
-
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Test
+        run: node --test
+      - name: Wait for DevBox auto-deploy
         run: |
           set -euo pipefail
-          cd "$DEPLOY_DIR"
-          npm test
-
-      - name: Restart local app service
-        run: |
-          set -euo pipefail
-          uid="$(id -u)"
-          launchctl kickstart -k "gui/$uid/$APP_LAUNCHD_SERVICE"
-          for i in $(seq 1 30); do
-            if curl -fsS "$LOCAL_HEALTH_URL" >/dev/null; then
+          for i in $(seq 1 36); do
+            deployed="$(curl -kfsS "$PUBLIC_ROOT/deploy-version.txt" 2>/dev/null | tr -d '\r\n' || true)"
+            if [ "$deployed" = "$GITHUB_SHA" ] && curl -kfsS "$PUBLIC_ROOT/" >/dev/null; then
               exit 0
             fi
-            sleep 1
+            sleep 10
           done
-          tail -80 "$SERVER_LOG" || true
-          exit 1
-
-      - name: Restart cloud tunnel and verify public URL
-        run: |
-          set -euo pipefail
-          uid="$(id -u)"
-          launchctl kickstart -k "gui/$uid/$TUNNEL_LAUNCHD_SERVICE"
-          for i in $(seq 1 30); do
-            if curl -kfsS "$PUBLIC_HEALTH_URL" >/dev/null; then
-              exit 0
-            fi
-            sleep 1
-          done
-          tail -80 "$TUNNEL_LOG" || true
+          echo "DevBox did not publish $GITHUB_SHA within 6 minutes" >&2
           exit 1
