@@ -647,6 +647,19 @@ test("normalizeRecipeListPayload 拒绝错误对象，避免渲染崩溃", () =>
   assert.throws(() => app.normalizeRecipeListPayload({ error: "未授权" }), /未授权/);
 });
 
+test("extractShareUrl 从分享文案里揪出链接", () => {
+  // 小红书整段分享文：标题 + 短链 + 复制提示，必须只取出短链
+  assert.equal(
+    app.extractShareUrl("低卡早餐🥐｜简单电饭煲一锅出绿豆汤（1/100） http://xhslink.com/o/1qtFQ1nyigR 复制一下这行字，进入【小红书】就能看笔记。"),
+    "http://xhslink.com/o/1qtFQ1nyigR",
+  );
+  // 链接后无空格、直接接中文逗号也不能把「，复制」粘进来
+  assert.equal(app.extractShareUrl("http://xhslink.com/o/1qtFQ1nyigR，复制这行字"), "http://xhslink.com/o/1qtFQ1nyigR");
+  assert.equal(app.extractShareUrl("看看这个 https://v.douyin.com/abc123/ 很好吃"), "https://v.douyin.com/abc123/");
+  assert.equal(app.extractShareUrl("没有链接的一段话"), "");
+  assert.equal(app.extractShareUrl(""), "");
+});
+
 test("shareRecipeUrl 优先使用远程后端地址", () => {
   assert.equal(app.shareRecipeUrl("红烧肉", { origin: "https://cook.example", base: "" }), "https://cook.example/r/%E7%BA%A2%E7%83%A7%E8%82%89");
   assert.equal(app.shareRecipeUrl("红烧肉", { origin: "https://cook.example", base: "/paoding" }), "https://cook.example/paoding/r/%E7%BA%A2%E7%83%A7%E8%82%89");

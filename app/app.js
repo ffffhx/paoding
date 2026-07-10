@@ -6,6 +6,36 @@ const store = {
   get(k, d) { try { const v = JSON.parse(localStorage.getItem('paoding.' + k)); return v ?? d; } catch { return d; } },
   set(k, v) { localStorage.setItem('paoding.' + k, JSON.stringify(v)); },
 };
+/* 原生持久化：打包成 App（Capacitor）时把关键凭据（后端地址 + API token）同时写进原生
+   Preferences（安卓 SharedPreferences / iOS UserDefaults）。这类存储不随 WebView 数据清理
+   （省电清理、清缓存、系统回收）消失，能避免每次重开都要重填 token。纯网页端没有该插件时
+   自动降级为纯 localStorage，行为与之前一致、无回归。 */
+const NativePrefs = (() => {
+  const p = (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences) || null;
+  return {
+    available: !!p,
+    async get(k) { if (!p) return null; try { const { value } = await p.get({ key: 'paoding.' + k }); return value ?? null; } catch { return null; } },
+    async set(k, v) { if (!p) return; try { await p.set({ key: 'paoding.' + k, value: String(v ?? '') }); } catch { } },
+  };
+})();
+const CREDENTIAL_KEYS = ['apiBase', 'apiToken'];
+// 凭据变更时镜像写入原生存储（含空串，便于区分“用户主动清空”与“被系统清掉”）。
+function persistCredentialsNative() {
+  if (!NativePrefs.available) return;
+  for (const k of CREDENTIAL_KEYS) NativePrefs.set('cred.' + k, settings[k] || '');
+}
+// 启动时若 localStorage 整份 settings 被清掉，则从原生存储回填凭据。
+async function restoreCredentialsNative() {
+  if (!NativePrefs.available) return false;
+  if (localStorage.getItem('paoding.settings') != null) return false; // localStorage 仍在，尊重其内容（含主动清空 token）
+  let restored = false;
+  for (const k of CREDENTIAL_KEYS) {
+    const v = await NativePrefs.get('cred.' + k);
+    if (v) { settings[k] = v; restored = true; }
+  }
+  if (restored) saveSettings(); // 回填 localStorage，后续同步读取正常
+  return restored;
+}
 const I18N = window.PaodingI18n || {
   normalizeLang: (v) => (String(v || 'zh').toLowerCase() === 'en' ? 'en' : 'zh'),
   setLang: (v) => (String(v || 'zh').toLowerCase() === 'en' ? 'en' : 'zh'),
@@ -1019,6 +1049,12 @@ function highlightInfo(text) {
   return text.replace(/(\d+(?:\.\d+)?\s*(?:成热|分钟|秒钟|秒|小时|度|℃|克|毫升|斤|两|片|勺|颗|个|瓣|大卡|kcal)|大火|中大火|中火|中小火|小火|微火|金黄|焦黄|微黄|七成热|冒烟)/g, '<b class="hl">$1</b>');
 }
 const richText = (t) => highlightInfo(linkifyTerms(t));
+// 从粘贴的分享文案里揪出第一个 http(s) 链接：小红书/抖音等分享出来是「标题 + 短链 + 复制提示」一整段，
+// 不能要求整段以 http 开头。停在空白和中文标点，避免尾随的「，复制…」被粘进链接。
+function extractShareUrl(text) {
+  const m = String(text || '').match(/https?:\/\/[^\s，。、；！？）)】」』]+/);
+  return m ? m[0] : '';
+}
 /* 解析时截取的步骤/食材图片：走公开图片路由（服务端对图片 GET 豁免 token，<img> 无需带头） */
 const recipeImg = (rid, file) => api('/api/recipes/' + encodeURIComponent(rid) + '/images/' + encodeURIComponent(file));
 function sourceSegmentUrl(source, sourceTime) {
@@ -2179,10 +2215,11 @@ function renderSettings() {
   box.querySelectorAll('[data-tr]').forEach(b => b.onclick = () => { settings.ttsRate = Math.min(1.6, Math.max(0.6, settings.ttsRate + (b.dataset.tr === '+' ? 0.1 : -0.1))); saveSettings(); renderSettings(); });
   $('#setDepth').querySelectorAll('.chip').forEach(c => c.onclick = () => { settings.depth = c.dataset.d; depth = c.dataset.d; saveSettings(); renderSettings(); syncDepthChips(); });
   $('#uiLang').onchange = (e) => { setLanguage(e.target.value); saveSettings(); applyStaticI18n(); renderAll(); renderSettings(); toast(tr('settings.language.saved')); };
-  $('#apiBase').onchange = (e) => { settings.apiBase = e.target.value.trim().replace(/\/$/, ''); saveSettings(); toast(tr('settings.backend.saved')); refresh(); };
+  $('#apiBase').onchange = (e) => { settings.apiBase = e.target.value.trim().replace(/\/$/, ''); saveSettings(); persistCredentialsNative(); toast(tr('settings.backend.saved')); refresh(); };
   $('#apiToken').onchange = (e) => {
     settings.apiToken = e.target.value.trim();
     saveSettings();
+    persistCredentialsNative();
     recipeListAuthBlocked = false;
     setAuthRequired(false);
     toast(tr('settings.token.saved'));
@@ -2214,6 +2251,7 @@ function showBackendSetupIfNeeded() {
     settings.apiBase = base;
     settings.apiToken = ov.querySelector('#setupApiToken').value.trim();
     saveSettings();
+    persistCredentialsNative();
     recipeListAuthBlocked = false;
     setAuthRequired(false);
     ov.remove();
@@ -3594,7 +3632,7 @@ function initTabs() {
   // 加载时同步一次 aria-selected，读屏用户一进来就知道当前在哪个标签
   document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x.classList.contains('on') ? 'true' : 'false'));
 }
-function init() {
+async function init() {
   applyTheme(); applyStaticI18n(); syncDepthChips();
   Timers.restore(); // 恢复上次未结束的计时（刷新/被系统回收后不丢）
   // 无障碍：让 role=button/tab 的非原生控件(标签栏/深度选择等)支持键盘 Enter/Space 触发，而不只是鼠标/触屏点击。
@@ -3605,7 +3643,7 @@ function init() {
   document.addEventListener('keydown', handleGlobalShortcut);
   initTabs();
   $('#depth').onclick = (e) => { const c = e.target.closest('.chip'); if (!c) return; depth = c.dataset.d; syncDepthChips(); };
-  $('#parseUrl').onclick = () => { const u = $('#url').value.trim(); if (!/^https?:\/\//.test(u)) { toast(tr('parse.invalidUrl')); return; } const vision = $('#visChk')?.checked, images = $('#imgChk')?.checked; doParse(() => API.startUrl(u, depth, vision, images)); $('#url').value = ''; };
+  $('#parseUrl').onclick = () => { const u = extractShareUrl($('#url').value); if (!u) { toast(tr('parse.invalidUrl')); return; } const vision = $('#visChk')?.checked, images = $('#imgChk')?.checked; doParse(() => API.startUrl(u, depth, vision, images)); $('#url').value = ''; };
   $('#url').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#parseUrl').click(); } });
   $('#fileBtn').onclick = () => $('#file').click();
   $('#imageBtn').onclick = () => $('#imageFile').click();
@@ -3626,9 +3664,10 @@ function init() {
   // 系统分享导入：从别的 App 分享 B站/YouTube 链接进庖丁 → 自动填入并解析
   try {
     const sp = new URLSearchParams(location.search);
-    const shared = (sp.get('url') || sp.get('text') || sp.get('title') || '').match(/https?:\/\/[^\s]+/);
-    if (shared) { $('#url').value = shared[0]; history.replaceState(null, '', location.pathname); setTimeout(() => $('#parseUrl').click(), 400); }
+    const shared = extractShareUrl(sp.get('url') || sp.get('text') || sp.get('title') || '');
+    if (shared) { $('#url').value = shared; history.replaceState(null, '', location.pathname); setTimeout(() => $('#parseUrl').click(), 400); }
   } catch { }
+  await restoreCredentialsNative(); // WebView 清了 localStorage 时，从原生存储回填后端地址 + token，避免重开要重填
   if (showBackendSetupIfNeeded()) renderAll();
   else loadUserData().finally(refresh); // 先同步远端用户数据，再拉菜谱并渲染
   // PWA + 自动更新：检测到新版本就自动刷新（跟做/弹窗中途不打断，等忙完或下次打开）
