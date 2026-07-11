@@ -13,5 +13,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      # 测试只用 Node 内置测试器，不依赖任何第三方包，无需 npm install
+      - name: Install runtime dependencies
+        run: npm ci --omit=dev --ignore-scripts --registry=https://registry.npmjs.org --replace-registry-host=always
       - run: node --test
