@@ -75,7 +75,8 @@ export function loadConfig() {
     ytdlp: {
       bin: process.env.PAODING_YTDLP_BIN || "yt-dlp",
       ffmpegBin: process.env.PAODING_FFMPEG_BIN || "ffmpeg",
-      // 用浏览器已登录的 cookie 绕过 B站等平台的反爬（412）。留空则不带 cookie。
+      // 远程机优先使用同步的 cookie 文件；本机也可直接读取浏览器登录态。
+      cookiesFile: process.env.PAODING_COOKIES_FILE || "",
       cookiesBrowser: process.env.PAODING_COOKIES_FROM_BROWSER || "",
       userAgent:
         process.env.PAODING_YTDLP_UA ||

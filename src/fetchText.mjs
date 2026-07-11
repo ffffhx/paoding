@@ -92,12 +92,13 @@ async function fetchHtml(url) {
 
 // 给一个帖子/文章 URL，尽力抓到 {title, text}。
 // 策略：先用 yt-dlp -j 拿标题+简介（B站/抖音等的简介常常就是整份菜谱）；不够再直接抓 HTML。
-export async function fetchArticleText(url, { cookiesBrowser } = {}) {
+export async function fetchArticleText(url, { cookiesBrowser, cookiesFile } = {}) {
   await assertPublicUrl(url);
   let title = "", text = "";
   try {
     const args = ["-j", "--no-warnings"];
-    if (cookiesBrowser) args.push("--cookies-from-browser", cookiesBrowser);
+    if (cookiesFile) args.push("--cookies", cookiesFile);
+    else if (cookiesBrowser) args.push("--cookies-from-browser", cookiesBrowser);
     const info = JSON.parse(await run("yt-dlp", [...args, url]));
     title = info.title || "";
     text = info.description || "";

@@ -64,7 +64,7 @@ export function resolveFfmpegBin(ytdlp = {}) {
   return ytdlp.ffmpegBin || process.env.PAODING_FFMPEG_BIN || "ffmpeg";
 }
 
-// 反爬相关的 yt-dlp 公共参数：UA + 站点 Referer + 可选浏览器 cookie。
+// 反爬相关的 yt-dlp 公共参数：UA + 站点 Referer + 可选 cookie 文件/浏览器 cookie。
 export function ytdlpArgs(input, ytdlp = {}) {
   const args = ["--no-warnings"];
   if (ytdlp.userAgent) args.push("--user-agent", ytdlp.userAgent);
@@ -72,7 +72,9 @@ export function ytdlpArgs(input, ytdlp = {}) {
     const host = new URL(input).hostname;
     args.push("--add-header", `Referer:https://${host}/`);
   } catch {}
-  if (ytdlp.cookiesBrowser) args.push("--cookies-from-browser", ytdlp.cookiesBrowser);
+  // 远程开发机通常没有浏览器配置目录，优先使用从可信设备同步来的 Netscape cookie 文件。
+  if (ytdlp.cookiesFile) args.push("--cookies", ytdlp.cookiesFile);
+  else if (ytdlp.cookiesBrowser) args.push("--cookies-from-browser", ytdlp.cookiesBrowser);
   return args;
 }
 

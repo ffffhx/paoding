@@ -34,6 +34,12 @@ test("ytdlpArgs 带 Referer 与可选 cookie", () => {
   assert.ok(a.includes("--cookies-from-browser") && a.includes("chrome"));
   const b = ytdlpArgs("https://x.com", {});
   assert.ok(!b.includes("--cookies-from-browser"));
+  const c = ytdlpArgs("https://www.xiaohongshu.com/explore/1", {
+    cookiesFile: "/secure/xhs-cookies.txt",
+    cookiesBrowser: "chrome",
+  });
+  assert.ok(c.includes("--cookies") && c.includes("/secure/xhs-cookies.txt"));
+  assert.ok(!c.includes("--cookies-from-browser"));
 });
 
 test("yt-dlp 412 错误提示用户配置浏览器 cookies", () => {
