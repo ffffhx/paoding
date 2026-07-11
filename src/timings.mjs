@@ -8,6 +8,7 @@ const STAGE_LABELS = {
   explain: "讲解",
   step_images: "步骤图",
   ingredient_images: "食材图",
+  step_clips: "步骤视频",
   total: "总计",
 };
 
@@ -19,6 +20,7 @@ const STAGE_ORDER = [
   "explain",
   "step_images",
   "ingredient_images",
+  "step_clips",
   "total",
 ];
 

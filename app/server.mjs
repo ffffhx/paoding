@@ -1509,13 +1509,13 @@ export async function handleRequest(req, res) {
       return res.end(fs.readFileSync(fp));
     }
 
-    // ---- 菜谱原视频（跟做模式按 source_time 原地播放；支持 Range 才能秒开和拖动）----
+    // ---- 菜谱原视频 / 独立步骤短视频（支持 Range 才能秒开和拖动）----
     if (isRecipeMedia) {
       const m = p.match(/^\/api\/recipes\/([^/]+)\/media\/([^/]+)$/);
       const id = decodeSafeRouteSegment(m[1]);
       const file = decodeSafeRouteSegment(m[2]);
       const ext = path.extname(file).toLowerCase();
-      const fp = /^source\.(?:mp4|webm|m4v|mov|ogv|mp3|m4a)$/i.test(file)
+      const fp = /^(?:source|step-\d+)\.(?:mp4|webm|m4v|mov|ogv|mp3|m4a)$/i.test(file)
         ? path.join(RECIPES_DIR, id, file)
         : "";
       if (!fp || !RECIPE_MEDIA_MIME[ext] || !fs.existsSync(fp) || !fs.statSync(fp).isFile()) {

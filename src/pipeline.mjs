@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { acquire } from "./download.mjs";
 import { transcribe, formatTimedTranscript } from "./transcribe.mjs";
-import { structureRecipe, clampStepTimes, fillMissingStepTimes, sourceTimeCoverage } from "./chef.mjs";
+import { structureRecipe, clampStepTimes, fillMissingStepTimes, normalizeSourceTime, sourceTimeCoverage } from "./chef.mjs";
 import { explainSteps } from "./explain.mjs";
 import { toMarkdown } from "./render.mjs";
 import { fetchArticleText, unusableRecipeTextReason } from "./fetchText.mjs";
@@ -75,6 +75,69 @@ export async function retainPlayableSourceMedia(videoPath, basePath, { ffmpeg = 
     console.warn(`  · 原视频 H.264 转码失败，保留原编码：${e.message}`);
     return retainSourceMedia(videoPath, basePath);
   }
+}
+
+function transcodeStepClip(ffmpeg, input, output, start, end, signal) {
+  return new Promise((resolve, reject) => {
+    const audioOnly = /\.(?:mp3|m4a)$/i.test(input);
+    const args = ["-y", "-ss", String(start), "-i", input, "-t", String(end - start)];
+    if (audioOnly) {
+      args.push("-vn", "-c:a", "aac", "-b:a", "96k");
+    } else {
+      args.push(
+        "-map", "0:v:0?", "-map", "0:a:0?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+        "-c:a", "aac", "-b:a", "96k",
+      );
+    }
+    args.push("-movflags", "+faststart", output);
+    const child = spawn(ffmpeg || "ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"], signal });
+    let errorText = "";
+    child.stderr.on("data", (buf) => { errorText += buf.toString(); });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg 退出码 ${code}${errorText ? `：${errorText.slice(-300)}` : ""}`));
+    });
+  });
+}
+
+// 每一步保存为真正独立的短媒体文件。前端加载 step-N.mp4 时，进度条和下载量都只对应
+// 该步骤的十几/几十秒，而不是把完整 source.mp4 放进每一个步骤播放器。
+export async function retainStepMediaClips(sourcePath, basePath, steps, { ffmpeg = "ffmpeg", signal } = {}) {
+  const list = Array.isArray(steps) ? steps : [];
+  if (!sourcePath || !fs.existsSync(sourcePath) || !list.length) return 0;
+  fs.mkdirSync(basePath, { recursive: true });
+  for (const file of fs.readdirSync(basePath)) {
+    if (/^step-\d+\.(?:mp4|m4a)$/i.test(file)) fs.rmSync(path.join(basePath, file), { force: true });
+  }
+  for (const step of list) delete step.source_clip;
+
+  const audioOnly = /\.(?:mp3|m4a)$/i.test(sourcePath);
+  let saved = 0;
+  for (let i = 0; i < list.length; i++) {
+    const step = list[i];
+    const range = normalizeSourceTime(step?.source_time);
+    if (!range) continue;
+    const index = Number.isInteger(Number(step.index)) && Number(step.index) > 0 ? Number(step.index) : i + 1;
+    const ext = audioOnly ? ".m4a" : ".mp4";
+    const file = `step-${index}${ext}`;
+    const tmp = path.join(basePath, `step-${index}.tmp${ext}`);
+    const dest = path.join(basePath, file);
+    fs.rmSync(tmp, { force: true });
+    try {
+      await transcodeStepClip(ffmpeg, sourcePath, tmp, range[0], range[1], signal);
+      if (!fs.existsSync(tmp) || fs.statSync(tmp).size <= 0) throw new Error("切片文件为空");
+      fs.renameSync(tmp, dest);
+      step.source_clip = file;
+      saved++;
+    } catch (e) {
+      fs.rmSync(tmp, { force: true });
+      if (signal?.aborted) throw e;
+      console.warn(`  · 第 ${index} 步视频切片失败（回退为完整视频内定位）：${e.message}`);
+    }
+  }
+  return saved;
 }
 
 function timeoutMinutes(envName, fallback) {
@@ -243,6 +306,15 @@ export async function processVideo(input, config, { keepTranscript = false, reta
           ffmpeg: config.ytdlp?.ffmpegBin,
           signal,
         });
+        if (recipe.source_media) {
+          const clips = await timer.time("step_clips", () => retainStepMediaClips(
+            path.join(base, recipe.source_media), base, recipe.steps, {
+              ffmpeg: config.ytdlp?.ffmpegBin,
+              signal,
+            },
+          ));
+          console.log(`  · 已生成 ${clips}/${recipe.steps?.length || 0} 个独立步骤视频`);
+        }
       } catch (e) {
         console.warn(`  · 原视频保存失败（应用内片段播放将降级为外链）：${e.message}`);
       }

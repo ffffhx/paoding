@@ -1085,16 +1085,16 @@ function mediaUrlWithToken(url, token) {
   if (!url || !token) return url || '';
   return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
 }
-function recipeMediaUrl(r) {
-  if (!r?.id || !r?.source_media) return '';
-  const raw = api('/api/recipes/' + encodeURIComponent(r.id) + '/media/' + encodeURIComponent(r.source_media));
+function recipeMediaUrl(r, file = r?.source_media) {
+  if (!r?.id || !file) return '';
+  const raw = api('/api/recipes/' + encodeURIComponent(r.id) + '/media/' + encodeURIComponent(file));
   return mediaUrlWithToken(raw, settings.apiToken);
 }
 function sourceSegmentControlHtml(r, s, extraClass = '') {
   const segment = normalizeSourceSegment(s?.source_time);
   const classes = `step-video-link ${extraClass}`.trim();
-  if (r?.source_media) {
-    const label = segment ? tr('detail.watchSegment') : tr('detail.watchOriginal');
+  if (s?.source_clip || r?.source_media) {
+    const label = segment || s?.source_clip ? tr('detail.watchSegment') : tr('detail.watchOriginal');
     return `<button type="button" class="${esc(classes)} step-video-btn" data-source-segment="${esc(s.index)}">${esc(label)}</button>`;
   }
   if (!segment) return '';
@@ -1107,12 +1107,14 @@ function segmentClock(seconds) {
 }
 function openSourceSegment(r, s) {
   const segment = normalizeSourceSegment(s?.source_time);
-  const mediaUrl = recipeMediaUrl(r);
+  const clipFile = s?.source_clip || '';
+  const mediaFile = clipFile || r?.source_media || '';
+  const mediaUrl = recipeMediaUrl(r, mediaFile);
   if (!mediaUrl) return;
-  const [start, end] = segment || [0, null];
+  const [start, end] = clipFile ? [0, null] : (segment || [0, null]);
   const original = segment ? sourceSegmentUrl(r.source, s.source_time) : (/^https?:\/\//i.test(r.source || '') ? r.source : '');
   const poster = s.image ? recipeImg(r.id, s.image) : '';
-  const audioOnly = /\.(?:mp3|m4a)$/i.test(r.source_media || '');
+  const audioOnly = /\.(?:mp3|m4a)$/i.test(mediaFile);
   const mediaTag = audioOnly
     ? `<audio id="sourceSegmentMedia" controls preload="metadata" src="${esc(mediaUrl)}"></audio>`
     : `<video id="sourceSegmentMedia" controls playsinline preload="metadata"${poster ? ` poster="${esc(poster)}"` : ''} src="${esc(mediaUrl)}"></video>`;
@@ -1137,7 +1139,7 @@ function openSourceSegment(r, s) {
   const close = () => { media.pause?.(); ov.remove(); };
   media.addEventListener('loadedmetadata', playSegment, { once: true });
   media.addEventListener('canplay', () => { if (!positioned) playSegment(); }, { once: true });
-  if (segment) media.addEventListener('timeupdate', () => {
+  if (end != null) media.addEventListener('timeupdate', () => {
     if (media.currentTime >= end) media.pause?.();
   });
   media.addEventListener('error', () => { ov.querySelector('#sourceVideoError').hidden = false; });

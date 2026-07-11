@@ -398,11 +398,16 @@ test("processVideo 为 App 保留可播放的原视频并写入菜谱字段", as
       const { recipe, files } = await processVideo(input, config, { retainMedia: true });
 
       assert.equal(recipe.source_media, "source.mp4");
+      assert.deepEqual(recipe.steps.map((step) => step.source_clip), ["step-1.mp4", "step-2.mp4", "step-3.mp4"]);
       const media = path.join(config.outDir, "集成测试番茄炒蛋", "source.mp4");
       assert.ok(fs.existsSync(media));
       assert.ok(fs.statSync(media).size > 0);
+      for (let i = 1; i <= 3; i++) {
+        assert.ok(fs.statSync(path.join(config.outDir, "集成测试番茄炒蛋", `step-${i}.mp4`)).size > 0);
+      }
       const saved = JSON.parse(fs.readFileSync(files.json, "utf8"));
       assert.equal(saved.source_media, "source.mp4");
+      assert.deepEqual(saved.steps.map((step) => step.source_clip), ["step-1.mp4", "step-2.mp4", "step-3.mp4"]);
     });
   } finally {
     await llm.close();

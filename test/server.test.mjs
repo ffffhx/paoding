@@ -1228,17 +1228,23 @@ test("菜谱原视频路由：支持完整读取、Range、子路径和防穿越
   fs.writeFileSync(path.join(recipesDir, `${id}.json`), JSON.stringify({
     title: id,
     source_media: "source.mp4",
-    steps: [{ index: 1, title: "煎", action: "煎熟", source_time: [2, 5] }],
+    steps: [{ index: 1, title: "煎", action: "煎熟", source_time: [2, 5], source_clip: "step-1.mp4" }],
   }));
   const dir = path.join(recipesDir, id);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "source.mp4"), Buffer.from("0123456789"));
+  fs.writeFileSync(path.join(dir, "step-1.mp4"), Buffer.from("clip"));
 
   const full = await request(`/api/recipes/${encodeURIComponent(id)}/media/source.mp4`);
   assert.equal(full.status, 200);
   assert.equal(full.headers.get("content-type"), "video/mp4");
   assert.equal(full.headers.get("accept-ranges"), "bytes");
   assert.equal(await full.text(), "0123456789");
+
+  const clip = await request(`/api/recipes/${encodeURIComponent(id)}/media/step-1.mp4`);
+  assert.equal(clip.status, 200);
+  assert.equal(clip.headers.get("content-type"), "video/mp4");
+  assert.equal(await clip.text(), "clip");
 
   const partial = await request(`/api/recipes/${encodeURIComponent(id)}/media/source.mp4`, { headers: { Range: "bytes=2-5" } });
   assert.equal(partial.status, 206);
