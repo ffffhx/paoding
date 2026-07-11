@@ -189,6 +189,21 @@ export function fillMissingStepTimes(steps, segments) {
 
   let filled = 0;
   for (let i = 0; i < list.length; i++) {
+    const anchorSegment = timeline[Math.max(0, Math.min(anchors[i], timeline.length - 1))];
+    // 口播通常比对应手部动作略早，向后偏 2 秒更容易截到食材已经入锅/正在操作的状态。
+    const anchorTime = Math.min(
+      (Number(anchorSegment.start) + Number(anchorSegment.end)) / 2 + 2,
+      Number(timeline[timeline.length - 1].end) - 0.5,
+    );
+    if (Number.isFinite(anchorTime)) {
+      // 只供本趟截图阶段使用，故意设为不可枚举：不会污染落盘 JSON/API。
+      Object.defineProperty(list[i], "_sourceImageTime", {
+        value: anchorTime,
+        writable: true,
+        configurable: true,
+        enumerable: false,
+      });
+    }
     if (normalizeSourceTime(list[i]?.source_time)) continue;
     const left = i === 0 ? 0 : Math.floor((anchors[i - 1] + anchors[i]) / 2) + 1;
     const right = i === list.length - 1 ? timeline.length - 1 : Math.floor((anchors[i] + anchors[i + 1]) / 2);

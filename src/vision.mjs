@@ -337,7 +337,10 @@ export async function extractStepImages(vision, videoPath, recipe, { duration, i
       const s = steps[i];
       onProgress({ pct: Math.round((i / steps.length) * 100), message: `截取步骤画面…（${i + 1}/${steps.length}）` });
       try {
-        const times = candidateTimes(s.source_time, duration, fast ? 1 : stepImageCandidateCount(s.source_time, duration));
+        const alignedImageTime = Number(s._sourceImageTime);
+        const times = fast && Number.isFinite(alignedImageTime)
+          ? [Math.max(0.5, Math.min(alignedImageTime, duration - 0.5))]
+          : candidateTimes(s.source_time, duration, fast ? 1 : stepImageCandidateCount(s.source_time, duration));
         const files = [];
         for (let k = 0; k < times.length; k++) {
           const fp = path.join(tmp, `s${s.index}-c${k}.jpg`);
