@@ -409,7 +409,7 @@ test("processVideo 为 App 保留可播放的原视频并写入菜谱字段", as
   }
 });
 
-test("processVideo 记录 source_time 覆盖率且不补造缺失步骤时间", async () => {
+test("processVideo 用真实 ASR 分段补齐缺失步骤时间并记录覆盖率", async () => {
   const llm = await startLlmStub({
     structuredRecipe: {
       title: "时间戳覆盖测试菜",
@@ -434,11 +434,11 @@ test("processVideo 记录 source_time 覆盖率且不补造缺失步骤时间", 
 
       const { recipe, files } = await processVideo(input, config);
 
-      assert.equal(recipe.steps[1].source_time, undefined);
+      assert.deepEqual(recipe.steps[1].source_time, [30, 50]);
       assert.deepEqual(recipe.source_time_coverage, {
-        steps_with_source_time: 1,
+        steps_with_source_time: 2,
         total_steps: 2,
-        summary: "1/2 步有时间戳",
+        summary: "2/2 步有时间戳",
       });
       const saved = JSON.parse(fs.readFileSync(files.json, "utf8"));
       assert.deepEqual(saved.source_time_coverage, recipe.source_time_coverage);

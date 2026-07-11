@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { acquire } from "./download.mjs";
 import { transcribe, formatTimedTranscript } from "./transcribe.mjs";
-import { structureRecipe, clampStepTimes, sourceTimeCoverage } from "./chef.mjs";
+import { structureRecipe, clampStepTimes, fillMissingStepTimes, sourceTimeCoverage } from "./chef.mjs";
 import { explainSteps } from "./explain.mjs";
 import { toMarkdown } from "./render.mjs";
 import { fetchArticleText, unusableRecipeTextReason } from "./fetchText.mjs";
@@ -170,7 +170,11 @@ export async function processVideo(input, config, { keepTranscript = false, reta
     const recipe = await timer.time("structure", async () => {
       const out = await structureRecipe(config.llm, { transcript: llmTranscript, meta, signal });
       // 模型偶尔把 source_time 外推超过片长 → 用转写真实的最大时间戳硬校验
-      if (segments.length) clampStepTimes(out.steps, Math.max(...segments.map((s) => s.end)));
+      if (segments.length) {
+        clampStepTimes(out.steps, Math.max(...segments.map((s) => s.end)));
+        const filled = fillMissingStepTimes(out.steps, segments);
+        if (filled) console.log(`  · 根据语音时间轴补齐 ${filled} 个步骤时间段`);
+      }
       out.source_time_coverage = sourceTimeCoverage(out.steps);
       return out;
     });
@@ -212,15 +216,17 @@ export async function processVideo(input, config, { keepTranscript = false, reta
               onProgress: (p) => emit("images", 88 + p.pct * 0.05, p.message),
             }),
           ));
-          await timer.time("ingredient_images", () => withStageTimeout(
-            "食材截图",
-            timeoutMinutes("PAODING_INGREDIENT_IMAGE_TIMEOUT_MIN", 3),
-            signal,
-            (stageSignal) => extractIngredientImages(config.images, videoPath, recipe, {
-              duration, segments, imagesDir: base, signal: stageSignal,
-              onProgress: (p) => emit("images", 93 + p.pct * 0.05, p.message),
-            }),
-          ));
+          if (config.images?.ingredientImages !== false) {
+            await timer.time("ingredient_images", () => withStageTimeout(
+              "食材截图",
+              timeoutMinutes("PAODING_INGREDIENT_IMAGE_TIMEOUT_MIN", 3),
+              signal,
+              (stageSignal) => extractIngredientImages(config.images, videoPath, recipe, {
+                duration, segments, imagesDir: base, signal: stageSignal,
+                onProgress: (p) => emit("images", 93 + p.pct * 0.05, p.message),
+              }),
+            ));
+          }
           // 一张都没截到就删掉空目录
           if (!fs.readdirSync(base).length) fs.rmdirSync(base);
           recipe.timings = timer.snapshot();

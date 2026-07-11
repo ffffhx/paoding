@@ -379,7 +379,7 @@ test("fetchWithRetry 尊重 AbortSignal", async () => {
 
 /* ===== 画面截图（步骤状态图/食材图）相关纯函数 ===== */
 import { parseWhisperJson, offsetSegments, formatTimedTranscript } from "../src/transcribe.mjs";
-import { normalizeSourceTime, clampStepTimes, sourceTimeCoverage, normalizeTags, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, extractMultiDishOutline, inferBakingToolFallback, annotateRecipeCardSources } from "../src/chef.mjs";
+import { normalizeSourceTime, clampStepTimes, fillMissingStepTimes, sourceTimeCoverage, normalizeTags, normalizeTools, normalizeRecipePhases, extractRecipeCardTranscript, extractMultiDishOutline, inferBakingToolFallback, annotateRecipeCardSources } from "../src/chef.mjs";
 import { candidateTimes, clampBbox, jpegSize, recipeCardCapturePoints, ensureRecipeCardMarker, mapLimitSettled, extractIngredientImages, extractStepImages, visionTranscript, stepImageCandidateCount } from "../src/vision.mjs";
 
 test("parseWhisperJson 解析 whisper.cpp -oj 输出", () => {
@@ -440,6 +440,32 @@ test("sourceTimeCoverage 统计步骤时间戳覆盖率", () => {
     total_steps: 0,
     summary: "0/0 步有时间戳",
   });
+});
+
+test("fillMissingStepTimes 用真实语音分段补齐缺失时间并保留已有时间", () => {
+  const steps = [
+    { index: 1, title: "准备食材", action: "五花肉切片，辣椒切块" },
+    { index: 2, title: "煎鸡蛋", action: "鸡蛋下锅煎至定型", source_time: [20, 28] },
+    { index: 3, title: "煸炒五花肉", action: "五花肉下锅煸出油脂" },
+    { index: 4, title: "混合出锅", action: "倒回鸡蛋翻炒均匀后出锅" },
+  ];
+  const segments = [
+    { start: 0, end: 4, text: "先准备五花肉和青红辣椒" },
+    { start: 4, end: 9, text: "五花肉切片辣椒切块" },
+    { start: 18, end: 23, text: "鸡蛋下锅开始煎" },
+    { start: 23, end: 28, text: "鸡蛋煎到两面定型" },
+    { start: 35, end: 42, text: "放入五花肉煸炒出油脂" },
+    { start: 45, end: 51, text: "加入辣椒继续翻炒" },
+    { start: 55, end: 62, text: "最后倒回鸡蛋翻炒均匀" },
+    { start: 62, end: 66, text: "装盘出锅" },
+  ];
+
+  assert.equal(fillMissingStepTimes(steps, segments), 3);
+  assert.deepEqual(steps[1].source_time, [20, 28]);
+  assert.ok(steps.every((step) => normalizeSourceTime(step.source_time)));
+  assert.ok(steps[0].source_time[0] < steps[2].source_time[0]);
+  assert.ok(steps[2].source_time[0] < steps[3].source_time[0]);
+  assert.equal(fillMissingStepTimes(steps, segments), 0);
 });
 
 test("normalizeTools 清洗工具清单并保留替代说明", () => {
@@ -854,6 +880,33 @@ test("extractStepImages 短视频宽时间段用双候选且允许不配图", as
     assert.equal(recipe.steps[0].image, "step-1.jpg");
     assert.equal(recipe.steps[1].image, undefined);
     assert.ok(fs.existsSync(path.join(imagesDir, "step-1.jpg")));
+  } finally {
+    globalThis.fetch = oldFetch;
+    if (oldFfmpeg === undefined) delete process.env.PAODING_FFMPEG_BIN;
+    else process.env.PAODING_FFMPEG_BIN = oldFfmpeg;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("extractStepImages 快速模式不调用视觉模型也能保存步骤图", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-step-fast-test-"));
+  const oldFetch = globalThis.fetch;
+  const oldFfmpeg = process.env.PAODING_FFMPEG_BIN;
+  try {
+    process.env.PAODING_FFMPEG_BIN = FAKE_FFMPEG;
+    globalThis.fetch = async () => { throw new Error("快速模式不应调用视觉模型"); };
+    const videoPath = path.join(root, "input.mp4");
+    const imagesDir = path.join(root, "images");
+    fs.writeFileSync(videoPath, "fake video\n");
+    fs.mkdirSync(imagesDir);
+    const recipe = { steps: [
+      { index: 1, title: "煎鸡蛋", action: "煎到定型", source_time: [10, 20] },
+    ] };
+
+    const saved = await extractStepImages({ stepImageFast: true }, videoPath, recipe, { duration: 60, imagesDir });
+    assert.equal(saved, 1);
+    assert.equal(recipe.steps[0].image, "step-1.jpg");
+    assert.ok(fs.statSync(path.join(imagesDir, "step-1.jpg")).size > 0);
   } finally {
     globalThis.fetch = oldFetch;
     if (oldFfmpeg === undefined) delete process.env.PAODING_FFMPEG_BIN;

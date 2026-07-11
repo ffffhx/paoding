@@ -99,6 +99,108 @@ export function sourceTimeCoverage(steps) {
   };
 }
 
+function alignmentText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^\p{Script=Han}a-z0-9]+/gu, "");
+}
+
+function alignmentGrams(value) {
+  const text = alignmentText(value);
+  const grams = new Set();
+  if (text.length === 1) grams.add(text);
+  for (let i = 0; i < text.length - 1; i++) grams.add(text.slice(i, i + 2));
+  return grams;
+}
+
+function gramSimilarity(a, b) {
+  if (!a.size || !b.size) return 0;
+  let overlap = 0;
+  for (const gram of a) if (b.has(gram)) overlap++;
+  return overlap / Math.sqrt(a.size * b.size);
+}
+
+// 模型偶尔完全漏掉 source_time，导致后续截图和应用内视频入口都消失。
+// 这里仅在已有 Whisper 真实分段时，用文本相似度 + 步骤顺序做单调对齐；
+// 模型已给出的合法时间保持不变，缺失项才用相邻真实分段边界补齐。
+export function fillMissingStepTimes(steps, segments) {
+  const list = Array.isArray(steps) ? steps : [];
+  const timeline = (Array.isArray(segments) ? segments : []).filter((s) =>
+    Number.isFinite(Number(s?.start)) && Number.isFinite(Number(s?.end)) &&
+    Number(s.end) > Number(s.start),
+  );
+  if (!list.length || !timeline.length) return 0;
+
+  const stepGrams = list.map((s) => alignmentGrams(`${s?.title || ""}${s?.action || ""}`));
+  const segmentGrams = timeline.map((s) => alignmentGrams(s.text));
+  const anchors = new Array(list.length).fill(0);
+  const forced = list.map((s) => {
+    const st = normalizeSourceTime(s?.source_time);
+    if (!st) return -1;
+    const middle = (st[0] + st[1]) / 2;
+    let best = 0;
+    for (let j = 1; j < timeline.length; j++) {
+      const current = (Number(timeline[j].start) + Number(timeline[j].end)) / 2;
+      const previous = (Number(timeline[best].start) + Number(timeline[best].end)) / 2;
+      if (Math.abs(current - middle) < Math.abs(previous - middle)) best = j;
+    }
+    return best;
+  });
+
+  // 动态规划选择单调递增的分段锚点。位置先验只负责在口播同义改写时兜底，
+  // 文本重合仍有更高权重；已有 source_time 对应的锚点则强制保留。
+  if (timeline.length >= list.length) {
+    const width = timeline.length;
+    let previous = new Array(width).fill(-Infinity);
+    const parents = Array.from({ length: list.length }, () => new Int32Array(width).fill(-1));
+    for (let i = 0; i < list.length; i++) {
+      const current = new Array(width).fill(-Infinity);
+      let bestValue = -Infinity;
+      let bestIndex = -1;
+      for (let j = 0; j < width; j++) {
+        if (i === 0) {
+          bestValue = 0;
+          bestIndex = -1;
+        } else if (j > 0 && previous[j - 1] > bestValue) {
+          bestValue = previous[j - 1];
+          bestIndex = j - 1;
+        }
+        if (!Number.isFinite(bestValue) || (forced[i] >= 0 && forced[i] !== j)) continue;
+        const expected = list.length === 1 ? width / 2 : (i / (list.length - 1)) * (width - 1);
+        const lexical = gramSimilarity(stepGrams[i], segmentGrams[j]);
+        const positional = 1 - Math.abs(j - expected) / Math.max(1, width - 1);
+        current[j] = bestValue + lexical * 4 + positional;
+        parents[i][j] = bestIndex;
+      }
+      previous = current;
+    }
+    let cursor = previous.reduce((best, value, j) => value > previous[best] ? j : best, 0);
+    if (Number.isFinite(previous[cursor])) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        anchors[i] = cursor;
+        cursor = parents[i][cursor];
+      }
+    } else {
+      for (let i = 0; i < list.length; i++) anchors[i] = Math.round((i / Math.max(1, list.length - 1)) * (timeline.length - 1));
+    }
+  } else {
+    for (let i = 0; i < list.length; i++) anchors[i] = Math.round((i / Math.max(1, list.length - 1)) * (timeline.length - 1));
+  }
+
+  let filled = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (normalizeSourceTime(list[i]?.source_time)) continue;
+    const left = i === 0 ? 0 : Math.floor((anchors[i - 1] + anchors[i]) / 2) + 1;
+    const right = i === list.length - 1 ? timeline.length - 1 : Math.floor((anchors[i] + anchors[i + 1]) / 2);
+    const start = Math.max(0, Number(timeline[Math.min(left, timeline.length - 1)].start));
+    const end = Number(timeline[Math.max(0, Math.min(right, timeline.length - 1))].end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    list[i].source_time = [Math.floor(start), Math.ceil(end)];
+    filled++;
+  }
+  return filled;
+}
+
 export function normalizeTools(tools) {
   if (!Array.isArray(tools)) return [];
   const isObj = (x) => x && typeof x === "object" && !Array.isArray(x);

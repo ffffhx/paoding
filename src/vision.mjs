@@ -328,6 +328,7 @@ export async function transcribeRecipeImage(vision, imagePath, { index = 1, tota
 export async function extractStepImages(vision, videoPath, recipe, { duration, imagesDir, onProgress = () => {}, signal } = {}) {
   const steps = (recipe.steps || []).filter((s) => Array.isArray(s.source_time));
   if (!steps.length || !duration) return 0;
+  const fast = vision?.stepImageFast === true || /^(1|true|yes)$/i.test(process.env.PAODING_STEP_IMAGE_FAST || "");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "paoding-stepimg-"));
   let saved = 0;
   const seen = new Set(); // 已存图的指纹：两步挑中同一帧时只留第一张（重复图没有信息量）
@@ -336,7 +337,7 @@ export async function extractStepImages(vision, videoPath, recipe, { duration, i
       const s = steps[i];
       onProgress({ pct: Math.round((i / steps.length) * 100), message: `截取步骤画面…（${i + 1}/${steps.length}）` });
       try {
-        const times = candidateTimes(s.source_time, duration, stepImageCandidateCount(s.source_time, duration));
+        const times = candidateTimes(s.source_time, duration, fast ? 1 : stepImageCandidateCount(s.source_time, duration));
         const files = [];
         for (let k = 0; k < times.length; k++) {
           const fp = path.join(tmp, `s${s.index}-c${k}.jpg`);
@@ -345,7 +346,11 @@ export async function extractStepImages(vision, videoPath, recipe, { duration, i
         if (!files.length) continue;
         let best = 1;
         const cue = s.params?.cue ? `，到位标准：「${s.params.cue}」` : "";
-        if (files.length === 1) {
+        if (fast) {
+          // CPU 开发机上的 30B VL 逐步复核耗时很高；快速模式直接采用时间段后部帧。
+          // 时间段已由真实 ASR 对齐，优先保证每一步都有可用画面。
+          best = files.length;
+        } else if (files.length === 1) {
           const ans = await chatVision(vision, {
             system: "你在帮做菜教程挑选步骤配图。只输出 JSON，不要解释。",
             user: `这是一张候选步骤图。步骤：「${s.title || ""}：${s.action || ""}」${cue}。\n它是否适合作为这一步的配图？只要相关食物、锅具、手部操作或完成状态清楚可见即可；允许讲解人同时出镜。黑屏、转场、片头片尾、纯人脸且看不到相关食物/锅具、不相关画面都算不合适。\n输出 JSON：{"ok": true 或 false}`,

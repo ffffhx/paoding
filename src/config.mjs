@@ -47,6 +47,11 @@ export function loadConfig() {
   }
 
   const visionModel = process.env.PAODING_VISION_MODEL || "";
+  const envBool = (name, fallback) => {
+    const raw = process.env[name];
+    if (raw == null || raw === "") return fallback;
+    return /^(1|true|yes)$/i.test(raw);
+  };
 
   return {
     llm: { baseUrl: llmBase, apiKey: llmKey, model: llmModel, outputLang },
@@ -56,6 +61,8 @@ export function loadConfig() {
       apiKey: process.env.PAODING_VISION_API_KEY || llmKey,
       model: visionModel,
       maxFrames: Number(process.env.PAODING_VISION_MAX_FRAMES || 20),
+      stepImageFast: envBool("PAODING_STEP_IMAGE_FAST", false),
+      ingredientImages: envBool("PAODING_INGREDIENT_IMAGES", true),
     } : null,
     asr: {
       // local = 本地 whisper.cpp；openai = 云端 OpenAI 兼容接口

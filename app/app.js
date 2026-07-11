@@ -1092,11 +1092,12 @@ function recipeMediaUrl(r) {
 }
 function sourceSegmentControlHtml(r, s, extraClass = '') {
   const segment = normalizeSourceSegment(s?.source_time);
-  if (!segment) return '';
   const classes = `step-video-link ${extraClass}`.trim();
   if (r?.source_media) {
-    return `<button type="button" class="${esc(classes)} step-video-btn" data-source-segment="${esc(s.index)}">${esc(tr('detail.watchSegment'))}</button>`;
+    const label = segment ? tr('detail.watchSegment') : tr('detail.watchOriginal');
+    return `<button type="button" class="${esc(classes)} step-video-btn" data-source-segment="${esc(s.index)}">${esc(label)}</button>`;
   }
+  if (!segment) return '';
   const external = sourceSegmentUrl(r?.source, s.source_time);
   return external ? `<a class="${esc(classes)}" href="${esc(external)}" target="_blank" rel="noopener">${esc(tr('detail.watchSegment'))}</a>` : '';
 }
@@ -1107,22 +1108,23 @@ function segmentClock(seconds) {
 function openSourceSegment(r, s) {
   const segment = normalizeSourceSegment(s?.source_time);
   const mediaUrl = recipeMediaUrl(r);
-  if (!segment || !mediaUrl) return;
-  const [start, end] = segment;
-  const original = sourceSegmentUrl(r.source, s.source_time);
+  if (!mediaUrl) return;
+  const [start, end] = segment || [0, null];
+  const original = segment ? sourceSegmentUrl(r.source, s.source_time) : (/^https?:\/\//i.test(r.source || '') ? r.source : '');
   const poster = s.image ? recipeImg(r.id, s.image) : '';
   const audioOnly = /\.(?:mp3|m4a)$/i.test(r.source_media || '');
   const mediaTag = audioOnly
     ? `<audio id="sourceSegmentMedia" controls preload="metadata" src="${esc(mediaUrl)}"></audio>`
     : `<video id="sourceSegmentMedia" controls playsinline preload="metadata"${poster ? ` poster="${esc(poster)}"` : ''} src="${esc(mediaUrl)}"></video>`;
+  const kicker = segment ? tr('detail.segment.kicker', { range: `${segmentClock(start)}–${segmentClock(end)}` }) : tr('detail.video.kicker');
   const ov = openModal(`<div class="source-video-head">
-      <div><span>${esc(tr('detail.segment.kicker', { range: `${segmentClock(start)}–${segmentClock(end)}` }))}</span><h3>${esc(s.title || tr('detail.segment.title'))}</h3></div>
+      <div><span>${esc(kicker)}</span><h3>${esc(s.title || tr(segment ? 'detail.segment.title' : 'detail.video.title'))}</h3></div>
       <button type="button" class="iconbtn" id="xClose" aria-label="${esc(tr('common.close'))}">×</button>
     </div>
     <div class="source-video-frame">${mediaTag}</div>
     <p class="source-video-error" id="sourceVideoError" hidden>${esc(tr('detail.segment.loadFailed'))}</p>
     <div class="source-video-actions">
-      <button type="button" class="btn" id="sourceVideoReplay">${esc(tr('detail.segment.replay'))}</button>
+      <button type="button" class="btn" id="sourceVideoReplay">${esc(tr(segment ? 'detail.segment.replay' : 'detail.video.replay'))}</button>
       ${original ? `<a class="btn ghost" href="${esc(original)}" target="_blank" rel="noopener">${esc(tr('detail.segment.openOriginal'))}</a>` : ''}
     </div>`, 'source-video-modal left');
   const media = ov.querySelector('#sourceSegmentMedia');
@@ -1135,7 +1137,7 @@ function openSourceSegment(r, s) {
   const close = () => { media.pause?.(); ov.remove(); };
   media.addEventListener('loadedmetadata', playSegment, { once: true });
   media.addEventListener('canplay', () => { if (!positioned) playSegment(); }, { once: true });
-  media.addEventListener('timeupdate', () => {
+  if (segment) media.addEventListener('timeupdate', () => {
     if (media.currentTime >= end) media.pause?.();
   });
   media.addEventListener('error', () => { ov.querySelector('#sourceVideoError').hidden = false; });
