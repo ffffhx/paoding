@@ -1101,6 +1101,14 @@ function sourceSegmentControlHtml(r, s, extraClass = '') {
   const external = sourceSegmentUrl(r?.source, s.source_time);
   return external ? `<a class="${esc(classes)}" href="${esc(external)}" target="_blank" rel="noopener">${esc(tr('detail.watchSegment'))}</a>` : '';
 }
+function sourceOverviewControlHtml(r) {
+  if (r?.source_media) {
+    return `<button type="button" class="src-link" data-source-full>${esc(tr('detail.watchOriginal'))}</button>`;
+  }
+  return /^https?:\/\//.test(r?.source || '')
+    ? `<a class="src-link" href="${esc(r.source)}" target="_blank" rel="noopener">${esc(tr('detail.watchOriginal'))}</a>`
+    : '';
+}
 function segmentClock(seconds) {
   const value = Math.max(0, Math.floor(Number(seconds) || 0));
   return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
@@ -2471,7 +2479,7 @@ function openDetail(r, focusStepIndex = null) {
         ${r.cuisine ? `<span>${esc(r.cuisine)}</span>` : ''}
         ${r.total_time_min ? `<span>${esc(tr('recipe.time.approxMin', { min: r.total_time_min }))}</span>` : ''}
         <span>${esc(tr('recipe.steps', { count: (r.steps || []).length }))}</span>
-        ${/^https?:\/\//.test(r.source || '') ? `<a class="src-link" href="${esc(r.source)}" target="_blank" rel="noopener">${esc(tr('detail.watchOriginal'))}</a>` : ''}</div>
+        ${sourceOverviewControlHtml(r)}</div>
       ${tags.length ? `<div class="tags" style="margin-top:8px">${tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
     </div>
     ${!hasPhases && base ? `<div class="scaler"><span>${esc(tr('detail.servings'))}</span><button class="st" data-s="-">－</button><b id="svVal">${base * factor}</b><button class="st" data-s="+">＋</button><span>${esc(tr('detail.servingsUnit'))}</span></div>` : ''}
@@ -2602,6 +2610,8 @@ function openDetail(r, focusStepIndex = null) {
   p.querySelector('#dEdit').onclick = () => { close(); openEdit(r); };
   const currentFactors = () => hasPhases ? { batchFactor, servingFactor: factor } : factor;
   p.querySelector('#dShare').onclick = () => shareRecipe(r, currentFactors());
+  const sourceFullBtn = p.querySelector('[data-source-full]');
+  if (sourceFullBtn) sourceFullBtn.onclick = () => openSourceSegment(r, { title: r.title || tr('detail.video.title') });
   p.querySelector('#addShop').onclick = () => addToShopping(r, currentFactors());
   const aiBox = p.querySelector('#aiBox');
   function renderNutrition() {

@@ -153,6 +153,7 @@ html[data-theme="dark"] .job-row.running::after,html[data-theme="dark"] .job-row
 .detail-hd h2{font-family:var(--serif);font-size:28px;margin:0 0 8px;letter-spacing:1px}
 .detail-hd .meta{color:var(--muted);font-size:14px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
 .detail-hd .meta .src-link{color:var(--tomato);font-weight:600;text-decoration:none;white-space:nowrap}
+.detail-hd .meta button.src-link{appearance:none;background:none;border:0;padding:0;font:inherit;cursor:pointer}
 .sec-title{font-size:13px;color:var(--muted);font-weight:700;letter-spacing:1px;margin:22px 20px 8px;display:flex;justify-content:space-between;align-items:center}
 .sec-title .act{color:var(--tomato);font-size:13px;font-weight:600}
 .ing{margin:0 16px;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:visible}
