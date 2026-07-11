@@ -16,6 +16,7 @@ import { fetchWithRetry } from "../src/fetchRetry.mjs";
 import { outputLanguageInstruction, withOutputLanguage } from "../src/outputLanguage.mjs";
 import { applyIngredientFixes, fixIngredientName, replaceIngredientTypos } from "../src/ingredientFix.mjs";
 import { shouldFallbackVideoUrlToText } from "../src/videoFallback.mjs";
+import { parseModelJSON } from "../src/llm.mjs";
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FAKE_FFMPEG = path.join(TEST_DIR, "fixtures", "bin", "fake-ffmpeg.mjs");
@@ -40,6 +41,24 @@ test("ytdlpArgs 带 Referer 与可选 cookie", () => {
   });
   assert.ok(c.includes("--cookies") && c.includes("/secure/xhs-cookies.txt"));
   assert.ok(!c.includes("--cookies-from-browser"));
+});
+
+test("parseModelJSON 自动修复模型漏逗号与尾逗号且保持字段内容", () => {
+  const parsed = parseModelJSON(`\`\`\`json
+  {
+    "title": "农家一碗香",
+    "steps": [
+      {"action": "边倒边搅" "source_time": [63 66],}
+    ],
+  }
+  \`\`\``);
+  assert.equal(parsed.title, "农家一碗香");
+  assert.equal(parsed.steps[0].action, "边倒边搅");
+  assert.deepEqual(parsed.steps[0].source_time, [63, 66]);
+});
+
+test("parseModelJSON 不把普通说明文字修成 JSON 字符串", () => {
+  assert.throws(() => parseModelJSON("这不是 JSON"), /可修复的 JSON/);
 });
 
 test("yt-dlp 412 错误提示用户配置浏览器 cookies", () => {

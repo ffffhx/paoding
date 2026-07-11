@@ -28,6 +28,7 @@ if [ "$current_sha" = "$deployed_sha" ] && [ "$current_sha" = "$marker_sha" ]; t
   exit 0
 fi
 
+/usr/bin/npm ci --omit=dev --ignore-scripts
 /usr/bin/node --test
 systemctl --user restart paoding.service
 

@@ -1,5 +1,6 @@
-// OpenAI 兼容的 chat/completions 客户端 —— 只用内置 fetch，无第三方依赖。
+// OpenAI 兼容的 chat/completions 客户端。
 import { fetchWithRetry } from "./fetchRetry.mjs";
+import { jsonrepair } from "jsonrepair";
 
 export async function chatJSON(llm, { system, user, temperature = 0.3, signal, _retry = true }) {
   const body = {
@@ -107,16 +108,33 @@ export function parseModelJSON(text) {
 
 function parseJSON(text) {
   const trimmed = String(text).trim();
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    if (fenced) return JSON.parse(fenced[1].trim());
-    const start = trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("}");
-    if (start !== -1 && end > start) {
-      return JSON.parse(trimmed.slice(start, end + 1));
+  const candidates = [trimmed];
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) candidates.push(fenced[1].trim());
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start !== -1 && end > start) candidates.push(trimmed.slice(start, end + 1));
+
+  const unique = [...new Set(candidates.filter(Boolean))];
+  const parseObject = (candidate) => {
+    const value = JSON.parse(candidate);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new SyntaxError("模型 JSON 顶层必须是对象");
     }
-    throw new Error(`模型未返回合法 JSON：${trimmed.slice(0, 300)}`);
+    return value;
+  };
+
+  let lastError;
+  for (const candidate of unique) {
+    try { return parseObject(candidate); } catch (e) { lastError = e; }
   }
+  for (const candidate of unique) {
+    try {
+      const repaired = parseObject(jsonrepair(candidate));
+      console.warn("  · 模型输出包含 JSON 语法错误，已自动修复后继续。");
+      return repaired;
+    } catch (e) { lastError = e; }
+  }
+
+  throw new Error(`模型未返回可修复的 JSON：${lastError?.message || "未知语法错误"}；${trimmed.slice(0, 300)}`);
 }

@@ -18,6 +18,7 @@
   "dependencies": {
     "@capacitor/android": "^6.2.1",
     "@capacitor/core": "^6.2.1",
-    "@capacitor/preferences": "^6.0.4"
+    "@capacitor/preferences": "^6.0.4",
+    "jsonrepair": "^3.15.0"
   }
 }
