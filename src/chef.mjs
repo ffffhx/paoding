@@ -131,7 +131,8 @@ export function fillMissingStepTimes(steps, segments) {
   );
   if (!list.length || !timeline.length) return 0;
 
-  const stepGrams = list.map((s) => alignmentGrams(`${s?.title || ""}${s?.action || ""}`));
+  const stepTitleGrams = list.map((s) => alignmentGrams(s?.title));
+  const stepActionGrams = list.map((s) => alignmentGrams(s?.action));
   const segmentGrams = timeline.map((s) => alignmentGrams(s.text));
   const anchors = new Array(list.length).fill(0);
   const forced = list.map((s) => {
@@ -167,9 +168,11 @@ export function fillMissingStepTimes(steps, segments) {
         }
         if (!Number.isFinite(bestValue) || (forced[i] >= 0 && forced[i] !== j)) continue;
         const expected = list.length === 1 ? width / 2 : (i / (list.length - 1)) * (width - 1);
-        const lexical = gramSimilarity(stepGrams[i], segmentGrams[j]);
+        // 小标题通常是该步最有代表性的画面（如“煎鸡蛋”），权重高于包含多个前置动作的长正文。
+        const lexical = gramSimilarity(stepTitleGrams[i], segmentGrams[j]) * 6
+          + gramSimilarity(stepActionGrams[i], segmentGrams[j]) * 3;
         const positional = 1 - Math.abs(j - expected) / Math.max(1, width - 1);
-        current[j] = bestValue + lexical * 4 + positional;
+        current[j] = bestValue + lexical + positional;
         parents[i][j] = bestIndex;
       }
       previous = current;
